@@ -22,9 +22,10 @@ class SemanticScholarClient:
         if api_key:
             self.headers["x-api-key"] = api_key
         
-        # Rate limiting: 1 request per second for authenticated users, 
-        # shared limit for unauthenticated users
-        self.rate_limit_delay = 1.0 if api_key else 1.5
+        # Rate limiting based on Semantic Scholar documentation:
+        # - With API key: 1 request per second
+        # - Without API key: 100 requests per 5 minutes (1 every 3-4 seconds)
+        self.rate_limit_delay = 1.2 if api_key else 4.0  # Conservative 4 seconds for unauthenticated
         
     def search_papers(self, 
                      query: str, 
@@ -65,7 +66,8 @@ class SemanticScholarClient:
             params["minCitationCount"] = min_citation_count
             
         try:
-            response = requests.get(endpoint, params=params, headers=self.headers)
+            # Add timeout to prevent hanging requests
+            response = requests.get(endpoint, params=params, headers=self.headers, timeout=30)
             response.raise_for_status()
             
             # Rate limiting
@@ -73,6 +75,9 @@ class SemanticScholarClient:
             
             return response.json()
             
+        except requests.exceptions.Timeout:
+            print(f"Request timed out after 30 seconds for query: {query[:50]}...")
+            return {"data": [], "total": 0}
         except requests.exceptions.RequestException as e:
             print(f"Error searching papers: {e}")
             return {"data": [], "total": 0}
@@ -99,7 +104,8 @@ class SemanticScholarClient:
         }
         
         try:
-            response = requests.get(endpoint, params=params, headers=self.headers)
+            # Add timeout to prevent hanging requests
+            response = requests.get(endpoint, params=params, headers=self.headers, timeout=30)
             response.raise_for_status()
             
             # Rate limiting
@@ -107,6 +113,9 @@ class SemanticScholarClient:
             
             return response.json()
             
+        except requests.exceptions.Timeout:
+            print(f"Request timed out after 30 seconds for paper ID: {paper_id}")
+            return {}
         except requests.exceptions.RequestException as e:
             print(f"Error getting paper details: {e}")
             return {}
@@ -114,7 +123,7 @@ class SemanticScholarClient:
     def search_papers_by_topic(self, 
                               topic: str, 
                               max_results: int = 20,
-                              recent_years_only: bool = True) -> List[Dict]:
+                              recent_years_only: bool = False) -> List[Dict]:
         """
         Search for papers on a specific topic and return clean results.
         Uses intelligent search strategy with fallbacks for better results.
@@ -122,7 +131,7 @@ class SemanticScholarClient:
         Args:
             topic (str): Research topic to search for
             max_results (int): Maximum number of papers to return
-            recent_years_only (bool): Whether to filter for recent papers (2020+)
+            recent_years_only (bool): Whether to filter for recent papers (2020+) - now defaults to False
         
         Returns:
             List[Dict]: List of paper dictionaries with clean data
@@ -130,6 +139,7 @@ class SemanticScholarClient:
         year_filter = "2020-" if recent_years_only else None
         
         # Strategy 1: Try with keywords (no exact quotes) and minimal citation filter
+        print(f"   📊 Strategy 1: Searching with citation filter (min 1 citation)...")
         results = self.search_papers(
             query=topic,  # Remove quotes for more flexible matching
             limit=max_results,
@@ -138,32 +148,40 @@ class SemanticScholarClient:
         )
         
         papers = self._process_search_results(results)
+        print(f"   📊 Strategy 1 result: Found {len(papers)} papers")
         
         # If we got good results, return them
         if len(papers) >= max_results // 2:  # If we got at least half of what we wanted
+            print(f"   ✅ Sufficient papers found, using Strategy 1 results")
             return papers[:max_results]
         
         # Strategy 2: If not enough results, try without citation filter
         if len(papers) < max_results // 2:
-            print(f"   Expanding search (found {len(papers)} papers, trying without citation filter)...")
+            print(f"   📊 Strategy 2: Expanding search (removing citation filter)...")
             results = self.search_papers(
                 query=topic,
                 limit=max_results * 2,  # Get more to compensate for filtering
                 year_range=year_filter
                 # No min_citation_count
             )
-            papers = self._process_search_results(results)
+            new_papers = self._process_search_results(results)
+            print(f"   📊 Strategy 2 result: Found {len(new_papers)} papers")
+            papers = new_papers  # Use the new results
         
         # Strategy 3: If still not enough and using recent filter, try all years
         if len(papers) < max_results // 2 and recent_years_only:
-            print(f"   Expanding search to all years (found {len(papers)} papers)...")
+            print(f"   📊 Strategy 3: Expanding to all years...")
             results = self.search_papers(
                 query=topic,
                 limit=max_results * 2
                 # No year_range, no min_citation_count
             )
-            papers = self._process_search_results(results)
+            new_papers = self._process_search_results(results)
+            print(f"   📊 Strategy 3 result: Found {len(new_papers)} papers")
+            papers = new_papers  # Use the new results
         
+        final_count = len(papers[:max_results])
+        print(f"   ✅ Final result: Returning {final_count} papers for query")
         return papers[:max_results]
     
     def _process_search_results(self, results: Dict) -> List[Dict]:

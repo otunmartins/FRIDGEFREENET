@@ -92,6 +92,30 @@ class OllamaClient:
         except Exception as e:
             return f"Error analyzing abstract: {e}"
     
+    def ask_question(self, question: str) -> Dict[str, str]:
+        """
+        Ask a general question to the OLLAMA model.
+        
+        Args:
+            question (str): The question to ask
+        
+        Returns:
+            Dict[str, str]: Response dictionary with 'response' key
+        """
+        try:
+            response = self.client.chat(
+                model=self.model_name,
+                messages=[
+                    {
+                        'role': 'user',
+                        'content': question
+                    }
+                ]
+            )
+            return {"response": response['message']['content'].strip()}
+        except Exception as e:
+            return {"response": f"Error asking question: {e}"}
+    
     def analyze_multiple_abstracts(self, papers: List[Dict], analysis_type: str = "summary") -> List[Dict]:
         """
         Analyze multiple abstracts and return results.
