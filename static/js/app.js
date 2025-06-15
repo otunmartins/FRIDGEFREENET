@@ -10,31 +10,27 @@ let examples = {};
 
 // ====== DOM Elements ======
 const elements = {
-    // Sidebar
+    // Sidebar elements
     sidebar: document.getElementById('sidebar'),
     sidebarToggle: document.getElementById('sidebarToggle'),
     newChatBtn: document.getElementById('newChatBtn'),
-    
-    // Mode controls
+    clearChatBtn: document.getElementById('clearChatBtn'),
     modeButtons: document.querySelectorAll('.mode-btn'),
-    currentModeText: document.getElementById('currentMode'),
+    currentMode: document.getElementById('currentMode'),
     modeDescription: document.getElementById('modeDescription'),
+    examplesList: document.getElementById('examplesList'),
     
-    // Chat area
+    // Chat elements
     chatContainer: document.getElementById('chatContainer'),
     messageInput: document.getElementById('messageInput'),
     sendBtn: document.getElementById('sendBtn'),
-    clearChatBtn: document.getElementById('clearChatBtn'),
     charCount: document.getElementById('charCount'),
     
-    // Status and examples
+    // Status elements
     statusDot: document.getElementById('statusDot'),
     statusText: document.getElementById('statusText'),
-    examplesList: document.getElementById('examplesList'),
     
-    // Loading and modals
-    loadingOverlay: document.getElementById('loadingOverlay'),
-    loadingDetails: document.getElementById('loadingDetails'),
+    // Modal elements
     errorModal: document.getElementById('errorModal'),
     errorMessage: document.getElementById('errorMessage')
 };
@@ -44,20 +40,23 @@ const modeConfig = {
     general: {
         title: 'General Chat',
         description: 'Ask questions about the insulin AI project',
-        placeholder: 'Ask about the project, methodology, or goals...',
-        loadingText: 'Thinking about your question...'
+        placeholder: 'Ask about insulin delivery, materials science, or project details...'
     },
     literature: {
         title: 'Literature Mining',
         description: 'Advanced literature mining with AI-powered analysis',
-        placeholder: 'Search for materials, papers, or research topics...',
-        loadingText: 'Mining literature and analyzing papers with AI...'
+        placeholder: 'Search for materials, papers, or research topics...'
+    },
+    psmiles: {
+        title: 'PSMILES Generator',
+        description: 'Generate and validate Polymer SMILES strings',
+        placeholder: 'Describe a polymer structure, ask for examples, or validate a PSMILES...'
     }
 };
 
 // ====== Typewriter Effect Functions ======
 class TypewriterEffect {
-    constructor(element, text, speed = 50) {
+    constructor(element, text, speed = 5) {
         this.element = element;
         this.text = text;
         this.speed = speed;
@@ -216,9 +215,6 @@ async function sendMessage() {
     updateCharCount();
     updateSendButton();
     
-    // Show loading
-    showLoading();
-    
     try {
         if (currentMode === 'literature') {
             // Use literature mining with real-time progress
@@ -242,23 +238,23 @@ async function sendMessage() {
                 throw new Error(data.error || 'An error occurred');
             }
             
-            // Add AI response to chat with typewriter effect
+            // Add AI response to chat
             addMessage('assistant', data.message, data.type, null, true);
         }
-        
     } catch (error) {
-        console.error('Chat error:', error);
+        console.error('Error sending message:', error);
+        addMessage('assistant', `Sorry, I encountered an error: ${error.message}`, 'error', null, true);
         showError(error.message);
-        addMessage('assistant', `I apologize, but I encountered an error: ${error.message}`, 'error');
-    } finally {
-        hideLoading();
     }
 }
 
 async function handleLiteratureStreaming(message) {
     // Create a progress message element that we'll update in real-time
     const progressMessageId = 'progress-' + Date.now();
-    const progressElement = addMessage('assistant', 'Starting literature mining...', 'literature', progressMessageId);
+    const progressElement = addMessage('assistant', 'Starting literature mining...', 'literature', progressMessageId, false);
+    
+    // LOG: Confirm timeout removal
+    console.log('🚀 Literature mining started - NO TIMEOUT LIMITS');
     
     try {
         // URL encode the message for the GET request
@@ -299,7 +295,7 @@ async function handleLiteratureStreaming(message) {
                     return;
                 } else if (data.type === 'error') {
                     progressContent += `❌ **Error:** ${data.message}\n\n`;
-                    updateMessage(progressMessageId, progressContent);
+                    updateMessage(progressMessageId, progressContent, false);
                     eventSource.close();
                     return;
                 }
@@ -323,34 +319,32 @@ async function handleLiteratureStreaming(message) {
         eventSource.onerror = function(event) {
             console.error('EventSource error:', event);
             progressContent += `❌ **Connection Error:** Lost connection to server\n\n`;
-            updateMessage(progressMessageId, progressContent);
+            updateMessage(progressMessageId, progressContent, false);
             eventSource.close();
         };
         
-        // Set up cleanup after 10 minutes (timeout)
-        setTimeout(() => {
-            if (eventSource.readyState !== EventSource.CLOSED) {
-                eventSource.close();
-                progressContent += `⏰ **Timeout:** The literature mining process took longer than expected (10 minutes) and was cancelled.\n\n`;
-                progressContent += `💡 **Tip:** Try using more specific search terms or reducing the scope of your query for faster results.\n\n`;
-                updateMessage(progressMessageId, progressContent);
-            }
-        }, 600000); // 10 minutes timeout (600,000 ms)
+        // TIMEOUT REMOVED: No time limit - let literature mining complete naturally
         
     } catch (error) {
         console.error('Literature streaming error:', error);
-        updateMessage(progressMessageId, `❌ Error during literature mining: ${error.message}`);
+        updateMessage(progressMessageId, `❌ Error during literature mining: ${error.message}`, false);
         throw error;
     }
 }
 
 // Helper function to update an existing message
-function updateMessage(messageId, newContent) {
+function updateMessage(messageId, newContent, useTypewriter = true) {
     const messageElement = document.getElementById(messageId);
     if (messageElement) {
-        const contentElement = messageElement.querySelector('.message-content');
-        if (contentElement) {
-            contentElement.innerHTML = formatMessage(newContent);
+        const messageBubble = messageElement.querySelector('.message-bubble');
+        if (messageBubble) {
+            // Use typewriter for final results but not for real-time progress updates
+            if (useTypewriter) {
+                currentTypewriter = new TypewriterEffect(messageBubble, newContent);
+                currentTypewriter.start();
+            } else {
+                messageBubble.innerHTML = formatMessage(newContent);
+            }
         }
     }
 }
@@ -362,7 +356,7 @@ function scrollToBottom() {
     }
 }
 
-function addMessage(sender, content, type = null, messageId = null, useTypewriter = false) {
+function addMessage(sender, content, type = null, messageId = null, useTypewriter = null) {
     const messageDiv = document.createElement('div');
     messageDiv.className = `message ${sender} fade-in`;
     
@@ -407,8 +401,9 @@ function addMessage(sender, content, type = null, messageId = null, useTypewrite
     // Scroll to bottom
     scrollToBottom();
     
-    // Use typewriter effect for assistant messages
-    if (useTypewriter && sender === 'assistant') {
+    // Use fast typewriter effect for ALL assistant messages by default
+    // Only skip if explicitly set to false
+    if (sender === 'assistant' && useTypewriter !== false) {
         currentTypewriter = new TypewriterEffect(messageBubble, content);
         currentTypewriter.start();
     }
@@ -418,33 +413,75 @@ function addMessage(sender, content, type = null, messageId = null, useTypewrite
 
 // Helper function to format message content (markdown and other formatting)
 function formatMessage(content) {
-    // Check if marked library is available for markdown parsing
+    // Skip placeholder system entirely and format directly
+    let result = content;
+    
+    // Step 1: Clean up any placeholder artifacts and HTML issues FIRST
+    result = result.replace(/CHEMICAL_PLACEHOLDER_\d+/g, 'PSMILES');
+    result = result.replace(/__CHEMICAL_PLACEHOLDER_\d+__/g, '[*]');
+    
+    // Fix HTML artifact issues - remove malformed HTML before headers
+    result = result.replace(/[a-zA-Z-]+">([#]*\s*[🧪🔍📚🎯✅❌⚠️💡🚀]\s*)/g, '$1');
+    result = result.replace(/PSMILES-generation-results">/g, '');
+    result = result.replace(/psmiles-[a-z-]+\">/g, '');
+    
+    // Remove redundant PSMILES lines in explanations
+    result = result.replace(/AI Explanation:\s*PSMILES:\s*\[[^\]]*\][A-Za-z0-9\[\]\(\)=\#\-\+\*]*\s*\n\s*/g, 'AI Explanation:\n');
+    result = result.replace(/PSMILES:\s*\[[^\]]*\][A-Za-z0-9\[\]\(\)=\#\-\+\*]*\s*\n\s*EXPLANATION:/g, 'EXPLANATION:');
+    
+    // Step 2: Process with markdown
     if (typeof marked !== 'undefined') {
-        // Configure marked for better formatting
+        // Configure marked to be more lenient with HTML
         marked.setOptions({
-            breaks: true,     // Enable line breaks
-            gfm: true,        // GitHub flavored markdown
-            sanitize: false   // Allow HTML
+            breaks: true,
+            gfm: true,
+            sanitize: false,
+            pedantic: false,
+            smartLists: true,
+            smartypants: false
         });
-        return marked.parse(content);
+        
+        result = marked.parse(result);
     } else {
-        // Fallback: enhanced text formatting
-        return content
-            .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')  // Bold
-            .replace(/\*(.*?)\*/g, '<em>$1</em>')              // Italic
-            .replace(/`(.*?)`/g, '<code>$1</code>')            // Code
-            .replace(/^### (.*$)/gm, '<h3>$1</h3>')           // H3 headers
-            .replace(/^## (.*$)/gm, '<h2>$1</h2>')            // H2 headers
-            .replace(/^# (.*$)/gm, '<h1>$1</h1>')             // H1 headers
-            .replace(/^\- (.*$)/gm, '<li>$1</li>')            // List items
-            .replace(/^(\d+\.)\s(.*$)/gm, '<ol><li>$2</li></ol>') // Numbered lists
-            .replace(/---/g, '<hr>')                          // Horizontal rules
-            .replace(/\n\n/g, '</p><p>')                      // Paragraphs
-            .replace(/\n/g, '<br>')                           // Line breaks
-            .replace(/^(.)/gm, '<p>$1')                       // Wrap in paragraphs
-            .replace(/<p><\/p>/g, '')                         // Remove empty paragraphs
+        // Fallback processing
+        result = result
+            .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+            .replace(/(?<!\*)\*([^*\n]+)\*(?!\*)/g, '<em>$1</em>')
+            .replace(/`(.*?)`/g, '<code>$1</code>')
+            .replace(/^### (.*$)/gm, '<h3>$1</h3>')
+            .replace(/^## (.*$)/gm, '<h2>$1</h2>')
+            .replace(/^# (.*$)/gm, '<h1>$1</h1>')
+            .replace(/^\- (.*$)/gm, '<li>$1</li>')
+            .replace(/^(\d+\.)\s(.*$)/gm, '<ol><li>$2</li></ol>')
+            .replace(/---/g, '<hr>')
+            .replace(/\n\n/g, '</p><p>')
+            .replace(/\n/g, '<br>')
+            .replace(/^(.)/gm, '<p>$1')
+            .replace(/<p><\/p>/g, '')
             + '</p>';
     }
+    
+    // Step 3: Apply chemical formatting directly after markdown
+    // Format PSMILES: patterns
+    result = result.replace(/PSMILES:\s*([A-Za-z0-9\[\]\(\)=\#\-\+\*]+)/gi, 
+        'PSMILES: <code class="psmiles-code">$1</code>');
+    
+    // Format standalone chemical symbols [*] and elements
+    result = result.replace(/\[\*\]/g, '<span class="chemical-symbol">[*]</span>');
+    result = result.replace(/\[([A-Z][a-z]?)\]/g, '<span class="chemical-symbol">[$1]</span>');
+    
+    // Format the word PSMILES itself (not in code blocks)
+    result = result.replace(/(?<!<code[^>]*>.*?)\bPSMILES\b(?!.*?<\/code>)/gi, 
+        '<span class="psmiles-keyword">PSMILES</span>');
+    
+    // Format chemical formulas
+    result = result.replace(/\b([A-Z][a-z]?\d+[A-Z][a-z]?\d*(?:[A-Z][a-z]?\d*)*)\b/g, 
+        '<span class="chemical-formula">$1</span>');
+    
+    // Step 4: Final cleanup of any remaining artifacts
+    result = result.replace(/class="[^"]*-generation-results[^"]*"/g, '');
+    
+    return result;
 }
 
 function clearChat() {
@@ -527,8 +564,8 @@ function setMode(mode) {
     });
     
     // Update header
-    if (elements.currentModeText) {
-        elements.currentModeText.textContent = config.title;
+    if (elements.currentMode) {
+        elements.currentMode.textContent = config.title;
     }
     if (elements.modeDescription) {
         elements.modeDescription.textContent = config.description;
@@ -670,26 +707,14 @@ function updateStatusIndicator(status) {
 
 // ====== Loading States ======
 function showLoading() {
+    // Loading overlay removed - AI agent works directly
     isLoading = true;
-    
-    if (elements.loadingOverlay) {
-        elements.loadingOverlay.classList.add('active');
-    }
-    
-    if (elements.loadingDetails && modeConfig[currentMode]) {
-        elements.loadingDetails.textContent = modeConfig[currentMode].loadingText;
-    }
-    
     updateSendButton();
 }
 
 function hideLoading() {
+    // Loading overlay removed - AI agent works directly  
     isLoading = false;
-    
-    if (elements.loadingOverlay) {
-        elements.loadingOverlay.classList.remove('active');
-    }
-    
     updateSendButton();
 }
 

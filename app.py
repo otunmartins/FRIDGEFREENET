@@ -18,10 +18,13 @@ import time
 from threading import Thread
 import queue
 import urllib.parse
+import re
 
 from literature_mining_system import MaterialsLiteratureMiner
 from chatbot_system import InsulinAIChatbot
 from mcp_client import SimplifiedMCPLiteratureMinerSync
+from psmiles_generator import PSMILESGenerator
+from llamol_integration import llamol_manager, LLAMOL_AVAILABLE
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'insulin-ai-secret-key-2024')
@@ -31,10 +34,11 @@ CORS(app)
 literature_miner = None
 mcp_literature_miner = None
 chatbot = None
+psmiles_generator = None
 
 def initialize_systems():
-    """Initialize the literature mining and chatbot systems."""
-    global literature_miner, mcp_literature_miner, chatbot
+    """Initialize the literature mining, chatbot, and PSMILES generation systems."""
+    global literature_miner, mcp_literature_miner, chatbot, psmiles_generator
     
     try:
         # Initialize literature mining system
@@ -48,11 +52,41 @@ def initialize_systems():
             ollama_host=ollama_host
         )
         
-        # Initialize chatbot system
+        # Initialize chatbot system with enhanced memory and model selection
+        memory_type = os.environ.get('CHATBOT_MEMORY_TYPE', 'buffer_window')
+        memory_dir = os.environ.get('CHATBOT_MEMORY_DIR', 'chat_memory')
+        default_model_type = os.environ.get('DEFAULT_MODEL_TYPE', 'ollama')  # 'ollama' or 'llamol'
+        llamol_model = os.environ.get('LLAMOL_MODEL', 'osunlp/LlaSMol-Mistral-7B')
+        
         chatbot = InsulinAIChatbot(
+            model_type=default_model_type,
             ollama_model=ollama_model,
-            ollama_host=ollama_host
+            ollama_host=ollama_host,
+            llamol_model=llamol_model,
+            memory_type=memory_type,
+            memory_dir=memory_dir
         )
+        
+        # Initialize PSMILES generator with model selection support
+        try:
+            psmiles_model_type = os.environ.get('PSMILES_MODEL_TYPE', 'ollama')
+            if psmiles_model_type == 'llamol' and LLAMOL_AVAILABLE:
+                # Use LlaSMol for PSMILES generation
+                psmiles_generator = PSMILESGenerator(
+                    model_type='llamol',
+                    llamol_model=llamol_model
+                )
+            else:
+                # Use Ollama for PSMILES generation
+                psmiles_generator = PSMILESGenerator(
+                    model_type='ollama',
+                    ollama_model=ollama_model,
+                    ollama_host=ollama_host
+                )
+            print("✅ PSMILES Generator initialized successfully!")
+        except Exception as e:
+            print(f"⚠️ PSMILES Generator initialization failed: {e}")
+            psmiles_generator = None
         
         # Initialize MCP-enhanced literature miner (kept for future use, currently disabled)
         # try:
@@ -77,11 +111,12 @@ def index():
 
 @app.route('/api/chat', methods=['POST'])
 def chat():
-    """Handle chat messages from the frontend."""
+    """Handle chat messages from the frontend with multi-model support."""
     try:
         data = request.get_json()
         message = data.get('message', '').strip()
-        chat_type = data.get('type', 'general')  # 'general', 'literature', 'research', 'mcp'
+        chat_type = data.get('type', 'general')  # 'general', 'literature', 'research', 'mcp', 'psmiles'
+        model_type = data.get('model_type')  # Optional: 'ollama' or 'llamol'
         
         if not message:
             return jsonify({'error': 'Message cannot be empty'}), 400
@@ -92,11 +127,22 @@ def chat():
         
         session_id = session['session_id']
         
+        # Handle model switching if requested
+        if model_type and chatbot:
+            switch_success = chatbot.switch_model(model_type)
+            if not switch_success:
+                return jsonify({
+                    'error': f'Failed to switch to {model_type} model',
+                    'current_model': chatbot.get_model_info()
+                }), 400
+        
         # Route message based on type
         if chat_type == 'literature':
             response = handle_literature_query(message, session_id)
         elif chat_type == 'research':
             response = handle_research_query(message, session_id)
+        elif chat_type == 'psmiles':
+            response = handle_psmiles_query(message, session_id)
         else:
             response = handle_general_chat(message, session_id)
         
@@ -409,63 +455,402 @@ Material Candidates:
         }
 
 def handle_research_query(message: str, session_id: str) -> Dict:
-    """Handle research-focused queries using the specialized chatbot."""
+    """Handle research-focused queries with enhanced model support."""
     try:
         if not chatbot:
             return {
                 'type': 'error',
-                'message': 'Research chatbot not available. Please check Ollama connection.',
+                'message': 'Chatbot system not available. Please check system initialization.',
                 'timestamp': datetime.now().isoformat()
             }
         
-        # Use the research chatbot
-        response = chatbot.chat(
-            message=message,
-            session_id=session_id,
-            mode='research'
-        )
+        # Process message with research mode
+        result = chatbot.chat(message, session_id, mode='research')
         
-        return {
-            'type': 'research',
-            'message': response['message'],
-            'context': response.get('context', ''),
-            'timestamp': datetime.now().isoformat()
-        }
+        if result['success']:
+            response_data = {
+                'type': 'research',
+                'message': result['response'],
+                'model_info': {
+                    'type': result['model_type'],
+                    'name': result['model_name'],
+                    'capabilities': chatbot.get_chemistry_capabilities()
+                },
+                'session_id': session_id,
+                'timestamp': result['timestamp']
+            }
+            
+            # Add chemistry-specific information if available
+            if result.get('parsed_chemistry'):
+                response_data['chemistry'] = result['parsed_chemistry']
+            
+            return response_data
+        else:
+            return {
+                'type': 'error',
+                'message': f'Research query error: {result["error"]}',
+                'timestamp': result['timestamp']
+            }
         
     except Exception as e:
         return {
             'type': 'error',
-            'message': f'Research query error: {str(e)}',
+            'message': f'An error occurred in research mode: {str(e)}',
             'timestamp': datetime.now().isoformat()
         }
 
 def handle_general_chat(message: str, session_id: str) -> Dict:
-    """Handle general conversation."""
+    """Handle general chat messages with multi-model support."""
     try:
         if not chatbot:
             return {
                 'type': 'error',
-                'message': 'Chatbot not available. Please check Ollama connection.',
+                'message': 'Chatbot system not available. Please check system initialization.',
                 'timestamp': datetime.now().isoformat()
             }
         
-        # Use the general chatbot
-        response = chatbot.chat(
-            message=message,
-            session_id=session_id,
-            mode='general'
-        )
+        # Process message with chatbot
+        result = chatbot.chat(message, session_id, mode='general')
         
-        return {
-            'type': 'general',
-            'message': response['message'],
-            'timestamp': datetime.now().isoformat()
-        }
+        if result['success']:
+            response_data = {
+                'type': 'general',
+                'message': result['response'],
+                'model_info': {
+                    'type': result['model_type'],
+                    'name': result['model_name'],
+                    'memory_type': result['memory_type']
+                },
+                'session_id': session_id,
+                'timestamp': result['timestamp']
+            }
+            
+            # Add chemistry-specific information if available
+            if result.get('parsed_chemistry'):
+                response_data['chemistry'] = result['parsed_chemistry']
+            
+            return response_data
+        else:
+            return {
+                'type': 'error',
+                'message': f'Chat error: {result["error"]}',
+                'model_info': {
+                    'type': result['model_type'],
+                    'name': result['model_name']
+                },
+                'timestamp': result['timestamp']
+            }
         
     except Exception as e:
         return {
             'type': 'error',
-            'message': f'Chat error: {str(e)}',
+            'message': f'An error occurred in general chat: {str(e)}',
+            'timestamp': datetime.now().isoformat()
+        }
+
+def handle_psmiles_query(message: str, session_id: str) -> Dict:
+    """Handle PSMILES generation and validation queries."""
+    try:
+        if not psmiles_generator:
+            return {
+                'type': 'error',
+                'message': 'PSMILES generation system not available. Please check Ollama server.',
+                'suggestion': 'You can still use other modes like Literature Mining or Research Assistant.',
+                'timestamp': datetime.now().isoformat()
+            }
+        
+        # Enhanced PSMILES pattern to extract PSMILES strings from text
+        psmiles_pattern = r'([A-Za-z0-9\[\]\(\)\=\#\*\-\+\\\/]+)'
+        
+        # Determine the type of request
+        lower_message = message.lower()
+        
+        # Check for modification requests first (more specific)
+        modification_keywords = ['make', 'modify', 'change', 'extend', 'add', 'longer', 'shorter', 'complex']
+        is_modification = any(keyword in lower_message for keyword in modification_keywords)
+        
+        # Extract PSMILES strings from the message
+        potential_psmiles = re.findall(psmiles_pattern, message)
+        # Filter to likely PSMILES (contain common PSMILES elements)
+        psmiles_indicators = ['(', ')', '=', '[', ']', '*', 'C', 'N', 'O']
+        valid_psmiles = [p for p in potential_psmiles if len(p) > 2 and any(ind in p for ind in psmiles_indicators)]
+        
+        if any(keyword in lower_message for keyword in ['validate', 'check', 'verify', 'correct']):
+            # This seems like a validation request
+            if valid_psmiles:
+                # Use the longest match as the PSMILES string
+                psmiles_string = max(valid_psmiles, key=len)
+                result = psmiles_generator.validate_psmiles(psmiles_string, message)
+                
+                if result['success']:
+                    basic_val = result['basic_validation']
+                    detailed_val = result['detailed_validation']
+                    
+                    response_message = f"""
+## 🔍 PSMILES Validation Results
+
+**PSMILES String**: `{psmiles_string}`
+
+### Basic Syntax Check:
+- **Status**: {'✅ VALID' if basic_val['valid'] else '❌ INVALID'}
+- **Length**: {basic_val['length']} characters
+- **Connection Symbols**: {basic_val['connection_symbols'] if basic_val['connection_symbols'] else 'None found'}
+
+"""
+                    if basic_val['errors']:
+                        response_message += f"**Errors Found**:\n"
+                        for error in basic_val['errors']:
+                            response_message += f"- ❌ {error}\n"
+                    
+                    if basic_val['warnings']:
+                        response_message += f"**Warnings**:\n"
+                        for warning in basic_val['warnings']:
+                            response_message += f"- ⚠️ {warning}\n"
+                    
+                    response_message += f"""
+### AI Expert Analysis:
+{detailed_val}
+
+---
+**Need help with PSMILES syntax?** Try asking for examples or generation assistance!
+"""
+                    
+                    return {
+                        'type': 'psmiles_validation',
+                        'message': response_message,
+                        'validation_result': result,
+                        'timestamp': datetime.now().isoformat()
+                    }
+                else:
+                    return {
+                        'type': 'error',
+                        'message': f"Validation failed: {result.get('error', 'Unknown error')}",
+                        'timestamp': datetime.now().isoformat()
+                    }
+            else:
+                return {
+                    'type': 'error', 
+                    'message': 'Could not find a PSMILES string to validate in your message. Please include the PSMILES string you want to check.',
+                    'suggestion': 'Example: "Please validate this PSMILES: CC"',
+                    'timestamp': datetime.now().isoformat()
+                }
+        
+        elif any(keyword in lower_message for keyword in ['example', 'show me', 'list']):
+            # This seems like a request for examples
+            category = 'all'
+            if 'basic' in lower_message:
+                category = 'basic'
+            elif 'aromatic' in lower_message:
+                category = 'aromatic'
+            elif 'complex' in lower_message:
+                category = 'complex'
+            
+            examples = psmiles_generator.get_examples(category)
+            
+            response_message = f"""
+## 📚 PSMILES Examples ({category.title()})
+
+Here are some common PSMILES strings and their meanings:
+
+"""
+            for name, info in examples.items():
+                response_message += f"""
+**{name.replace('_', ' ').title()}**
+- PSMILES: `{info['psmiles']}`
+- Description: {info['description']}
+- Formula: {info['formula']}
+
+"""
+            
+            response_message += """
+---
+**Want to generate a custom polymer?** Describe the structure you need!
+**Need validation?** Share a PSMILES string and ask me to check it!
+"""
+            
+            return {
+                'type': 'psmiles_examples',
+                'message': response_message,
+                'examples': examples,
+                'timestamp': datetime.now().isoformat()
+            }
+        
+        elif is_modification and valid_psmiles:
+            # This is a modification request with an existing PSMILES
+            base_psmiles = max(valid_psmiles, key=len)  # Use the longest/most complex PSMILES found
+            
+            # Create enhanced modification prompt
+            modification_prompt = f"""
+I need to modify this existing PSMILES structure: {base_psmiles}
+
+User's modification request: {message}
+
+Please:
+1. Keep the original structure "{base_psmiles}" as the base
+2. Apply the requested modifications (add aromatic rings, extend length, etc.)
+3. If a target length is specified, try to reach approximately that length
+4. Ensure the result is chemically reasonable
+5. Use proper PSMILES syntax with connection points [*] where appropriate
+
+Generate the modified PSMILES structure now.
+"""
+            
+            result = psmiles_generator.interactive_generation(modification_prompt)
+            
+            if result['success']:
+                if 'generation' in result and 'validation' in result:
+                    # Full interactive generation with validation
+                    gen_result = result['generation']
+                    val_result = result['validation']
+                    
+                    psmiles = gen_result['psmiles']
+                    explanation = gen_result['explanation']
+                    basic_val = val_result['basic_validation']
+                    
+                    # Check if we achieved the target length if specified
+                    length_feedback = ""
+                    if any(char.isdigit() for char in message):
+                        # Extract numbers from the message (potential target lengths)
+                        numbers = re.findall(r'\d+', message)
+                        if numbers:
+                            target_length = int(numbers[-1])  # Use the last number as target length
+                            actual_length = len(psmiles)
+                            if abs(actual_length - target_length) > 20:  # If significantly different
+                                length_feedback = f"\n**Length Note**: Generated {actual_length} characters (target was ~{target_length}). "
+                                if actual_length < target_length:
+                                    length_feedback += "Try asking to add more complexity or repeat units for longer structures."
+                                else:
+                                    length_feedback += "Structure is longer than requested - this often happens with complex aromatics."
+                    
+                    response_message = f"""
+## 🔧 PSMILES Modification Results
+
+**Original PSMILES**: `{base_psmiles}` ({len(base_psmiles)} characters)
+
+**Your Request**: {message}
+
+### Modified PSMILES: `{psmiles}`
+
+### AI Explanation:
+{explanation}{length_feedback}
+
+### Validation Check:
+- **Status**: {'✅ VALID' if basic_val['valid'] else '❌ NEEDS REVIEW'}  
+- **Length**: {basic_val['length']} characters
+- **Connection Symbols**: {basic_val['connection_symbols'] if basic_val['connection_symbols'] else 'None (terminal connections)'}
+
+"""
+                    if basic_val['errors']:
+                        response_message += f"**Issues Found**:\n"
+                        for error in basic_val['errors']:
+                            response_message += f"- ❌ {error}\n"
+                    
+                    if basic_val['warnings']:
+                        response_message += f"**Notes**:\n"
+                        for warning in basic_val['warnings']:
+                            response_message += f"- ⚠️ {warning}\n"
+                    
+                    response_message += """
+---
+**Want to modify further?** Describe additional changes!
+**Need different complexity?** Ask for simpler or more complex variations!
+"""
+                    
+                    return {
+                        'type': 'psmiles_modification',
+                        'message': response_message,
+                        'generation_result': result,
+                        'base_psmiles': base_psmiles,
+                        'timestamp': datetime.now().isoformat()
+                    }
+                else:
+                    # Simple generation result
+                    return {
+                        'type': 'psmiles_modification',
+                        'message': f"**Original**: `{base_psmiles}`\n**Modified PSMILES**: `{result.get('psmiles', 'Not found')}`\n\n{result.get('explanation', '')}",
+                        'generation_result': result,
+                        'base_psmiles': base_psmiles,
+                        'timestamp': datetime.now().isoformat()
+                    }
+            else:
+                return {
+                    'type': 'error',
+                    'message': f"PSMILES modification failed: {result.get('error', 'Unknown error')}",
+                    'suggestion': f"Try simplifying your request or asking for help with modifying: {base_psmiles}",
+                    'timestamp': datetime.now().isoformat()
+                }
+                
+        else:
+            # This seems like a generation request (no existing PSMILES to modify)
+            result = psmiles_generator.interactive_generation(message)
+            
+            if result['success']:
+                if 'generation' in result and 'validation' in result:
+                    # Full interactive generation with validation
+                    gen_result = result['generation']
+                    val_result = result['validation']
+                    
+                    psmiles = gen_result['psmiles']
+                    explanation = gen_result['explanation']
+                    basic_val = val_result['basic_validation']
+                    
+                    response_message = f"""
+## 🧪 PSMILES Generation Results
+
+**Your Request**: {message}
+
+### Generated PSMILES: `{psmiles}`
+
+### AI Explanation:
+{explanation}
+
+### Validation Check:
+- **Status**: {'✅ VALID' if basic_val['valid'] else '❌ NEEDS REVIEW'}
+- **Length**: {basic_val['length']} characters
+- **Connection Symbols**: {basic_val['connection_symbols'] if basic_val['connection_symbols'] else 'None (terminal connections)'}
+
+"""
+                    if basic_val['errors']:
+                        response_message += f"**Issues Found**:\n"
+                        for error in basic_val['errors']:
+                            response_message += f"- ❌ {error}\n"
+                    
+                    if basic_val['warnings']:
+                        response_message += f"**Notes**:\n"
+                        for warning in basic_val['warnings']:
+                            response_message += f"- ⚠️ {warning}\n"
+                    
+                    response_message += """
+---
+**Want to modify this structure?** Describe your changes!
+**Need more examples?** Ask for basic, aromatic, or complex examples!
+"""
+                    
+                    return {
+                        'type': 'psmiles_generation',
+                        'message': response_message,
+                        'generation_result': result,
+                        'timestamp': datetime.now().isoformat()
+                    }
+                else:
+                    # Simple generation result
+                    return {
+                        'type': 'psmiles_generation',
+                        'message': f"**Generated PSMILES**: `{result.get('psmiles', 'Not found')}`\n\n{result.get('explanation', '')}",
+                        'generation_result': result,
+                        'timestamp': datetime.now().isoformat()
+                    }
+            else:
+                return {
+                    'type': 'error',
+                    'message': f"PSMILES generation failed: {result.get('error', 'Unknown error')}",
+                    'timestamp': datetime.now().isoformat()
+                }
+                
+    except Exception as e:
+        return {
+            'type': 'error',
+            'message': f'PSMILES processing error: {str(e)}',
             'timestamp': datetime.now().isoformat()
         }
 
@@ -483,52 +868,305 @@ def new_chat():
         
         return jsonify({
             'message': 'New chat session started',
-            'session_id': session['session_id']
+            'session_id': session['session_id'],
+            'memory_type': chatbot.memory_type if chatbot else 'unknown'
         })
         
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/status')
-def status():
-    """Check system status."""
+@app.route('/api/memory/summary', methods=['GET'])
+def get_memory_summary():
+    """Get memory summary for current session."""
     try:
-        status_info = {
-            'literature_miner': literature_miner is not None,
-            'chatbot': chatbot is not None,
-            'timestamp': datetime.now().isoformat()
-        }
+        if 'session_id' not in session:
+            return jsonify({'error': 'No active session'}), 400
         
-        # Test Ollama connection
-        if chatbot:
-            try:
-                test_response = chatbot.test_connection()
-                status_info['ollama_connection'] = test_response
-            except Exception as e:
-                status_info['ollama_connection'] = f'Error: {str(e)}'
-        else:
-            status_info['ollama_connection'] = 'Not initialized'
+        if not chatbot:
+            return jsonify({'error': 'Chatbot not available'}), 500
         
-        # Test SemanticScholar literature mining system
-        if literature_miner:
-            try:
-                status_info['literature_mining_status'] = 'Available'
-                status_info['literature_mining_features'] = [
-                    'Direct Semantic Scholar integration',
-                    'Intelligent search strategies',
-                    'AI-enhanced material analysis',
-                    'Real-time progress updates'
-                ]
-            except Exception as e:
-                status_info['literature_mining_status'] = f'Error: {str(e)}'
-        else:
-            status_info['literature_mining_status'] = 'Not available'
-            status_info['literature_mining_features'] = []
+        session_id = session['session_id']
+        mode = request.args.get('mode', 'general')
         
-        return jsonify(status_info)
+        summary = chatbot.get_memory_summary(session_id, mode)
+        return jsonify(summary)
         
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+@app.route('/api/memory/clear', methods=['POST'])
+def clear_memory():
+    """Clear memory for current session."""
+    try:
+        if 'session_id' not in session:
+            return jsonify({'error': 'No active session'}), 400
+        
+        if not chatbot:
+            return jsonify({'error': 'Chatbot not available'}), 500
+        
+        data = request.get_json() or {}
+        session_id = session['session_id']
+        mode = data.get('mode')  # If None, clears all modes
+        
+        chatbot.clear_history(session_id, mode)
+        
+        return jsonify({
+            'message': f'Memory cleared for {"all modes" if not mode else mode} in session {session_id}',
+            'session_id': session_id,
+            'mode': mode
+        })
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/memory/config', methods=['GET'])
+def get_memory_config():
+    """Get current memory configuration."""
+    try:
+        if not chatbot:
+            return jsonify({'error': 'Chatbot not available'}), 500
+        
+        return jsonify({
+            'memory_type': chatbot.memory_type,
+            'memory_dir': chatbot.memory_dir,
+            'available_types': ['buffer', 'summary', 'buffer_window'],
+            'description': {
+                'buffer': 'Keeps full conversation history',
+                'summary': 'Summarizes old conversations to save tokens',
+                'buffer_window': 'Keeps only the last N interactions (default: 10)'
+            }
+        })
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/models/info', methods=['GET'])
+def get_model_info():
+    """Get information about available and current models."""
+    try:
+        if not chatbot:
+            return jsonify({'error': 'Chatbot system not initialized'}), 500
+        
+        model_info = chatbot.get_model_info()
+        chemistry_capabilities = chatbot.get_chemistry_capabilities()
+        
+        return jsonify({
+            'success': True,
+            'current_model': {
+                'type': model_info['model_type'],
+                'name': model_info['model_name'],
+                'memory_type': model_info['memory_type']
+            },
+            'available_models': model_info['available_models'],
+            'chemistry_capabilities': chemistry_capabilities,
+            'llamol_available': LLAMOL_AVAILABLE,
+            'llamol_loaded_models': model_info.get('llamol_loaded_models', []),
+            'timestamp': datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        return jsonify({'error': f'Failed to get model info: {str(e)}'}), 500
+
+@app.route('/api/models/switch', methods=['POST'])
+def switch_model():
+    """Switch between different model types."""
+    try:
+        if not chatbot:
+            return jsonify({'error': 'Chatbot system not initialized'}), 500
+        
+        data = request.get_json()
+        model_type = data.get('model_type')
+        model_name = data.get('model_name')
+        
+        if not model_type:
+            return jsonify({'error': 'model_type is required'}), 400
+        
+        if model_type not in ['ollama', 'llamol']:
+            return jsonify({'error': 'model_type must be either "ollama" or "llamol"'}), 400
+        
+        success = chatbot.switch_model(model_type, model_name)
+        
+        if success:
+            new_info = chatbot.get_model_info()
+            return jsonify({
+                'success': True,
+                'message': f'Successfully switched to {model_type} model',
+                'current_model': {
+                    'type': new_info['model_type'],
+                    'name': new_info['model_name']
+                },
+                'timestamp': datetime.now().isoformat()
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': f'Failed to switch to {model_type} model'
+            }), 400
+            
+    except Exception as e:
+        return jsonify({'error': f'Model switching error: {str(e)}'}), 500
+
+@app.route('/api/models/llamol/load', methods=['POST'])
+def load_llamol_model():
+    """Load a specific LlaSMol model."""
+    try:
+        if not LLAMOL_AVAILABLE:
+            return jsonify({'error': 'LlaSMol not available'}), 400
+        
+        data = request.get_json()
+        model_name = data.get('model_name', 'osunlp/LlaSMol-Mistral-7B')
+        device = data.get('device', 'auto')
+        
+        success = llamol_manager.load_model(model_name, device)
+        
+        if success:
+            return jsonify({
+                'success': True,
+                'message': f'Successfully loaded LlaSMol model: {model_name}',
+                'loaded_models': llamol_manager.list_loaded_models(),
+                'timestamp': datetime.now().isoformat()
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': f'Failed to load LlaSMol model: {model_name}'
+            }), 400
+            
+    except Exception as e:
+        return jsonify({'error': f'Model loading error: {str(e)}'}), 500
+
+@app.route('/api/models/llamol/unload', methods=['POST'])
+def unload_llamol_model():
+    """Unload a specific LlaSMol model to free memory."""
+    try:
+        if not LLAMOL_AVAILABLE:
+            return jsonify({'error': 'LlaSMol not available'}), 400
+        
+        data = request.get_json()
+        model_name = data.get('model_name')
+        
+        if not model_name:
+            return jsonify({'error': 'model_name is required'}), 400
+        
+        success = llamol_manager.unload_model(model_name)
+        
+        if success:
+            return jsonify({
+                'success': True,
+                'message': f'Successfully unloaded LlaSMol model: {model_name}',
+                'loaded_models': llamol_manager.list_loaded_models(),
+                'timestamp': datetime.now().isoformat()
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': f'Model {model_name} was not loaded'
+            }), 400
+            
+    except Exception as e:
+        return jsonify({'error': f'Model unloading error: {str(e)}'}), 500
+
+@app.route('/api/status')
+def status():
+    """Get system status including all components and models."""
+    try:
+        status_data = {
+            'timestamp': datetime.now().isoformat(),
+            'systems': {}
+        }
+        
+        # Literature mining system status
+        if literature_miner:
+            try:
+                test_result = literature_miner.test_connection()
+                status_data['systems']['literature_mining'] = {
+                    'status': 'active',
+                    'test_result': test_result,
+                    'ollama_model': literature_miner.ollama_model,
+                    'ollama_host': literature_miner.ollama_host
+                }
+            except Exception as e:
+                status_data['systems']['literature_mining'] = {
+                    'status': 'error',
+                    'error': str(e)
+                }
+        else:
+            status_data['systems']['literature_mining'] = {'status': 'not_initialized'}
+        
+        # Chatbot system status with model information
+        if chatbot:
+            try:
+                model_info = chatbot.get_model_info()
+                chemistry_capabilities = chatbot.get_chemistry_capabilities()
+                test_result = chatbot.test_connection()
+                
+                status_data['systems']['chatbot'] = {
+                    'status': 'active',
+                    'test_result': test_result,
+                    'current_model': {
+                        'type': model_info['model_type'],
+                        'name': model_info['model_name'],
+                        'memory_type': model_info['memory_type']
+                    },
+                    'available_models': model_info['available_models'],
+                    'chemistry_capabilities': chemistry_capabilities,
+                    'llamol_available': LLAMOL_AVAILABLE
+                }
+                
+                if LLAMOL_AVAILABLE:
+                    status_data['systems']['chatbot']['llamol_loaded_models'] = model_info.get('llamol_loaded_models', [])
+                    
+            except Exception as e:
+                status_data['systems']['chatbot'] = {
+                    'status': 'error',
+                    'error': str(e)
+                }
+        else:
+            status_data['systems']['chatbot'] = {'status': 'not_initialized'}
+        
+        # PSMILES generator status
+        if psmiles_generator:
+            try:
+                test_result = psmiles_generator.test_connection()
+                status_data['systems']['psmiles_generator'] = {
+                    'status': 'active',
+                    'test_result': test_result,
+                    'model_type': getattr(psmiles_generator, 'model_type', 'unknown'),
+                    'model_name': getattr(psmiles_generator, 'model_name', 'unknown')
+                }
+            except Exception as e:
+                status_data['systems']['psmiles_generator'] = {
+                    'status': 'error',
+                    'error': str(e)
+                }
+        else:
+            status_data['systems']['psmiles_generator'] = {'status': 'not_initialized'}
+        
+        # MCP literature mining status
+        if mcp_literature_miner:
+            status_data['systems']['mcp_literature_mining'] = {'status': 'active'}
+        else:
+            status_data['systems']['mcp_literature_mining'] = {'status': 'disabled'}
+        
+        # Overall system health
+        active_systems = sum(1 for system in status_data['systems'].values() 
+                           if system.get('status') == 'active')
+        total_systems = len(status_data['systems'])
+        
+        status_data['overall'] = {
+            'healthy': active_systems >= 2,  # At least chatbot and one other system
+            'active_systems': active_systems,
+            'total_systems': total_systems,
+            'llamol_integration': LLAMOL_AVAILABLE
+        }
+        
+        return jsonify(status_data)
+        
+    except Exception as e:
+        return jsonify({
+            'error': f'Status check failed: {str(e)}',
+            'timestamp': datetime.now().isoformat()
+        }), 500
 
 @app.route('/api/examples')
 def examples():
@@ -859,7 +1497,7 @@ if __name__ == '__main__':
     # Initialize systems
     if initialize_systems():
         print("🌟 All systems ready!")
-        app.run(debug=True, host='0.0.0.0', port=8000)
+        app.run(debug=True, host='0.0.0.0', port=8003)
     else:
         print("❌ Failed to initialize systems. Please check:")
         print("   1. Ollama is running (ollama serve)")

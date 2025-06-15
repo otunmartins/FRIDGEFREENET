@@ -176,6 +176,7 @@ class MaterialsLiteratureMiner:
     def _generate_search_strategy(self, user_request: str) -> Dict:
         """
         Generate search strategy based on user request using LLM.
+        UPDATED: Now much more aggressive and permissive!
         
         Args:
             user_request (str): User's request or question
@@ -183,48 +184,69 @@ class MaterialsLiteratureMiner:
         Returns:
             Dict: Search strategy with queries and focus areas
         """
-        strategy_prompt = f"""# Intelligent Search Strategy Generation
-
-PROJECT CONTEXT: AI-Driven Design of Fridge-Free Insulin Delivery Patches
-OBJECTIVE: Discover materials that can maintain insulin stability without refrigeration using transdermal patches
+        strategy_prompt = f"""# AGGRESSIVE Material Search Strategy (CAST WIDE NET!)
 
 USER REQUEST: "{user_request}"
 
-TASK: Analyze the user request and generate an appropriate search strategy.
+TASK: Generate 8 comprehensive search queries that will find papers with ANY materials that could be relevant.
 
-You are an expert in materials science and biomedical engineering. Based on the user's request, generate 5 specific, targeted search queries that will find the most relevant research papers.
+SEARCH PHILOSOPHY: 
+- Be EXTREMELY permissive and inclusive
+- Cast the widest possible net to find materials
+- Don't be too specific about insulin - find ALL biomaterials
+- Include both direct and indirect material searches
+- Cover multiple application areas that might have transferable materials
 
-Consider:
-- Key materials mentioned or implied in the request
-- Temperature stability requirements (room temperature, 25-40°C)
-- Insulin delivery mechanisms (transdermal, controlled release)
-- Biocompatibility requirements
-- Both experimental and computational research approaches
+SEARCH AREAS TO COVER:
+1. **General Biomaterials**: Any biocompatible materials research
+2. **Drug Delivery**: Any drug delivery system research  
+3. **Polymer Science**: General polymer research with material properties
+4. **Nanotechnology**: Any nanomaterial research
+5. **Material Characterization**: Studies testing material properties
+6. **Biomedical Applications**: Materials in biomedical contexts
+7. **Protein/Peptide Research**: Any work with proteins that mentions materials
+8. **Related Applications**: Similar applications that might use transferable materials
+
+IMPORTANT SEARCH RULES:
+- Use NATURAL LANGUAGE queries only (no boolean operators like AND, OR, NOT)
+- Use simple phrases that researchers would naturally search for
+- Avoid complex search syntax or operators
+- Keep queries focused but not overly narrow
+- Use common scientific terminology
+- Make queries that would work well in academic search engines
 
 OUTPUT FORMAT (JSON):
 {{
-  "relevant": true/false,
-  "relevance_score": 1-10,
-  "interpretation": "Brief explanation of how you interpreted the user's request",
+  "relevant": true,
+  "relevance_score": 10,
+  "interpretation": "Aggressive search to find ALL materials mentioned in: {user_request}",
   "search_queries": [
-    "specific search query 1 targeting main material type",
-    "specific search query 2 targeting application area", 
-    "specific search query 3 targeting stability mechanism",
-    "specific search query 4 targeting delivery method",
-    "specific search query 5 targeting characterization/testing"
+    "biomaterials drug delivery systems",
+    "polymer materials biomedical applications", 
+    "nanoparticles controlled release drug delivery",
+    "hydrogels biocompatible materials",
+    "protein delivery polymer systems",
+    "biocompatible materials thermal stability",
+    "drug delivery materials characterization",
+    "biodegradable polymers medical applications"
   ],
-  "extraction_focus": "What specific material properties and data to prioritize during extraction"
+  "extraction_focus": "Extract ALL materials regardless of application specificity"
 }}
 
-EXAMPLES:
-- Request: "smart polymers" → Queries about thermoresponsive polymers, PNIPAM, temperature-controlled release
-- Request: "nanotechnology" → Queries about nanoparticles, nanocarriers, encapsulation, targeted delivery
-- Request: "synthetic polymers" → Queries about PLGA, PEG, synthetic biodegradable polymers, controlled release
+CRITICAL INSTRUCTIONS:
+- NO boolean operators (AND, OR, NOT, +, -, quotes)
+- Use natural language phrases only
+- Make queries broad enough to find diverse materials research
+- Include general materials science terms
+- Don't restrict to insulin-specific research
+- Use common scientific keywords that appear in many papers
+- Ensure queries will find papers with extensive materials discussions
+- Prioritize papers likely to have materials lists and characterization data
 
-Generate search queries that are specific enough to find high-quality research but broad enough to capture relevant work. Use scientific terminology that researchers would actually use in their papers."""
+Generate 8 natural language search queries now that will maximize material discovery:"""
 
         try:
-            print("🤖 Generating intelligent search strategy...")
+            print("🤖 Generating AGGRESSIVE search strategy...")
             response = self.ollama.client.chat(
                 model=self.ollama.model_name,
                 messages=[{
@@ -232,25 +254,50 @@ Generate search queries that are specific enough to find high-quality research b
                     'content': strategy_prompt
                 }],
                 options={
-                    'temperature': 0.2,
-                    'num_predict': 1000
+                    'temperature': 0.3,  # Slightly higher for more diverse queries
+                    'num_predict': 1500
                 }
             )
             
             # Parse the strategy response
             strategy = self._parse_strategy_response(response['message']['content'])
+            
+            # Ensure we have enough queries
+            if len(strategy.get('search_queries', [])) < 5:
+                strategy['search_queries'] = self._get_aggressive_fallback_queries()
+            
             return strategy
             
         except Exception as e:
             print(f"Error in strategy generation: {e}")
-            # Fallback to default behavior
+            # Fallback to aggressive default queries
             return {
                 "relevant": True,
-                "relevance_score": 5,
-                "interpretation": f"Using default search for: {user_request}",
-                "search_queries": self._get_default_search_queries(),
-                "extraction_focus": "General insulin delivery materials"
+                "relevance_score": 10,
+                "interpretation": f"Using aggressive search for: {user_request}",
+                "search_queries": self._get_aggressive_fallback_queries(),
+                "extraction_focus": "Extract ALL materials mentioned regardless of application"
             }
+    
+    def _get_aggressive_fallback_queries(self) -> List[str]:
+        """
+        Get aggressive fallback search queries that cast a very wide net.
+        UPDATED: Now uses natural language without boolean operators.
+        """
+        return [
+            "biomaterials drug delivery characterization",
+            "polymer materials biomedical applications", 
+            "nanoparticles controlled release systems",
+            "hydrogels biocompatible materials research",
+            "protein delivery polymer carriers",
+            "biocompatible polymers thermal properties",
+            "materials thermal stability characterization",
+            "controlled release drug delivery systems",
+            "biodegradable materials biomedical applications",
+            "materials science biocompatibility testing",
+            "polymer nanoparticles drug carriers",
+            "biomaterials characterization thermal stability"
+        ]
     
     def _parse_strategy_response(self, response_text: str) -> Dict:
         """Parse LLM strategy response."""
@@ -338,16 +385,17 @@ Generate search queries that are specific enough to find high-quality research b
     def _get_default_search_queries(self) -> List[str]:
         """
         Get default search queries for insulin delivery materials.
+        UPDATED: Now uses natural language without boolean operators.
         """
         return [
-            "hydrogels insulin delivery transdermal patch",
-            "polymer protein stabilization thermal",
-            "biocompatible materials drug delivery skin",
-            "nanomaterials insulin encapsulation controlled release",
-            "protein stabilization polymers temperature",
-            "peptide delivery hydrogels biocompatible",
-            "insulin stability materials room temperature",
-            "transdermal drug delivery patches"
+            "hydrogels insulin delivery transdermal patches",
+            "polymer protein stabilization thermal properties",
+            "biocompatible materials drug delivery skin applications",
+            "nanoparticles insulin encapsulation controlled release",
+            "protein stabilization polymers temperature stability",
+            "peptide delivery hydrogels biocompatible systems",
+            "insulin stability materials room temperature storage",
+            "transdermal drug delivery patch materials"
         ]
     
     def _deduplicate_papers(self, papers: List[Dict]) -> List[Dict]:
@@ -792,24 +840,35 @@ Provide a comprehensive technical summary."""
         """
         Extract detailed per-paper material information using LLM analysis.
         This replaces the old JSON-based extraction with a fully LLM-driven approach.
+        UPDATED: Added fast mode for quicker results
         """
         material_candidates = []
         
         try:
+            # PERFORMANCE OPTIMIZATION: Detect if user wants fast results
+            fast_mode = False
+            if extraction_focus and ('quick' in extraction_focus.lower() or 'fast' in extraction_focus.lower()):
+                fast_mode = True
+            
+            # Limit papers for performance - use fewer papers but get results faster
+            max_papers_to_analyze = 5 if fast_mode else 10
+            papers_to_analyze = papers[:max_papers_to_analyze]
+            
             if progress_callback:
-                progress_callback(f"Analyzing papers individually with focus: {extraction_focus}")
+                mode_msg = "FAST MODE" if fast_mode else "COMPREHENSIVE MODE"
+                progress_callback(f"Using {mode_msg}: analyzing {len(papers_to_analyze)} papers with focus: {extraction_focus}")
                 progress_callback("   └─ Generating detailed per-paper material analysis...")
             else:
                 print(f"Analyzing papers individually with focus: {extraction_focus}")
             
-            print(f"🔍 DEBUG: Analyzing {len(papers)} papers individually")
+            print(f"🔍 DEBUG: Analyzing {len(papers_to_analyze)} papers individually ({'FAST MODE' if fast_mode else 'COMPREHENSIVE MODE'})")
             
             # Analyze each paper individually for detailed material information
-            for i, paper in enumerate(papers[:10], 1):  # Limit to 10 papers for faster web performance
+            for i, paper in enumerate(papers_to_analyze, 1):
                 if progress_callback:
-                    progress_callback(f"   └─ Analyzing paper {i}/{min(10, len(papers))}: {paper.get('title', 'Unknown')[:50]}...")
+                    progress_callback(f"   └─ Analyzing paper {i}/{len(papers_to_analyze)}: {paper.get('title', 'Unknown')[:50]}...")
                 
-                material_analysis = self._analyze_single_paper_for_materials(paper, extraction_focus, i)
+                material_analysis = self._analyze_single_paper_for_materials(paper, extraction_focus, i, fast_mode=fast_mode)
                 
                 if material_analysis:
                     material_candidates.extend(material_analysis)
@@ -831,10 +890,11 @@ Provide a comprehensive technical summary."""
                 print(error_msg)
             return []
     
-    def _analyze_single_paper_for_materials(self, paper: Dict, extraction_focus: str, paper_number: int) -> List[Dict]:
+    def _analyze_single_paper_for_materials(self, paper: Dict, extraction_focus: str, paper_number: int, fast_mode: bool = False) -> List[Dict]:
         """
         Analyze a single paper for material information using LLM.
         Returns detailed material information with Harvard citations.
+        UPDATED: Now supports fast mode for quicker results!
         """
         # DEBUG: Print the actual paper structure
         print(f"🔍 DEBUG: Paper {paper_number} structure:")
@@ -858,48 +918,86 @@ Provide a comprehensive technical summary."""
         # Generate Harvard citation
         harvard_citation = self._generate_harvard_citation(paper)
         
-        # Create analysis prompt for this specific paper
-        analysis_prompt = f"""# Individual Paper Analysis for Insulin Delivery Materials
+        # Choose prompt based on mode
+        if fast_mode:
+            # FAST MODE: Shorter, more focused prompt for speed
+            analysis_prompt = f"""# FAST Material Extraction
 
-RESEARCH FOCUS: {extraction_focus}
+PAPER: {title}
+ABSTRACT: {abstract[:500]}...
+
+TASK: Quickly extract ALL materials mentioned. Be fast but thorough.
+
+OUTPUT FORMAT (one per line):
+Material: [name]
+Citation: {harvard_citation}
+Key Findings: [brief info]
+
+Extract ALL materials now (keep it fast):"""
+            
+            llm_options = {
+                'temperature': 0.1,
+                'num_predict': 1000  # Shorter for speed
+            }
+        else:
+            # COMPREHENSIVE MODE: Full detailed analysis
+            analysis_prompt = f"""# COMPREHENSIVE Material Extraction (EXTRACT EVERYTHING!)
 
 PAPER TO ANALYZE:
 Title: {title}
-Authors: {', '.join([str(author) for author in authors[:3]] if isinstance(authors, list) else [str(authors)])}{'...' if isinstance(authors, list) and len(authors) > 3 else ''}
-Year: {year}
-Journal: {journal}
 Abstract: {abstract}
 
-TASK: Analyze this paper to identify specific materials that could be relevant for insulin stabilization and delivery, especially for room temperature storage applications.
+TASK: Extract EVERY SINGLE MATERIAL mentioned in this paper. Be extremely inclusive and permissive.
 
-ANALYSIS REQUIREMENTS:
-1. Look for specific material names (polymers, nanoparticles, hydrogels, etc.)
-2. Extract composition and chemical structure information
-3. Find thermal stability data and temperature ranges
-4. Identify stabilization mechanisms for proteins/insulin
-5. Note biocompatibility and delivery efficiency data
+INSTRUCTIONS - EXTRACT ALL OF THESE:
+1. **Polymers**: ANY polymer mentioned (PLA, PLGA, PEG, chitosan, alginate, collagen, etc.)
+2. **Nanoparticles**: Any nanoparticle system (gold, silver, lipid, polymer nanoparticles)
+3. **Hydrogels**: Any gel system mentioned
+4. **Drug Delivery Systems**: Any delivery vehicle or carrier
+5. **Biomaterials**: Any biological or synthetic material
+6. **Composites**: Any composite or hybrid materials
+7. **Coatings**: Any surface coating or modification
+8. **Matrices**: Any matrix material for encapsulation
+9. **Membranes**: Any membrane or barrier material
+10. **Chemical Compounds**: Any chemical substance with potential material properties
+11. **Natural Materials**: Any plant, animal, or natural derived materials
+12. **Synthetic Materials**: Any man-made materials or chemicals
 
-OUTPUT FORMAT: For each relevant material found in this paper, provide a detailed analysis following this structure:
+EXTRACTION RULES - BE VERY PERMISSIVE:
+- Extract materials even if they're only mentioned briefly
+- Include materials from ANY application (not just drug delivery)
+- Extract materials from methods, results, and discussion sections
+- Include both trade names and chemical names
+- Don't worry about insulin specificity - extract ALL materials!
+- If unsure whether something is a material, INCLUDE IT!
 
-Material: [Specific material name]
+OUTPUT FORMAT: For each material found, provide:
+
+Material: [Exact material name as mentioned in paper]
 Citation: {harvard_citation}
-Composition: [Chemical composition, molecular formula, or structural details]
-Thermal Stability: [Temperature range, duration, specific stability data]
-Stabilization Mechanism: [How the material stabilizes proteins/insulin]
-Biocompatibility: [Safety data, toxicity information, regulatory status]
-Delivery Properties: [Release kinetics, permeation data, efficiency]
-Key Findings: [Most important research findings about this material]
-Confidence: [1-10 score based on data quality and relevance]
+Composition: [Any chemical/structural info mentioned, or "Not specified"]
+Thermal Stability: [Any temperature data mentioned, or "Not specified"]
+Stabilization Mechanism: [Any mechanism mentioned, or "Not specified"] 
+Biocompatibility: [Any safety/biocompatibility info, or "Not specified"]
+Delivery Properties: [Any delivery/release properties, or "Not specified"]
+Key Findings: [Any findings about this material from the paper]
+Confidence: [Score 1-10: 10=extensively studied, 5=mentioned with some detail, 1=only mentioned]
 
-IMPORTANT INSTRUCTIONS:
-- Only analyze materials explicitly mentioned in this paper
-- Be specific about temperatures, time periods, and quantitative data
-- If no relevant materials are found, respond with "No relevant materials identified in this paper"
-- Focus on materials with demonstrated insulin or protein interaction
-- Extract exact values and data points when available
-- Prioritize materials relevant to: {extraction_focus}
+CRITICAL: Be EXTREMELY inclusive. Extract materials even if:
+- Only mentioned once
+- Used in different applications than drug delivery
+- Have limited data
+- Are components of larger systems
+- Are used as controls or comparisons
 
-Analyze the paper now:"""
+If you find NO materials at all (very rare), respond with "No materials identified in this paper"
+
+Extract ALL materials now:"""
+            
+            llm_options = {
+                'temperature': 0.1,
+                'num_predict': 3000
+            }
         
         try:
             response = self.ollama.client.chat(
@@ -908,16 +1006,16 @@ Analyze the paper now:"""
                     'role': 'user',
                     'content': analysis_prompt
                 }],
-                options={
-                    'temperature': 0.2,  # Low temperature for factual analysis
-                    'num_predict': 2000
-                }
+                options=llm_options
             )
             
             analysis_text = response['message']['content'].strip()
             
             # Parse the analysis into structured material data
             materials = self._parse_single_paper_analysis(analysis_text, harvard_citation, paper_number)
+            
+            mode_text = "FAST" if fast_mode else "COMPREHENSIVE"
+            print(f"   ✅ Extracted {len(materials)} materials from paper {paper_number} ({mode_text} MODE)")
             
             return materials
             
@@ -1003,32 +1101,139 @@ Analyze the paper now:"""
     def _parse_single_paper_analysis(self, analysis_text: str, citation: str, paper_number: int) -> List[Dict]:
         """
         Parse the LLM analysis of a single paper into structured material data.
+        FIXED: Now properly extracts materials that the LLM finds!
         """
         materials = []
         
-        # Check if no materials were found
-        if "no relevant materials identified" in analysis_text.lower():
+        print(f"   🔍 DEBUG: Parsing analysis for paper {paper_number}")
+        print(f"   📝 Analysis text length: {len(analysis_text)} characters")
+        print(f"   📝 First 500 chars: {analysis_text[:500]}...")
+        
+        # Check if no materials were found - be more specific
+        no_materials_phrases = [
+            "no materials identified in this paper",
+            "no relevant materials identified in this paper", 
+            "no materials found in this paper"
+        ]
+        
+        analysis_lower = analysis_text.lower()
+        no_materials_found = any(phrase in analysis_lower for phrase in no_materials_phrases)
+        
+        if no_materials_found:
+            print(f"   ❌ No materials explicitly stated for paper {paper_number}")
             return []
         
-        # Split analysis into sections by "Material:" markers
+        # IMPROVED: Try multiple parsing approaches
+        print(f"   🔧 Trying multiple parsing approaches...")
+        
+        # Approach 1: Split by "Material:" markers (original)
         import re
-        material_sections = re.split(r'\n\s*Material:\s*', analysis_text, flags=re.IGNORECASE)
+        material_sections_1 = re.split(r'\n\s*(?:Material|MATERIAL):\s*', analysis_text, flags=re.IGNORECASE)
+        print(f"   📊 Approach 1 - Found {len(material_sections_1)} sections by 'Material:' split")
         
-        # Skip the first section (usually intro text)
+        # Approach 2: Split by numbered materials (1. Material:, 2. Material:, etc.)
+        material_sections_2 = re.split(r'\n\s*\d+\.\s*(?:Material|MATERIAL):\s*', analysis_text, flags=re.IGNORECASE)
+        print(f"   📊 Approach 2 - Found {len(material_sections_2)} sections by numbered split")
+        
+        # Approach 3: Look for any numbered list items that might be materials
+        numbered_items = re.findall(r'\n\s*\d+\.\s*(?:Material[:\s]+)?([^\n]+?)(?:\n|$)', analysis_text, flags=re.IGNORECASE)
+        print(f"   📊 Approach 3 - Found {len(numbered_items)} numbered items")
+        
+        # Use the approach that finds the most sections
+        if len(material_sections_1) > len(material_sections_2):
+            material_sections = material_sections_1
+            approach_used = "Material: split"
+        else:
+            material_sections = material_sections_2  
+            approach_used = "Numbered Material: split"
+        
+        print(f"   ✅ Using {approach_used} - {len(material_sections)} sections")
+        
+        # Extract from sections (skip first which is usually intro)
         for i, section in enumerate(material_sections[1:], 1):
-            material_data = self._extract_material_from_analysis_section(section, citation, paper_number, i)
-            if material_data:
-                materials.append(material_data)
+            if section.strip():
+                print(f"   🔍 Processing material section {i}: {section[:100]}...")
+                material_data = self._extract_material_from_analysis_section(section, citation, paper_number, i)
+                if material_data:
+                    materials.append(material_data)
+                    print(f"   ✅ Successfully extracted material {i}: {material_data['material_name']}")
+                else:
+                    print(f"   ❌ Failed to extract material from section {i}")
+            else:
+                print(f"   ⚠️  Empty section {i}")
         
+        # FALLBACK: If no materials found, try extracting from numbered items
+        if not materials and numbered_items:
+            print(f"   🔧 Fallback: Extracting from {len(numbered_items)} numbered items")
+            for i, item in enumerate(numbered_items[:10], 1):  # Limit to 10
+                item = item.strip()
+                if item and len(item) > 3:  # Skip very short items
+                    print(f"   🔍 Processing numbered item {i}: {item[:50]}...")
+                    # Create a simple material entry
+                    material_data = {
+                        'material_name': item[:100],  # First 100 chars as material name
+                        'harvard_citation': citation,
+                        'paper_number': paper_number,
+                        'material_composition': 'Extracted from numbered list',
+                        'thermal_stability_temp_range': 'Not specified',
+                        'stabilization_mechanism': 'Not specified',
+                        'biocompatibility_data': 'Not specified',
+                        'delivery_properties': 'Not specified',
+                        'key_findings': f'Material mentioned in paper: {item}',
+                        'confidence_score': 3,
+                        'extraction_method': 'Numbered list fallback'
+                    }
+                    materials.append(material_data)
+                    print(f"   ✅ Added fallback material {i}: {item[:50]}...")
+        
+        print(f"   📋 Total materials extracted from paper {paper_number}: {len(materials)}")
         return materials
     
     def _extract_material_from_analysis_section(self, section: str, citation: str, paper_number: int, material_number: int) -> Dict:
         """
         Extract structured material data from a single analysis section.
+        FIXED: Now much more robust at parsing different LLM output formats!
         """
         try:
             lines = section.strip().split('\n')
-            material_name = lines[0].strip() if lines else "Unknown Material"
+            
+            # Try to find material name in different ways
+            material_name = None
+            
+            # Method 1: First line is the material name
+            if lines and lines[0].strip():
+                first_line = lines[0].strip()
+                # Remove common prefixes
+                prefixes_to_remove = ['material:', 'name:', '1.', '2.', '3.', '4.', '5.', '6.', '7.', '8.', '9.', '10.']
+                first_line_clean = first_line.lower()
+                for prefix in prefixes_to_remove:
+                    if first_line_clean.startswith(prefix):
+                        first_line = first_line[len(prefix):].strip()
+                        break
+                if first_line:
+                    material_name = first_line
+            
+            # Method 2: Look for "Material: XXX" pattern in any line
+            if not material_name:
+                for line in lines:
+                    line = line.strip()
+                    if line.lower().startswith('material:'):
+                        material_name = line[9:].strip()  # Remove "Material:"
+                        break
+            
+            # Method 3: Just use first non-empty line
+            if not material_name:
+                for line in lines:
+                    line = line.strip()
+                    if line and len(line) > 2:
+                        material_name = line
+                        break
+            
+            # Fallback
+            if not material_name:
+                material_name = f"Material_{paper_number}_{material_number}"
+            
+            print(f"      🔍 Extracted material name: '{material_name}'")
             
             # Initialize material data structure
             material_data = {
@@ -1045,67 +1250,79 @@ Analyze the paper now:"""
                 'extraction_method': 'Individual LLM Analysis'
             }
             
-            # Parse each field from the analysis
-            current_field = None
-            current_content = []
+            # Parse fields more flexibly
+            section_text = section.lower()
             
-            for line in lines[1:]:
-                line = line.strip()
-                
-                # Check for field markers
-                if line.lower().startswith('citation:'):
-                    current_field = 'harvard_citation'
-                    current_content = [line.replace('Citation:', '').strip()]
-                elif line.lower().startswith('composition:'):
-                    current_field = 'material_composition'
-                    current_content = [line.replace('Composition:', '').strip()]
-                elif line.lower().startswith('thermal stability:'):
-                    current_field = 'thermal_stability_temp_range'
-                    current_content = [line.replace('Thermal Stability:', '').strip()]
-                elif line.lower().startswith('stabilization mechanism:'):
-                    current_field = 'stabilization_mechanism'
-                    current_content = [line.replace('Stabilization Mechanism:', '').strip()]
-                elif line.lower().startswith('biocompatibility:'):
-                    current_field = 'biocompatibility_data'
-                    current_content = [line.replace('Biocompatibility:', '').strip()]
-                elif line.lower().startswith('delivery properties:'):
-                    current_field = 'delivery_properties'
-                    current_content = [line.replace('Delivery Properties:', '').strip()]
-                elif line.lower().startswith('key findings:'):
-                    current_field = 'key_findings'
-                    current_content = [line.replace('Key Findings:', '').strip()]
-                elif line.lower().startswith('confidence:'):
-                    confidence_text = line.replace('Confidence:', '').strip()
+            # Look for key information in the section text
+            field_mappings = {
+                'composition': ['composition:', 'chemical:', 'formula:', 'structure:'],
+                'thermal_stability_temp_range': ['thermal:', 'temperature:', 'stability:', 'thermal stability:'],
+                'stabilization_mechanism': ['mechanism:', 'stabilization:', 'stabilization mechanism:'],
+                'biocompatibility_data': ['biocompatibility:', 'biocompatible:', 'safety:', 'toxicity:'],
+                'delivery_properties': ['delivery:', 'release:', 'properties:', 'delivery properties:'],
+                'key_findings': ['findings:', 'key findings:', 'results:', 'conclusion:']
+            }
+            
+            for field, keywords in field_mappings.items():
+                for keyword in keywords:
+                    if keyword in section_text:
+                        # Find the line containing this keyword
+                        for line in lines:
+                            if keyword in line.lower():
+                                # Extract the part after the keyword
+                                parts = line.split(':', 1)
+                                if len(parts) > 1:
+                                    value = parts[1].strip()
+                                    if value and value.lower() not in ['not specified', 'none', 'n/a']:
+                                        material_data[field] = value
+                                        break
+                        break
+            
+            # Look for confidence score
+            for line in lines:
+                if 'confidence:' in line.lower():
                     try:
-                        # Extract number from confidence text
                         import re
-                        confidence_match = re.search(r'(\d+)', confidence_text)
+                        confidence_match = re.search(r'(\d+)', line)
                         if confidence_match:
-                            material_data['confidence_score'] = int(confidence_match.group(1))
+                            score = int(confidence_match.group(1))
+                            if 1 <= score <= 10:
+                                material_data['confidence_score'] = score
                     except:
                         pass
-                elif current_field and line:
-                    # Continue previous field
-                    current_content.append(line)
-                elif current_field and current_content:
-                    # Save current field
-                    material_data[current_field] = ' '.join(current_content).strip()
-                    current_field = None
-                    current_content = []
+                    break
             
-            # Save any remaining field
-            if current_field and current_content:
-                material_data[current_field] = ' '.join(current_content).strip()
+            # Add some debug info to key findings
+            if len(section) > 100:
+                material_data['key_findings'] = f"Material extracted from detailed analysis: {section[:200]}..."
+            else:
+                material_data['key_findings'] = f"Material mentioned: {section}"
             
-            # Only return if we have a valid material name
-            if material_data['material_name'] and material_data['material_name'] != "Unknown Material":
+            # Accept ALL materials that have any name
+            if material_data['material_name'].strip():
+                print(f"      ✅ Successfully created material entry: {material_data['material_name']}")
                 return material_data
             
             return None
             
         except Exception as e:
             print(f"   ❌ Error parsing material section: {e}")
-            return None
+            # Even on error, try to return something useful
+            error_material = {
+                'material_name': f"Material_{paper_number}_{material_number}_ERROR",
+                'harvard_citation': citation,
+                'paper_number': paper_number,
+                'material_composition': 'Extraction error occurred',
+                'thermal_stability_temp_range': 'Not specified',
+                'stabilization_mechanism': 'Not specified',
+                'biocompatibility_data': 'Not specified',
+                'delivery_properties': 'Not specified',
+                'key_findings': f'Error during extraction: {str(e)}. Raw section: {section[:100]}...',
+                'confidence_score': 1,
+                'extraction_method': 'Individual LLM Analysis (with errors)'
+            }
+            print(f"      ⚠️  Returning error material: {error_material['material_name']}")
+            return error_material
 
     def _generate_process_explanation(self, user_request: str, phase: str, 
                                     search_queries: List[str] = None, 

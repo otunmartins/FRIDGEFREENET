@@ -8,51 +8,235 @@ This system provides specialized conversation modes:
 - Research: Technical research assistance
 - Literature: Integration with literature mining
 
-Based on proven patterns from the Medium article on building local AI chatbots.
+Enhanced with persistent conversation memory using LangChain memory components.
+Now supports multiple model backends including Ollama and LlaSMol.
 """
 
 import os
 import json
 from typing import Dict, List, Optional
 from datetime import datetime
+import pickle
 
 from langchain_ollama import OllamaLLM
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.runnables import RunnablePassthrough
+from langchain.memory import ConversationBufferMemory, ConversationSummaryMemory, ConversationBufferWindowMemory
+from langchain.schema import BaseMessage
+
+# Import LlaSMol integration
+try:
+    from llamol_integration import LlaSMolChatWrapper, llamol_manager, LLAMOL_AVAILABLE
+    print("✅ LlaSMol integration available")
+except ImportError as e:
+    LLAMOL_AVAILABLE = False
+    print(f"⚠️ LlaSMol integration not available: {e}")
 
 
 class InsulinAIChatbot:
     """
     Conversational AI system for insulin delivery patch research.
-    Uses proven LangChain patterns for reliable chat functionality.
+    Enhanced with persistent LangChain memory for conversation context.
+    Now supports multiple model backends: Ollama and LlaSMol.
     """
     
     def __init__(self, 
+                 model_type: str = "ollama",
                  ollama_model: str = "llama3.2",
-                 ollama_host: str = "http://localhost:11434"):
+                 ollama_host: str = "http://localhost:11434",
+                 llamol_model: str = "osunlp/LlaSMol-Mistral-7B",
+                 memory_type: str = "buffer_window",
+                 memory_dir: str = "chat_memory"):
         """
-        Initialize the Insulin AI Chatbot.
+        Initialize the Insulin AI Chatbot with model selection and persistent memory.
         
         Args:
-            ollama_model (str): Ollama model name
-            ollama_host (str): Ollama server host
+            model_type (str): Type of model to use ('ollama' or 'llamol')
+            ollama_model (str): Ollama model name (if model_type='ollama')
+            ollama_host (str): Ollama server host (if model_type='ollama')
+            llamol_model (str): LlaSMol model name (if model_type='llamol')
+            memory_type (str): Type of memory to use ('buffer', 'summary', 'buffer_window')
+            memory_dir (str): Directory to store memory files
         """
-        self.model_name = ollama_model
-        self.host = ollama_host
-        self.chat_histories = {}  # session_id -> list of messages
+        self.model_type = model_type.lower()
+        self.memory_type = memory_type
+        self.memory_dir = memory_dir
         
-        # Initialize LLM
-        try:
-            self.llm = OllamaLLM(model=ollama_model, base_url=ollama_host)
-            print(f"✅ Chatbot initialized with {ollama_model}")
-        except Exception as e:
-            print(f"❌ Failed to initialize chatbot: {e}")
-            raise
+        # Create memory directory if it doesn't exist
+        if not os.path.exists(memory_dir):
+            os.makedirs(memory_dir)
+        
+        # Initialize the appropriate LLM
+        if self.model_type == "llamol":
+            if not LLAMOL_AVAILABLE:
+                print("❌ LlaSMol not available, falling back to Ollama")
+                self.model_type = "ollama"
+            else:
+                print(f"🔬 Initializing LlaSMol model: {llamol_model}")
+                try:
+                    self.llm_wrapper = llamol_manager.get_model(llamol_model)
+                    if self.llm_wrapper:
+                        self.llm = self.llm_wrapper  # Use wrapper directly
+                        self.model_name = llamol_model
+                        print(f"✅ LlaSMol chatbot initialized with {llamol_model}")
+                    else:
+                        print("❌ Failed to load LlaSMol model, falling back to Ollama")
+                        self.model_type = "ollama"
+                except Exception as e:
+                    print(f"❌ LlaSMol initialization failed: {e}, falling back to Ollama")
+                    self.model_type = "ollama"
+        
+        if self.model_type == "ollama":
+            self.model_name = ollama_model
+            self.host = ollama_host
+            try:
+                self.llm = OllamaLLM(model=ollama_model, base_url=ollama_host)
+                print(f"✅ Ollama chatbot initialized with {ollama_model}")
+            except Exception as e:
+                print(f"❌ Failed to initialize Ollama chatbot: {e}")
+                raise
+        
+        # Initialize memory storage for different sessions
+        self.memories = {}  # session_id -> memory object
+        self.chat_histories = {}  # Keep for backward compatibility
         
         # Setup prompts for different modes
         self.prompts = self._setup_prompts()
     
+    def switch_model(self, 
+                    model_type: str, 
+                    model_name: Optional[str] = None) -> bool:
+        """
+        Switch between different model types.
+        
+        Args:
+            model_type (str): 'ollama' or 'llamol'
+            model_name (str): Specific model name (optional)
+            
+        Returns:
+            bool: Success status
+        """
+        try:
+            old_type = self.model_type
+            old_name = self.model_name
+            
+            if model_type.lower() == "llamol":
+                if not LLAMOL_AVAILABLE:
+                    print("❌ LlaSMol not available")
+                    return False
+                
+                target_model = model_name or "osunlp/LlaSMol-Mistral-7B"
+                wrapper = llamol_manager.get_model(target_model)
+                if wrapper:
+                    self.model_type = "llamol"
+                    self.model_name = target_model
+                    self.llm = wrapper
+                    print(f"✅ Switched to LlaSMol: {target_model}")
+                    return True
+                else:
+                    print(f"❌ Failed to load LlaSMol model: {target_model}")
+                    return False
+            
+            elif model_type.lower() == "ollama":
+                target_model = model_name or "llama3.2"
+                host = getattr(self, 'host', 'http://localhost:11434')
+                
+                new_llm = OllamaLLM(model=target_model, base_url=host)
+                self.model_type = "ollama"
+                self.model_name = target_model
+                self.llm = new_llm
+                print(f"✅ Switched to Ollama: {target_model}")
+                return True
+            
+            else:
+                print(f"❌ Unknown model type: {model_type}")
+                return False
+        
+        except Exception as e:
+            print(f"❌ Failed to switch model: {e}")
+            return False
+    
+    def _create_memory(self, session_id: str, mode: str) -> BaseMessage:
+        """Create appropriate memory type for a session."""
+        memory_key = f"{session_id}_{mode}"
+        
+        if memory_key in self.memories:
+            return self.memories[memory_key]
+        
+        # Load existing memory from file if it exists
+        memory_file = os.path.join(self.memory_dir, f"{memory_key}.pkl")
+        
+        if self.memory_type == "buffer":
+            memory = ConversationBufferMemory(
+                memory_key="history",
+                return_messages=True
+            )
+        elif self.memory_type == "summary":
+            memory = ConversationSummaryMemory(
+                llm=self.llm,
+                memory_key="history",
+                return_messages=True
+            )
+        elif self.memory_type == "buffer_window":
+            memory = ConversationBufferWindowMemory(
+                k=10,  # Keep last 10 interactions
+                memory_key="history",
+                return_messages=True
+            )
+        else:
+            # Default to buffer window
+            memory = ConversationBufferWindowMemory(
+                k=10,
+                memory_key="history", 
+                return_messages=True
+            )
+        
+        # Try to load existing memory
+        if os.path.exists(memory_file):
+            try:
+                with open(memory_file, 'rb') as f:
+                    saved_memory = pickle.load(f)
+                    memory.chat_memory = saved_memory.chat_memory
+                print(f"📚 Loaded existing memory for {memory_key}")
+            except Exception as e:
+                print(f"⚠️ Could not load memory file {memory_file}: {e}")
+        
+        self.memories[memory_key] = memory
+        return memory
+    
+    def _save_memory(self, session_id: str, mode: str):
+        """Save memory to file for persistence."""
+        memory_key = f"{session_id}_{mode}"
+        if memory_key not in self.memories:
+            return
+        
+        memory_file = os.path.join(self.memory_dir, f"{memory_key}.pkl")
+        try:
+            with open(memory_file, 'wb') as f:
+                pickle.dump(self.memories[memory_key], f)
+        except Exception as e:
+            print(f"⚠️ Could not save memory to {memory_file}: {e}")
+    
+    def _format_history_for_prompt(self, memory) -> str:
+        """Format memory history for use in prompts."""
+        try:
+            messages = memory.chat_memory.messages
+            if not messages:
+                return "No previous conversation history."
+            
+            formatted_history = []
+            for message in messages[-20:]:  # Last 20 messages to avoid token limits
+                if isinstance(message, HumanMessage):
+                    formatted_history.append(f"Human: {message.content}")
+                elif isinstance(message, AIMessage):
+                    formatted_history.append(f"Assistant: {message.content}")
+            
+            return "\n".join(formatted_history)
+        except Exception as e:
+            print(f"⚠️ Error formatting history: {e}")
+            return "No previous conversation history."
+
     def _setup_prompts(self) -> Dict:
         """Setup prompt templates for different conversation modes using proven patterns."""
         
@@ -182,95 +366,224 @@ Previous conversations:
              session_id: str, 
              mode: str = 'general') -> Dict:
         """
-        Send a message to the chatbot and get a response using proven LangChain patterns.
+        Process a chat message with enhanced memory and multi-model support.
         
         Args:
-            message (str): User message
-            session_id (str): Session identifier for conversation history
+            message (str): User's message
+            session_id (str): Session identifier for memory
             mode (str): Conversation mode ('general', 'research', 'literature')
             
         Returns:
-            Dict: Response with message and metadata
+            Dict: Response with metadata including model information
         """
         try:
+            # Create or get memory for this session and mode
+            memory = self._create_memory(session_id, mode)
+            
+            # Get the appropriate prompt for the mode
             if mode not in self.prompts:
-                raise ValueError(f"Unknown mode: {mode}. Available: {list(self.prompts.keys())}")
+                mode = 'general'  # fallback to general mode
             
-            # Get conversation history for this session
-            if session_id not in self.chat_histories:
-                self.chat_histories[session_id] = []
-            
-            history = self.chat_histories[session_id]
-            
-            # Format history as string (similar to Medium article pattern)
-            history_str = ""
-            for msg in history[-10:]:  # Keep last 10 messages for context
-                if msg['role'] == 'user':
-                    history_str += f"User: {msg['content']}\n"
-                elif msg['role'] == 'assistant':
-                    history_str += f"Assistant: {msg['content']}\n"
-            
-            # Get the appropriate prompt and apply context using .partial()
             prompt_template = self.prompts[mode]
-            qa_prompt_local = prompt_template.partial(history=history_str)
             
-            # Create chain using proven pattern from Medium article
-            llm_chain = {"input": RunnablePassthrough()} | qa_prompt_local | self.llm
+            # Format history for the prompt
+            history = self._format_history_for_prompt(memory)
             
-            # Invoke the chain
-            response = llm_chain.invoke(message)
+            # Generate response using the selected model
+            if self.model_type == "llamol":
+                # For LlaSMol, we might want to add chemistry-specific context
+                chemistry_context = self._add_chemistry_context(message, mode)
+                formatted_message = chemistry_context if chemistry_context else message
+                response_text = self.llm.invoke(formatted_message)
+            else:
+                # For Ollama, use the standard prompt template
+                formatted_prompt = prompt_template.format(input=message, history=history)
+                response_text = self.llm.invoke(formatted_prompt)
             
-            # Add to conversation history
-            self.chat_histories[session_id].append({
-                'role': 'user',
-                'content': message,
-                'timestamp': datetime.now().isoformat()
-            })
+            # Add to memory
+            memory.chat_memory.add_user_message(message)
+            memory.chat_memory.add_ai_message(response_text)
             
-            self.chat_histories[session_id].append({
-                'role': 'assistant', 
-                'content': response,
-                'timestamp': datetime.now().isoformat()
-            })
+            # Save memory to file
+            self._save_memory(session_id, mode)
+            
+            # Extract chemistry-specific information if using LlaSMol
+            parsed_chemistry = {}
+            if self.model_type == "llamol" and hasattr(self.llm, '_parse_chemistry_response'):
+                parsed_chemistry = self.llm._parse_chemistry_response(response_text)
             
             return {
-                'message': response.strip(),
-                'mode': mode,
+                'success': True,
+                'response': response_text,
                 'session_id': session_id,
+                'mode': mode,
+                'model_type': self.model_type,
+                'model_name': self.model_name,
+                'memory_type': self.memory_type,
+                'parsed_chemistry': parsed_chemistry,
                 'timestamp': datetime.now().isoformat()
             }
             
         except Exception as e:
-            error_message = f"I apologize, but I encountered an error: {str(e)}"
-            
-            # Still add to history for debugging
-            if session_id in self.chat_histories:
-                self.chat_histories[session_id].append({
-                    'role': 'user',
-                    'content': message,
-                    'timestamp': datetime.now().isoformat()
-                })
-                self.chat_histories[session_id].append({
-                    'role': 'assistant',
-                    'content': error_message,
-                    'timestamp': datetime.now().isoformat()
-                })
-            
             return {
-                'message': error_message,
-                'mode': mode,
+                'success': False,
+                'error': str(e),
                 'session_id': session_id,
-                'error': True,
+                'mode': mode,
+                'model_type': self.model_type,
+                'model_name': self.model_name,
                 'timestamp': datetime.now().isoformat()
             }
     
-    def clear_history(self, session_id: str):
+    def _add_chemistry_context(self, message: str, mode: str) -> Optional[str]:
+        """
+        Add chemistry-specific context for LlaSMol model.
+        
+        Args:
+            message (str): User message
+            mode (str): Conversation mode
+            
+        Returns:
+            Optional[str]: Enhanced message with chemistry context, or None to use original
+        """
+        if self.model_type != "llamol":
+            return None
+        
+        # Detect chemistry-related keywords and add appropriate context
+        chemistry_keywords = {
+            'smiles': ['smiles', 'molecular structure', 'chemical structure'],
+            'iupac': ['iupac', 'chemical name', 'compound name'],
+            'property': ['solubility', 'toxicity', 'permeability', 'stability', 'logd', 'logp'],
+            'synthesis': ['synthesis', 'reaction', 'reagent', 'product', 'reactant'],
+            'molecular_formula': ['molecular formula', 'chemical formula'],
+        }
+        
+        message_lower = message.lower()
+        detected_tasks = []
+        
+        for task, keywords in chemistry_keywords.items():
+            if any(keyword in message_lower for keyword in keywords):
+                detected_tasks.append(task)
+        
+        # Add insulin and patch-specific context
+        if mode == 'research' or any(term in message_lower for term in ['insulin', 'patch', 'polymer', 'delivery']):
+            context_prefix = """As a chemistry expert working on insulin delivery patch materials, please provide detailed technical information. """
+            if detected_tasks:
+                context_prefix += f"Focus on aspects related to: {', '.join(detected_tasks)}. "
+            return context_prefix + message
+        
+        return None
+    
+    def get_model_info(self) -> Dict:
+        """
+        Get information about the currently active model.
+        
+        Returns:
+            Dict: Model information
+        """
+        info = {
+            'model_type': self.model_type,
+            'model_name': self.model_name,
+            'memory_type': self.memory_type,
+            'available_models': {}
+        }
+        
+        # Add Ollama info
+        info['available_models']['ollama'] = ['llama3.2', 'llama2', 'codellama', 'mistral', 'mixtral']
+        
+        # Add LlaSMol info if available
+        if LLAMOL_AVAILABLE:
+            try:
+                info['available_models']['llamol'] = LlaSMolChatWrapper.get_available_models()
+                info['llamol_loaded_models'] = llamol_manager.list_loaded_models()
+            except:
+                info['available_models']['llamol'] = []
+                info['llamol_loaded_models'] = []
+        else:
+            info['llamol_available'] = False
+        
+        return info
+    
+    def get_chemistry_capabilities(self) -> Dict:
+        """
+        Get information about chemistry-specific capabilities.
+        
+        Returns:
+            Dict: Chemistry capabilities information
+        """
+        if self.model_type == "llamol":
+            return {
+                'chemistry_model': True,
+                'supported_tasks': [
+                    'name_conversion',
+                    'property_prediction', 
+                    'molecule_captioning',
+                    'molecule_generation',
+                    'forward_synthesis',
+                    'retrosynthesis'
+                ],
+                'supported_formats': [
+                    'SMILES',
+                    'IUPAC',
+                    'Molecular Formula',
+                    'Chemical Properties'
+                ],
+                'specialized_for': 'Chemistry and molecular analysis'
+            }
+        else:
+            return {
+                'chemistry_model': False,
+                'specialized_for': 'General conversation and research assistance',
+                'note': 'Switch to LlaSMol model for specialized chemistry capabilities'
+            }
+    
+    def clear_history(self, session_id: str, mode: str = None):
         """Clear conversation history for a session."""
+        if mode:
+            # Clear specific mode memory
+            memory_key = f"{session_id}_{mode}"
+            if memory_key in self.memories:
+                self.memories[memory_key].clear()
+                self._save_memory(session_id, mode)
+        else:
+            # Clear all memories for this session
+            modes = ['general', 'research', 'literature']
+            for mode in modes:
+                memory_key = f"{session_id}_{mode}"
+                if memory_key in self.memories:
+                    self.memories[memory_key].clear()
+                    self._save_memory(session_id, mode)
+        
+        # Clear backward compatibility history
         if session_id in self.chat_histories:
             del self.chat_histories[session_id]
     
+    def get_memory_summary(self, session_id: str, mode: str = 'general') -> Dict:
+        """Get a summary of the conversation memory for a session."""
+        memory_key = f"{session_id}_{mode}"
+        
+        if memory_key not in self.memories:
+            return {
+                'session_id': session_id,
+                'mode': mode,
+                'message_count': 0,
+                'memory_type': self.memory_type,
+                'summary': 'No conversation history found.'
+            }
+        
+        memory = self.memories[memory_key]
+        messages = memory.chat_memory.messages
+        
+        return {
+            'session_id': session_id,
+            'mode': mode,
+            'message_count': len(messages),
+            'memory_type': self.memory_type,
+            'summary': f"Conversation contains {len(messages)} messages using {self.memory_type} memory."
+        }
+    
     def get_history(self, session_id: str) -> List[Dict]:
-        """Get conversation history for a session."""
+        """Get conversation history for a session (backward compatibility)."""
         if session_id not in self.chat_histories:
             return []
         
@@ -308,7 +621,7 @@ def test_chatbot():
             session_id="test_session",
             mode="general"
         )
-        print(f"✅ General mode response: {response['message'][:150]}...")
+        print(f"✅ General mode response: {response['response'][:150]}...")
         
         # Test research mode
         print("\n🔬 Testing Research Mode...")
@@ -317,7 +630,7 @@ def test_chatbot():
             session_id="test_session",
             mode="research"
         )
-        print(f"✅ Research mode response: {response['message'][:150]}...")
+        print(f"✅ Research mode response: {response['response'][:150]}...")
         
         # Test literature mode
         print("\n📚 Testing Literature Mode...")
@@ -326,7 +639,7 @@ def test_chatbot():
             session_id="test_session",
             mode="literature"
         )
-        print(f"✅ Literature mode response: {response['message'][:150]}...")
+        print(f"✅ Literature mode response: {response['response'][:150]}...")
         
         print("\n🎉 All chatbot tests passed! Ready for web application integration.")
         

@@ -513,6 +513,7 @@ body {
   border-radius: var(--border-radius-sm);
   font-family: 'Monaco', 'Consolas', monospace;
   font-size: 0.9em;
+  border: 1px solid var(--border-color);
 }
 
 .message-bubble pre {
@@ -927,4 +928,73 @@ body {
 @keyframes slideInLeft {
   from { transform: translateX(-100%); }
   to { transform: translateX(0); }
+}
+
+/* ====== Chemical Formula Styling ====== */
+.chemical-formula {
+  font-family: 'Courier New', monospace;
+  font-weight: 500;
+  color: var(--accent-color);
+  background: rgba(13, 110, 253, 0.1);
+  padding: 0.1rem 0.2rem;
+  border-radius: 0.2rem;
+  font-size: 0.9em;
+}
+
+/* Chemical symbols like [*], [H], [C] */
+.chemical-symbol {
+  font-family: 'Courier New', monospace;
+  font-weight: 600;
+  color: #dc3545;
+  background: rgba(220, 53, 69, 0.1);
+  padding: 0.1rem 0.2rem;
+  border-radius: 0.2rem;
+  font-size: 0.9em;
+}
+
+/* PSMILES keyword styling */
+.psmiles-keyword {
+  font-weight: 600;
+  color: #0d6efd;
+  font-family: inherit;
+  background: none;
+  padding: 0;
+}
+
+/* PSMILES code styling */
+.psmiles-code {
+  background: #f8f9fa !important;
+  border: 1px solid #e9ecef !important;
+  color: #0d6efd !important;
+  font-weight: 500 !important;
+  letter-spacing: 0.5px !important;
+  font-family: 'Courier New', monospace !important;
+}
+
+/* Enhanced PSMILES and chemical structure display */
+.message-bubble code[data-chemical="true"] {
+  background: #f8f9fa;
+  border: 1px solid #e9ecef;
+  color: #0d6efd;
+  font-weight: 500;
+  letter-spacing: 0.5px;
+}
+
+/* Connection symbols like [*] should be highlighted */
+.message-bubble code:contains("[*]") {
+  background: linear-gradient(135deg, #f8f9fa 0%, #e3f2fd 100%);
+  border-color: #2196f3;
+}
+
+.message-bubble pre {
+  background: var(--bg-tertiary);
+  padding: var(--spacing-md);
+  border-radius: var(--border-radius-md);
+  overflow-x: auto;
+  margin: var(--spacing-sm) 0;
+}
+
+.message-bubble pre code {
+  background: none;
+  padding: 0;
 } 
