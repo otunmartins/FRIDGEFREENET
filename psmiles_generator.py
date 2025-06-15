@@ -379,20 +379,22 @@ CRITICAL INSTRUCTIONS:
 2. NEVER use hyphens or spaces in the PSMILES string
 3. NEVER write polymer names like "Polyethylene" - always write the actual PSMILES
 4. NEVER write -CH2- or -CO- style notation - use proper SMILES
-5. If asked for PEG, respond with "PSMILES: OCC"
-6. If asked for polyethylene, respond with "PSMILES: CC"
-7. If asked for polystyrene, respond with "PSMILES: CC(C=C1)=CC=C1"
+5. If asked for PEG, respond with "PSMILES: [*]OCC[*]"
+6. If asked for polyethylene, respond with "PSMILES: [*]CC[*]"
+7. If asked for polystyrene, respond with "PSMILES: [*]CC([*])C1=CC=CC=C1"
+8. ALWAYS include exactly 2 [*] symbols for connection points
+9. NEVER use empty brackets [] - always use [*] for connection points
 
 EXAMPLES OF CORRECT RESPONSES:
 User: "Generate PSMILES for PEG"
-Your Response: "PSMILES: OCC
+Your Response: "PSMILES: [*]OCC[*]
 
-EXPLANATION: This represents the polyethylene glycol repeat unit -O-CH2-CH2-"
+EXPLANATION: This represents the polyethylene glycol repeat unit -O-CH2-CH2- with connection points marked by [*]"
 
 User: "PSMILES for polyethylene"
-Your Response: "PSMILES: CC
+Your Response: "PSMILES: [*]CC[*]
 
-EXPLANATION: This represents the ethylene repeat unit -CH2-CH2-"
+EXPLANATION: This represents the ethylene repeat unit -CH2-CH2- with connection points marked by [*]"
 """
 
         psmiles_prompt = ChatPromptTemplate.from_messages([

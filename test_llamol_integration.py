@@ -38,7 +38,7 @@ def test_llamol_model_loading():
         from llamol_integration import llamol_manager
         
         # Try to load the default model
-        model_name = "osunlp/LlaSMol-Mistral-7B"
+        model_name = "osunlp/LlaSMol-Galactica-6.7B"
         print(f"Loading model: {model_name}")
         
         success = llamol_manager.load_model(model_name)
@@ -105,7 +105,7 @@ def test_chatbot_integration():
         # Test with LlaSMol model
         chatbot = InsulinAIChatbot(
             model_type="llamol",
-            llamol_model="osunlp/LlaSMol-Mistral-7B"
+            llamol_model="osunlp/LlaSMol-Galactica-6.7B"
         )
         
         # Test chemistry-focused conversation

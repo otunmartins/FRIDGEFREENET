@@ -46,7 +46,21 @@ class LlaSMolChatWrapper:
             raise ImportError("LlaSMol dependencies not available. Please install transformers, torch, and peft")
         
         self.model_name = model_name
-        self.device = device
+        
+        # Handle device configuration - force CUDA if available
+        import torch
+        if device == "auto":
+            if torch.cuda.is_available():
+                self.device = "cuda"
+                print(f"✅ GPU detected: {torch.cuda.get_device_name(0)}")
+                print(f"🎯 Using CUDA device for LlaSMol model")
+            else:
+                self.device = "cpu"
+                print("⚠️ No GPU detected, using CPU")
+        else:
+            self.device = device
+            
+        print(f"🔧 Device configuration: {self.device}")
         
         # Available LlaSMol models
         self.available_models = list(BASE_MODELS.keys())
@@ -57,7 +71,8 @@ class LlaSMolChatWrapper:
         
         try:
             print(f"🔬 Loading LlaSMol model: {model_name}")
-            self.generator = LlaSMolGeneration(model_name=model_name, device=device)
+            print(f"🔧 Using device: {self.device}")
+            self.generator = LlaSMolGeneration(model_name=model_name, device=self.device)
             print(f"✅ LlaSMol model {model_name} loaded successfully!")
             
             # Test the model with a simple query

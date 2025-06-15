@@ -19,11 +19,13 @@ from threading import Thread
 import queue
 import urllib.parse
 import re
+import random
 
 from literature_mining_system import MaterialsLiteratureMiner
 from chatbot_system import InsulinAIChatbot
 from mcp_client import SimplifiedMCPLiteratureMinerSync
 from psmiles_generator import PSMILESGenerator
+from psmiles_processor import PSMILESProcessor
 from llamol_integration import llamol_manager, LLAMOL_AVAILABLE
 
 app = Flask(__name__)
@@ -35,10 +37,11 @@ literature_miner = None
 mcp_literature_miner = None
 chatbot = None
 psmiles_generator = None
+psmiles_processor = None
 
 def initialize_systems():
     """Initialize the literature mining, chatbot, and PSMILES generation systems."""
-    global literature_miner, mcp_literature_miner, chatbot, psmiles_generator
+    global literature_miner, mcp_literature_miner, chatbot, psmiles_generator, psmiles_processor
     
     try:
         # Initialize literature mining system
@@ -87,6 +90,14 @@ def initialize_systems():
         except Exception as e:
             print(f"⚠️ PSMILES Generator initialization failed: {e}")
             psmiles_generator = None
+        
+        # Initialize enhanced PSMILES processor
+        try:
+            psmiles_processor = PSMILESProcessor()
+            print("✅ PSMILES Processor initialized successfully!")
+        except Exception as e:
+            print(f"⚠️ PSMILES Processor initialization failed: {e}")
+            psmiles_processor = None
         
         # Initialize MCP-enhanced literature miner (kept for future use, currently disabled)
         # try:
@@ -549,44 +560,332 @@ def handle_general_chat(message: str, session_id: str) -> Dict:
         }
 
 def handle_psmiles_query(message: str, session_id: str) -> Dict:
-    """Handle PSMILES generation and validation queries."""
+    """Handle enhanced PSMILES queries with structured workflow."""
     try:
-        if not psmiles_generator:
+        if not psmiles_generator and not psmiles_processor:
             return {
                 'type': 'error',
-                'message': 'PSMILES generation system not available. Please check Ollama server.',
-                'suggestion': 'You can still use other modes like Literature Mining or Research Assistant.',
+                'message': 'PSMILES systems not available. Please check Ollama server and psmiles library installation.',
+                'suggestion': 'Install psmiles library with: pip install "psmiles[polyBERT,mordred]@git+https://github.com/Ramprasad-Group/psmiles.git"',
                 'timestamp': datetime.now().isoformat()
             }
         
-        # Enhanced PSMILES pattern to extract PSMILES strings from text
-        psmiles_pattern = r'([A-Za-z0-9\[\]\(\)\=\#\*\-\+\\\/]+)'
-        
-        # Determine the type of request
         lower_message = message.lower()
         
-        # Check for modification requests first (more specific)
-        modification_keywords = ['make', 'modify', 'change', 'extend', 'add', 'longer', 'shorter', 'complex']
-        is_modification = any(keyword in lower_message for keyword in modification_keywords)
+        # Check if this is a workflow operation request
+        if any(keyword in lower_message for keyword in ['dimerize', 'dimer', 'connect star']):
+            return handle_dimerization_request(message, session_id)
         
-        # Extract PSMILES strings from the message
+        elif any(keyword in lower_message for keyword in ['copolymer', 'block', 'alternating']):
+            return handle_copolymerization_request(message, session_id)
+        
+        elif any(keyword in lower_message for keyword in ['fingerprint', 'inchi', 'analyze']):
+            return handle_analysis_request(message, session_id)
+        
+        # Enhanced PSMILES pattern to extract PSMILES strings from text
+        psmiles_pattern = r'(\[[^\]]*\][A-Za-z0-9\[\]\(\)\=\#\*\-\+\\\/]*|\b[A-Za-z0-9\[\]\(\)\=\#\*\-\+\\\/]{5,})'
         potential_psmiles = re.findall(psmiles_pattern, message)
+        
         # Filter to likely PSMILES (contain common PSMILES elements)
         psmiles_indicators = ['(', ')', '=', '[', ']', '*', 'C', 'N', 'O']
         valid_psmiles = [p for p in potential_psmiles if len(p) > 2 and any(ind in p for ind in psmiles_indicators)]
         
-        if any(keyword in lower_message for keyword in ['validate', 'check', 'verify', 'correct']):
-            # This seems like a validation request
+        if any(keyword in lower_message for keyword in ['validate', 'check', 'verify']):
+            # Validation request
             if valid_psmiles:
-                # Use the longest match as the PSMILES string
                 psmiles_string = max(valid_psmiles, key=len)
-                result = psmiles_generator.validate_psmiles(psmiles_string, message)
-                
-                if result['success']:
-                    basic_val = result['basic_validation']
-                    detailed_val = result['detailed_validation']
-                    
-                    response_message = f"""
+                return handle_psmiles_validation(psmiles_string, message, session_id)
+            else:
+                return {
+                    'type': 'error',
+                    'message': 'Could not find a PSMILES string to validate in your message.',
+                    'suggestion': 'Example: "Please validate this PSMILES: [*]CC[*]"',
+                    'timestamp': datetime.now().isoformat()
+                }
+        
+        elif any(keyword in lower_message for keyword in ['example', 'show me', 'list']):
+            # Examples request
+            return handle_psmiles_examples(message)
+        
+        elif valid_psmiles:
+            # Direct PSMILES processing - this is the main workflow entry point
+            psmiles_string = max(valid_psmiles, key=len)
+            return process_psmiles_with_workflow(psmiles_string, session_id, message)
+        
+        else:
+            # Generate new PSMILES based on description
+            return handle_psmiles_generation(message, session_id)
+            
+    except Exception as e:
+        return {
+            'type': 'error',
+            'message': f'PSMILES processing error: {str(e)}',
+            'timestamp': datetime.now().isoformat()
+        }
+
+def process_psmiles_with_workflow(psmiles_string: str, session_id: str, original_message: str) -> Dict:
+    """Process PSMILES through the complete workflow with canonicalization and visualization."""
+    if not psmiles_processor or not psmiles_processor.available:
+        return {
+            'type': 'error',
+            'message': 'PSMILES processor not available. Please install the psmiles library.',
+            'suggestion': 'Install with: pip install "psmiles[polyBERT,mordred]@git+https://github.com/Ramprasad-Group/psmiles.git"',
+            'timestamp': datetime.now().isoformat()
+        }
+    
+    # Process through workflow
+    result = psmiles_processor.process_psmiles_workflow(psmiles_string, session_id, "initial")
+    
+    if not result['success']:
+        return {
+            'type': 'error',
+            'message': f"PSMILES processing failed: {result['error']}",
+            'timestamp': datetime.now().isoformat()
+        }
+    
+    # Build comprehensive response with interactive options
+    workflow_options = result['workflow_options']
+    
+    response_message = f"""
+## 🧪 PSMILES Processing Complete!
+
+**Your Request**: {original_message}
+
+**Original PSMILES**: `{result['original_psmiles']}`
+**Canonicalized PSMILES**: `{result['canonical_psmiles']}`
+
+### 📊 Structure Visualization
+The polymer structure has been generated and saved as an SVG image.
+
+---
+
+## 🎯 Choose Your Next Action:
+
+Use the interactive buttons below to continue with your polymer analysis!
+"""
+    
+    return {
+        'type': 'psmiles_workflow',
+        'message': response_message,
+        'psmiles_result': result,
+        'svg_content': result.get('svg_content', ''),
+        'svg_filename': result.get('svg_filename', ''),
+        'workflow_options': workflow_options,
+        'interactive_buttons': _generate_interactive_buttons(workflow_options),
+        'session_count': result['session_count'],
+        'timestamp': datetime.now().isoformat()
+    }
+
+def handle_dimerization_request(message: str, session_id: str) -> Dict:
+    """Handle dimerization requests."""
+    if not psmiles_processor or not psmiles_processor.available:
+        return {'type': 'error', 'message': 'PSMILES processor not available'}
+    
+    # Extract star index (0 or 1)
+    star_index = 0  # default
+    if 'star 1' in message.lower() or 'second star' in message.lower():
+        star_index = 1
+    
+    # Get session PSMILES
+    session_psmiles = psmiles_processor.get_session_psmiles(session_id)
+    if not session_psmiles:
+        return {
+            'type': 'error',
+            'message': 'No PSMILES found in your session. Please provide a PSMILES string first.',
+            'suggestion': 'Example: "[*]CC[*]" then ask for dimerization'
+        }
+    
+    # Use the most recent PSMILES
+    psmiles_index = len(session_psmiles) - 1
+    
+    result = psmiles_processor.perform_dimerization(session_id, psmiles_index, star_index)
+    
+    if not result['success']:
+        return {'type': 'error', 'message': result['error']}
+    
+    response_message = f"""
+## 🔗 Dimerization Complete!
+
+**Operation**: {result['operation']}
+**Parent PSMILES**: `{result['parent_psmiles']}`
+**Dimer PSMILES**: `{result['canonical_psmiles']}`
+
+### 📊 Dimer Structure
+The dimer structure has been generated and visualized.
+
+**What's next?** You can:
+- Perform further dimerization
+- Copolymerize with another polymer
+- Analyze the structure properties
+- Ask for modifications
+"""
+    
+    return {
+        'type': 'psmiles_dimer',
+        'message': response_message,
+        'dimer_result': result,
+        'svg_content': result.get('svg_content', ''),
+        'timestamp': datetime.now().isoformat()
+    }
+
+def handle_copolymerization_request(message: str, session_id: str) -> Dict:
+    """Handle copolymerization requests."""
+    if not psmiles_processor or not psmiles_processor.available:
+        return {'type': 'error', 'message': 'PSMILES processor not available'}
+    
+    # Extract second PSMILES and connection pattern
+    psmiles_pattern = r'(\[[^\]]*\][A-Za-z0-9\[\]\(\)\=\#\*\-\+\\\/]*|\b[A-Za-z0-9\[\]\(\)\=\#\*\-\+\\\/]{5,})'
+    potential_psmiles = re.findall(psmiles_pattern, message)
+    
+    if not potential_psmiles:
+        return {
+            'type': 'error',
+            'message': 'Please provide the second PSMILES string for copolymerization.',
+            'suggestion': 'Example: "copolymerize with [*]CC(=O)[*] using pattern [1,1]"'
+        }
+    
+    second_psmiles = potential_psmiles[0]
+    
+    # Extract connection pattern
+    pattern_match = re.search(r'\[(\d+),\s*(\d+)\]', message)
+    if pattern_match:
+        connection_pattern = [int(pattern_match.group(1)), int(pattern_match.group(2))]
+    else:
+        connection_pattern = [1, 1]  # default
+    
+    # Get session PSMILES
+    session_psmiles = psmiles_processor.get_session_psmiles(session_id)
+    if not session_psmiles:
+        return {
+            'type': 'error',
+            'message': 'No PSMILES found in your session. Please provide a PSMILES string first.'
+        }
+    
+    # Use the most recent PSMILES
+    psmiles_index = len(session_psmiles) - 1
+    
+    result = psmiles_processor.perform_copolymerization(session_id, psmiles_index, second_psmiles, connection_pattern)
+    
+    if not result['success']:
+        return {'type': 'error', 'message': result['error']}
+    
+    response_message = f"""
+## 🧬 Copolymerization Complete!
+
+**Operation**: {result['operation']}
+**First PSMILES**: `{result['parent_psmiles1']}`
+**Second PSMILES**: `{result['parent_psmiles2']}`
+**Copolymer PSMILES**: `{result['canonical_psmiles']}`
+
+### 📊 Copolymer Structure
+The alternating copolymer structure has been generated and visualized.
+"""
+    
+    return {
+        'type': 'psmiles_copolymer',
+        'message': response_message,
+        'copolymer_result': result,
+        'svg_content': result.get('svg_content', ''),
+        'svg_filename': result.get('svg_filename', ''),
+        'interactive_buttons': _generate_interactive_buttons(result['workflow_options']),
+        'timestamp': datetime.now().isoformat()
+    }
+
+def handle_analysis_request(message: str, session_id: str) -> Dict:
+    """Handle analysis requests (fingerprints, InChI, etc.)."""
+    if not psmiles_processor or not psmiles_processor.available:
+        return {'type': 'error', 'message': 'PSMILES processor not available'}
+    
+    session_psmiles = psmiles_processor.get_session_psmiles(session_id)
+    if not session_psmiles:
+        return {
+            'type': 'error',
+            'message': 'No PSMILES found in your session for analysis.'
+        }
+    
+    psmiles_index = len(session_psmiles) - 1  # Use most recent
+    
+    if 'fingerprint' in message.lower():
+        # Generate fingerprints
+        fingerprint_types = ['ci', 'rdkit', 'polyBERT']
+        if 'mordred' in message.lower():
+            fingerprint_types.append('mordred')
+        
+        result = psmiles_processor.get_fingerprints(session_id, psmiles_index, fingerprint_types)
+        
+        if not result['success']:
+            return {'type': 'error', 'message': result['error']}
+        
+        response_message = f"""
+## 🔬 Fingerprint Analysis
+
+**PSMILES**: `{result['psmiles']}`
+
+### Generated Fingerprints:
+"""
+        
+        for fp_type, fp_data in result['fingerprints'].items():
+            response_message += f"\n**{fp_type.upper()} Fingerprint:**\n"
+            if isinstance(fp_data, dict):
+                # Mordred fingerprints (showing first 10)
+                for key, value in fp_data.items():
+                    response_message += f"- {key}: {value}\n"
+            elif isinstance(fp_data, list):
+                response_message += f"Vector length: {len(fp_data)} (showing first 10): {fp_data[:10]}\n"
+            else:
+                response_message += f"{fp_data}\n"
+        
+        return {
+            'type': 'psmiles_fingerprints',
+            'message': response_message,
+            'fingerprint_result': result,
+            'timestamp': datetime.now().isoformat()
+        }
+    
+    elif 'inchi' in message.lower():
+        # Generate InChI information
+        result = psmiles_processor.get_inchi_info(session_id, psmiles_index)
+        
+        if not result['success']:
+            return {'type': 'error', 'message': result['error']}
+        
+        response_message = f"""
+## 🔬 InChI Analysis
+
+**PSMILES**: `{result['psmiles']}`
+
+**InChI String**: `{result['inchi']}`
+
+**InChI Key**: `{result['inchi_key']}`
+
+The InChI (International Chemical Identifier) provides a unique text string identifier for the polymer structure.
+"""
+        
+        return {
+            'type': 'psmiles_inchi',
+            'message': response_message,
+            'inchi_result': result,
+            'timestamp': datetime.now().isoformat()
+        }
+    
+    else:
+        return {
+            'type': 'error',
+            'message': 'Analysis type not recognized. Try "fingerprints" or "inchi".'
+        }
+
+def handle_psmiles_validation(psmiles_string: str, original_message: str, session_id: str) -> Dict:
+    """Handle PSMILES validation requests."""
+    if not psmiles_generator:
+        return {'type': 'error', 'message': 'PSMILES generator not available'}
+    
+    result = psmiles_generator.validate_psmiles(psmiles_string, original_message)
+    
+    if result['success']:
+        basic_val = result['basic_validation']
+        detailed_val = result['ai_validation']
+        
+        response_message = f"""
 ## 🔍 PSMILES Validation Results
 
 **PSMILES String**: `{psmiles_string}`
@@ -597,204 +896,151 @@ def handle_psmiles_query(message: str, session_id: str) -> Dict:
 - **Connection Symbols**: {basic_val['connection_symbols'] if basic_val['connection_symbols'] else 'None found'}
 
 """
-                    if basic_val['errors']:
-                        response_message += f"**Errors Found**:\n"
-                        for error in basic_val['errors']:
-                            response_message += f"- ❌ {error}\n"
-                    
-                    if basic_val['warnings']:
-                        response_message += f"**Warnings**:\n"
-                        for warning in basic_val['warnings']:
-                            response_message += f"- ⚠️ {warning}\n"
-                    
-                    response_message += f"""
+        if basic_val['errors']:
+            response_message += f"**Errors Found**:\n"
+            for error in basic_val['errors']:
+                response_message += f"- ❌ {error}\n"
+        
+        if basic_val['warnings']:
+            response_message += f"**Warnings**:\n"
+            for warning in basic_val['warnings']:
+                response_message += f"- ⚠️ {warning}\n"
+        
+        response_message += f"""
 ### AI Expert Analysis:
 {detailed_val}
 
 ---
-**Need help with PSMILES syntax?** Try asking for examples or generation assistance!
+**Want to process this PSMILES?** Send it again to start the workflow!
 """
-                    
-                    return {
-                        'type': 'psmiles_validation',
-                        'message': response_message,
-                        'validation_result': result,
-                        'timestamp': datetime.now().isoformat()
-                    }
-                else:
-                    return {
-                        'type': 'error',
-                        'message': f"Validation failed: {result.get('error', 'Unknown error')}",
-                        'timestamp': datetime.now().isoformat()
-                    }
-            else:
-                return {
-                    'type': 'error', 
-                    'message': 'Could not find a PSMILES string to validate in your message. Please include the PSMILES string you want to check.',
-                    'suggestion': 'Example: "Please validate this PSMILES: CC"',
-                    'timestamp': datetime.now().isoformat()
-                }
         
-        elif any(keyword in lower_message for keyword in ['example', 'show me', 'list']):
-            # This seems like a request for examples
-            category = 'all'
-            if 'basic' in lower_message:
-                category = 'basic'
-            elif 'aromatic' in lower_message:
-                category = 'aromatic'
-            elif 'complex' in lower_message:
-                category = 'complex'
-            
-            examples = psmiles_generator.get_examples(category)
-            
-            response_message = f"""
+        return {
+            'type': 'psmiles_validation',
+            'message': response_message,
+            'validation_result': result,
+            'timestamp': datetime.now().isoformat()
+        }
+    else:
+        return {
+            'type': 'error',
+            'message': f"Validation failed: {result.get('error', 'Unknown error')}",
+            'timestamp': datetime.now().isoformat()
+        }
+
+def handle_psmiles_examples(message: str) -> Dict:
+    """Handle PSMILES examples requests."""
+    if not psmiles_generator:
+        return {'type': 'error', 'message': 'PSMILES generator not available'}
+    
+    category = 'all'
+    if 'basic' in message.lower():
+        category = 'basic'
+    elif 'aromatic' in message.lower():
+        category = 'aromatic'
+    elif 'complex' in message.lower():
+        category = 'complex'
+    
+    examples = psmiles_generator.get_examples(category)
+    
+    response_message = f"""
 ## 📚 PSMILES Examples ({category.title()})
 
 Here are some common PSMILES strings and their meanings:
 
 """
-            for name, info in examples.items():
-                response_message += f"""
+    for name, info in examples.items():
+        response_message += f"""
 **{name.replace('_', ' ').title()}**
 - PSMILES: `{info['psmiles']}`
 - Description: {info['description']}
 - Formula: {info['formula']}
 
 """
-            
-            response_message += """
+    
+    response_message += """
 ---
-**Want to generate a custom polymer?** Describe the structure you need!
-**Need validation?** Share a PSMILES string and ask me to check it!
+**Want to process any of these?** Copy a PSMILES string and send it to start the workflow!
+**Need a custom polymer?** Describe the structure you want!
 """
-            
-            return {
-                'type': 'psmiles_examples',
-                'message': response_message,
-                'examples': examples,
-                'timestamp': datetime.now().isoformat()
-            }
-        
-        elif is_modification and valid_psmiles:
-            # This is a modification request with an existing PSMILES
-            base_psmiles = max(valid_psmiles, key=len)  # Use the longest/most complex PSMILES found
-            
-            # Create enhanced modification prompt
-            modification_prompt = f"""
-I need to modify this existing PSMILES structure: {base_psmiles}
+    
+    return {
+        'type': 'psmiles_examples',
+        'message': response_message,
+        'examples': examples,
+        'timestamp': datetime.now().isoformat()
+    }
 
-User's modification request: {message}
-
-Please:
-1. Keep the original structure "{base_psmiles}" as the base
-2. Apply the requested modifications (add aromatic rings, extend length, etc.)
-3. If a target length is specified, try to reach approximately that length
-4. Ensure the result is chemically reasonable
-5. Use proper PSMILES syntax with connection points [*] where appropriate
-
-Generate the modified PSMILES structure now.
-"""
+def handle_psmiles_generation(message: str, session_id: str) -> Dict:
+    """Handle PSMILES generation from description."""
+    if not psmiles_generator:
+        return {'type': 'error', 'message': 'PSMILES generator not available'}
+    
+    result = psmiles_generator.interactive_generation(message)
+    
+    if result['success']:
+        if 'generation' in result and 'validation' in result:
+            gen_result = result['generation']
+            val_result = result['validation']
             
-            result = psmiles_generator.interactive_generation(modification_prompt)
+            psmiles = gen_result['psmiles']
+            explanation = gen_result['explanation']
             
-            if result['success']:
-                if 'generation' in result and 'validation' in result:
-                    # Full interactive generation with validation
-                    gen_result = result['generation']
-                    val_result = result['validation']
+            if val_result['success']:
+                basic_val = val_result['basic_validation']
+                
+                # Auto-start the workflow with the generated PSMILES
+                if psmiles_processor and psmiles_processor.available:
+                    workflow_result = psmiles_processor.process_psmiles_workflow(psmiles, session_id, "generated")
                     
-                    psmiles = gen_result['psmiles']
-                    explanation = gen_result['explanation']
-                    basic_val = val_result['basic_validation']
-                    
-                    # Check if we achieved the target length if specified
-                    length_feedback = ""
-                    if any(char.isdigit() for char in message):
-                        # Extract numbers from the message (potential target lengths)
-                        numbers = re.findall(r'\d+', message)
-                        if numbers:
-                            target_length = int(numbers[-1])  # Use the last number as target length
-                            actual_length = len(psmiles)
-                            if abs(actual_length - target_length) > 20:  # If significantly different
-                                length_feedback = f"\n**Length Note**: Generated {actual_length} characters (target was ~{target_length}). "
-                                if actual_length < target_length:
-                                    length_feedback += "Try asking to add more complexity or repeat units for longer structures."
-                                else:
-                                    length_feedback += "Structure is longer than requested - this often happens with complex aromatics."
-                    
-                    response_message = f"""
-## 🔧 PSMILES Modification Results
-
-**Original PSMILES**: `{base_psmiles}` ({len(base_psmiles)} characters)
+                    if workflow_result['success']:
+                        response_message = f"""
+## 🧪 PSMILES Generated & Processed!
 
 **Your Request**: {message}
 
-### Modified PSMILES: `{psmiles}`
+### Generated PSMILES: `{psmiles}`
 
 ### AI Explanation:
-{explanation}{length_feedback}
+{explanation}
 
 ### Validation Check:
-- **Status**: {'✅ VALID' if basic_val['valid'] else '❌ NEEDS REVIEW'}  
+- **Status**: {'✅ VALID' if basic_val['valid'] else '❌ NEEDS REVIEW'}
 - **Length**: {basic_val['length']} characters
 - **Connection Symbols**: {basic_val['connection_symbols'] if basic_val['connection_symbols'] else 'None (terminal connections)'}
 
+**Original PSMILES**: `{workflow_result['original_psmiles']}`
+**Canonicalized PSMILES**: `{workflow_result['canonical_psmiles']}`
+
+### 📊 Structure Visualization
+The polymer structure has been generated and saved as an SVG image.
 """
-                    if basic_val['errors']:
-                        response_message += f"**Issues Found**:\n"
-                        for error in basic_val['errors']:
-                            response_message += f"- ❌ {error}\n"
-                    
-                    if basic_val['warnings']:
-                        response_message += f"**Notes**:\n"
-                        for warning in basic_val['warnings']:
-                            response_message += f"- ⚠️ {warning}\n"
-                    
-                    response_message += """
----
-**Want to modify further?** Describe additional changes!
-**Need different complexity?** Ask for simpler or more complex variations!
-"""
-                    
-                    return {
-                        'type': 'psmiles_modification',
-                        'message': response_message,
-                        'generation_result': result,
-                        'base_psmiles': base_psmiles,
-                        'timestamp': datetime.now().isoformat()
-                    }
-                else:
-                    # Simple generation result
-                    return {
-                        'type': 'psmiles_modification',
-                        'message': f"**Original**: `{base_psmiles}`\n**Modified PSMILES**: `{result.get('psmiles', 'Not found')}`\n\n{result.get('explanation', '')}",
-                        'generation_result': result,
-                        'base_psmiles': base_psmiles,
-                        'timestamp': datetime.now().isoformat()
-                    }
-            else:
-                return {
-                    'type': 'error',
-                    'message': f"PSMILES modification failed: {result.get('error', 'Unknown error')}",
-                    'suggestion': f"Try simplifying your request or asking for help with modifying: {base_psmiles}",
-                    'timestamp': datetime.now().isoformat()
-                }
+                        
+                        if basic_val['errors']:
+                            response_message += f"\n**Issues Found**:\n"
+                            for error in basic_val['errors']:
+                                response_message += f"- ❌ {error}\n"
+                        
+                        if basic_val['warnings']:
+                            response_message += f"\n**Notes**:\n"
+                            for warning in basic_val['warnings']:
+                                response_message += f"- ⚠️ {warning}\n"
+                        
+                        # Return the full workflow response with interactive options
+                        return {
+                            'type': 'psmiles_generated_workflow',
+                            'message': response_message,
+                            'generated_psmiles': psmiles,
+                            'generation_result': result,
+                            'psmiles_result': workflow_result,
+                            'svg_content': workflow_result.get('svg_content', ''),
+                            'svg_filename': workflow_result.get('svg_filename', ''),
+                            'workflow_options': workflow_result['workflow_options'],
+                            'interactive_buttons': _generate_interactive_buttons(workflow_result['workflow_options']),
+                            'timestamp': datetime.now().isoformat()
+                        }
                 
-        else:
-            # This seems like a generation request (no existing PSMILES to modify)
-            result = psmiles_generator.interactive_generation(message)
-            
-            if result['success']:
-                if 'generation' in result and 'validation' in result:
-                    # Full interactive generation with validation
-                    gen_result = result['generation']
-                    val_result = result['validation']
-                    
-                    psmiles = gen_result['psmiles']
-                    explanation = gen_result['explanation']
-                    basic_val = val_result['basic_validation']
-                    
-                    response_message = f"""
+                # Fallback if workflow processor not available
+                response_message = f"""
 ## 🧪 PSMILES Generation Results
 
 **Your Request**: {message}
@@ -810,55 +1056,234 @@ Generate the modified PSMILES structure now.
 - **Connection Symbols**: {basic_val['connection_symbols'] if basic_val['connection_symbols'] else 'None (terminal connections)'}
 
 """
-                    if basic_val['errors']:
-                        response_message += f"**Issues Found**:\n"
-                        for error in basic_val['errors']:
-                            response_message += f"- ❌ {error}\n"
-                    
-                    if basic_val['warnings']:
-                        response_message += f"**Notes**:\n"
-                        for warning in basic_val['warnings']:
-                            response_message += f"- ⚠️ {warning}\n"
-                    
-                    response_message += """
+                if basic_val['errors']:
+                    response_message += f"**Issues Found**:\n"
+                    for error in basic_val['errors']:
+                        response_message += f"- ❌ {error}\n"
+                
+                if basic_val['warnings']:
+                    response_message += f"**Notes**:\n"
+                    for warning in basic_val['warnings']:
+                        response_message += f"- ⚠️ {warning}\n"
+                
+                response_message += """
 ---
-**Want to modify this structure?** Describe your changes!
-**Need more examples?** Ask for basic, aromatic, or complex examples!
+**PSMILES processor not available.** Install the psmiles library for advanced workflow features.
 """
-                    
-                    return {
-                        'type': 'psmiles_generation',
-                        'message': response_message,
-                        'generation_result': result,
-                        'timestamp': datetime.now().isoformat()
-                    }
-                else:
-                    # Simple generation result
-                    return {
-                        'type': 'psmiles_generation',
-                        'message': f"**Generated PSMILES**: `{result.get('psmiles', 'Not found')}`\n\n{result.get('explanation', '')}",
-                        'generation_result': result,
-                        'timestamp': datetime.now().isoformat()
-                    }
+                
+                return {
+                    'type': 'psmiles_generation',
+                    'message': response_message,
+                    'generated_psmiles': psmiles,
+                    'generation_result': result,
+                    'timestamp': datetime.now().isoformat()
+                }
             else:
                 return {
                     'type': 'error',
-                    'message': f"PSMILES generation failed: {result.get('error', 'Unknown error')}",
+                    'message': f"Generated PSMILES validation failed: {val_result.get('error', 'Unknown error')}",
+                    'generation_result': result,
                     'timestamp': datetime.now().isoformat()
                 }
-                
-    except Exception as e:
+        else:
+            return {
+                'type': 'psmiles_generation',
+                'message': f"**Generated PSMILES**: `{result.get('psmiles', 'Not found')}`\n\n{result.get('explanation', '')}",
+                'generation_result': result,
+                'timestamp': datetime.now().isoformat()
+            }
+    else:
         return {
             'type': 'error',
-            'message': f'PSMILES processing error: {str(e)}',
+            'message': f"PSMILES generation failed: {result.get('error', 'Unknown error')}",
             'timestamp': datetime.now().isoformat()
         }
+
+def _generate_interactive_buttons(workflow_options: Dict) -> Dict:
+    """Generate interactive button data for the frontend."""
+    return {
+        'dimerization': {
+            'title': workflow_options['dimerization']['title'],
+            'buttons': [
+                {
+                    'id': 'dimer_star_0',
+                    'label': 'Connect First Star [*]',
+                    'action': 'dimerize',
+                    'params': {'star': 0},
+                    'style': 'primary'
+                },
+                {
+                    'id': 'dimer_star_1', 
+                    'label': 'Connect Second Star [*]',
+                    'action': 'dimerize',
+                    'params': {'star': 1},
+                    'style': 'primary'
+                }
+            ]
+        },
+        'copolymerization': {
+            'title': workflow_options['copolymerization']['title'],
+            'buttons': [
+                {
+                    'id': 'copolymer_input',
+                    'label': 'Enter PSMILES & Pattern',
+                    'action': 'copolymer_input',
+                    'style': 'secondary',
+                    'input_fields': [
+                        {
+                            'name': 'second_psmiles',
+                            'placeholder': 'Enter second PSMILES (e.g., [*]CC(=O)[*])',
+                            'type': 'text'
+                        },
+                        {
+                            'name': 'pattern',
+                            'placeholder': 'Connection pattern',
+                            'type': 'select',
+                            'options': [
+                                {'value': '[1,1]', 'label': '[1,1] - Both second stars'},
+                                {'value': '[0,1]', 'label': '[0,1] - First→first, Second→second'},
+                                {'value': '[1,0]', 'label': '[1,0] - First→second, Second→first'},
+                                {'value': '[0,0]', 'label': '[0,0] - Both first stars'}
+                            ]
+                        }
+                    ]
+                },
+                {
+                    'id': 'generate_random_copolymer',
+                    'label': 'Generate Random Copolymer',
+                    'action': 'random_copolymer',
+                    'style': 'outline',
+                    'tooltip': 'Generate a random second PSMILES and copolymerize'
+                }
+            ]
+        },
+        'addition': {
+            'title': workflow_options['addition']['title'],
+            'buttons': [
+                {
+                    'id': 'add_hydroxyl',
+                    'label': 'Add Hydroxyl (-OH)',
+                    'action': 'addition',
+                    'params': {'description': 'add hydroxyl (-OH) groups to the polymer. Found in alcohols and phenols, often involved in hydrogen bonding, affecting polymer solubility and flexibility.'},
+                    'style': 'secondary',
+                    'tooltip': 'Hydroxyl groups improve polymer solubility and flexibility through hydrogen bonding'
+                },
+                {
+                    'id': 'add_carboxyl',
+                    'label': 'Add Carboxyl (-COOH)',
+                    'action': 'addition',
+                    'params': {'description': 'add carboxyl (-COOH) groups to the polymer. Found in carboxylic acids, can form salts and esters, impacting acidity and reactivity.'},
+                    'style': 'secondary',
+                    'tooltip': 'Carboxyl groups can form salts and esters, impacting acidity and reactivity'
+                },
+                {
+                    'id': 'add_amine',
+                    'label': 'Add Amine (-NH2)',
+                    'action': 'addition',
+                    'params': {'description': 'add amine (-NH2) groups to the polymer. Found in amines, can act as nucleophiles and participate in reactions like amidation, influencing polymer chain interactions.'},
+                    'style': 'secondary',
+                    'tooltip': 'Amine groups act as nucleophiles and influence polymer chain interactions'
+                },
+                {
+                    'id': 'add_amide',
+                    'label': 'Add Amide (-CONH2)',
+                    'action': 'addition',
+                    'params': {'description': 'add amide (-CONH2) groups to the polymer. Formed by the reaction of a carboxylic acid and an amine, contributing to polymer strength and rigidity.'},
+                    'style': 'secondary',
+                    'tooltip': 'Amide groups contribute to polymer strength and rigidity'
+                },
+                {
+                    'id': 'add_carbonyl',
+                    'label': 'Add Carbonyl (C=O)',
+                    'action': 'addition',
+                    'params': {'description': 'add carbonyl (C=O) groups to the polymer. Found in aldehydes, ketones, carboxylic acids, and esters. Can be reactive and influence polymer polarity.'},
+                    'style': 'secondary',
+                    'tooltip': 'Carbonyl groups are reactive and influence polymer polarity'
+                },
+                {
+                    'id': 'add_ester',
+                    'label': 'Add Ester (-COOR)',
+                    'action': 'addition',
+                    'params': {'description': 'add ester (-COOR) groups to the polymer. Formed from a carboxylic acid and an alcohol, important in polyesters and other polymers.'},
+                    'style': 'secondary',
+                    'tooltip': 'Ester groups are important in polyesters and other polymers'
+                },
+                {
+                    'id': 'add_ether',
+                    'label': 'Add Ether (-ROR)',
+                    'action': 'addition',
+                    'params': {'description': 'add ether groups to the polymer. Characterized by an oxygen atom bonded to two carbon atoms, can impact polymer flexibility and solubility.'},
+                    'style': 'secondary',
+                    'tooltip': 'Ether groups impact polymer flexibility and solubility'
+                },
+                {
+                    'id': 'add_alkene',
+                    'label': 'Add Alkene (C=C)',
+                    'action': 'addition',
+                    'params': {'description': 'add alkene (C=C) groups to the polymer. Found in unsaturated polymers, can participate in polymerization reactions.'},
+                    'style': 'secondary',
+                    'tooltip': 'Alkene groups can participate in polymerization reactions'
+                },
+                {
+                    'id': 'add_alkyne',
+                    'label': 'Add Alkyne (C≡C)',
+                    'action': 'addition',
+                    'params': {'description': 'add alkyne (C≡C) groups to the polymer. Contains a carbon-carbon triple bond, can be used in crosslinking and polymer functionalization.'},
+                    'style': 'secondary',
+                    'tooltip': 'Alkyne groups can be used in crosslinking and polymer functionalization'
+                },
+                {
+                    'id': 'add_haloalkane',
+                    'label': 'Add Haloalkane (-X)',
+                    'action': 'addition',
+                    'params': {'description': 'add haloalkane (-X, where X is a halogen) groups to the polymer. Reactive groups that can be used for further polymer modification or crosslinking.'},
+                    'style': 'secondary',
+                    'tooltip': 'Haloalkane groups are reactive and useful for polymer modification'
+                },
+                {
+                    'id': 'add_aromatic',
+                    'label': 'Add Aromatic Rings',
+                    'action': 'addition',
+                    'params': {'description': 'add aromatic rings to the polymer backbone, providing rigidity and thermal stability'},
+                    'style': 'secondary',
+                    'tooltip': 'Aromatic rings provide rigidity and thermal stability'
+                }
+            ]
+        },
+        'analysis': {
+            'title': workflow_options['analysis']['title'],
+            'buttons': [
+                {
+                    'id': 'fingerprints',
+                    'label': 'Generate Fingerprints',
+                    'action': 'fingerprints',
+                    'style': 'info',
+                    'tooltip': 'Generate CI, RDKit, and polyBERT fingerprints'
+                },
+                {
+                    'id': 'inchi_analysis',
+                    'label': 'InChI Analysis',
+                    'action': 'inchi',
+                    'style': 'info',
+                    'tooltip': 'Generate InChI string and key'
+                },
+                {
+                    'id': 'all_analysis',
+                    'label': 'Complete Analysis',
+                    'action': 'complete_analysis',
+                    'style': 'success',
+                    'tooltip': 'Run all available analysis tools'
+                }
+            ]
+        }
+    }
 
 @app.route('/api/new-chat', methods=['POST'])
 def new_chat():
     """Start a new chat session."""
     try:
         # Clear session and create new one
+        old_session_id = session.get('session_id')
         session.clear()
         session['session_id'] = str(uuid.uuid4())
         
@@ -866,11 +1291,67 @@ def new_chat():
         if chatbot:
             chatbot.clear_history(session['session_id'])
         
+        # Clear PSMILES processor session data if available
+        if psmiles_processor and old_session_id:
+            psmiles_processor.clear_session(old_session_id)
+        
         return jsonify({
             'message': 'New chat session started',
             'session_id': session['session_id'],
             'memory_type': chatbot.memory_type if chatbot else 'unknown'
         })
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/psmiles/svg/<filename>')
+def serve_psmiles_svg(filename):
+    """Serve PSMILES SVG files."""
+    try:
+        if not psmiles_processor:
+            return jsonify({'error': 'PSMILES processor not available'}), 404
+        
+        svg_path = os.path.join(psmiles_processor.temp_dir, filename)
+        
+        if not os.path.exists(svg_path):
+            return jsonify({'error': 'SVG file not found'}), 404
+        
+        with open(svg_path, 'r') as f:
+            svg_content = f.read()
+        
+        return Response(svg_content, mimetype='image/svg+xml')
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/psmiles/status')
+def psmiles_status():
+    """Get PSMILES processor status."""
+    try:
+        if not psmiles_processor:
+            return jsonify({
+                'available': False,
+                'error': 'PSMILES processor not initialized'
+            })
+        
+        status = psmiles_processor.get_status()
+        return jsonify(status)
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/psmiles/session-history')
+def get_psmiles_session_history():
+    """Get PSMILES history for current session."""
+    try:
+        if 'session_id' not in session:
+            return jsonify({'error': 'No active session'}), 400
+        
+        if not psmiles_processor:
+            return jsonify({'history': []})
+        
+        history = psmiles_processor.get_session_psmiles(session['session_id'])
+        return jsonify({'history': history})
         
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -1490,6 +1971,411 @@ Full analysis powered by Model Context Protocol (MCP) integration.
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Headers': 'Cache-Control'
     })
+
+@app.route('/api/psmiles/action', methods=['POST'])
+def handle_psmiles_action():
+    """Handle interactive PSMILES workflow actions from buttons."""
+    try:
+        if 'session_id' not in session:
+            return jsonify({'error': 'No active session'}), 400
+        
+        data = request.get_json()
+        action = data.get('action')
+        params = data.get('params', {})
+        session_id = session['session_id']
+        
+        if not action:
+            return jsonify({'error': 'Action is required'}), 400
+        
+        if not psmiles_processor or not psmiles_processor.available:
+            return jsonify({'error': 'PSMILES processor not available'}), 400
+        
+        # Handle different actions
+        if action == 'dimerize':
+            star_index = params.get('star', 0)
+            return jsonify(_handle_button_dimerization(session_id, star_index))
+        
+        elif action == 'copolymer_input':
+            second_psmiles = params.get('second_psmiles', '').strip()
+            pattern_str = params.get('pattern', '[1,1]')
+            
+            if not second_psmiles:
+                return jsonify({'error': 'Second PSMILES string is required'}), 400
+            
+            # Parse pattern
+            try:
+                pattern = eval(pattern_str)  # e.g., "[1,1]" -> [1,1]
+                if not isinstance(pattern, list) or len(pattern) != 2:
+                    raise ValueError("Invalid pattern format")
+            except:
+                pattern = [1, 1]  # default
+            
+            return jsonify(_handle_button_copolymerization(session_id, second_psmiles, pattern))
+        
+        elif action == 'random_copolymer':
+            # Generate a random second PSMILES
+            random_psmiles = _generate_random_psmiles()
+            pattern = [1, 1]  # default pattern
+            return jsonify(_handle_button_copolymerization(session_id, random_psmiles, pattern, is_random=True))
+        
+        elif action == 'addition':
+            description = params.get('description', '')
+            return jsonify(_handle_button_addition(session_id, description))
+        
+        elif action == 'fingerprints':
+            return jsonify(_handle_button_analysis(session_id, 'fingerprints'))
+        
+        elif action == 'inchi':
+            return jsonify(_handle_button_analysis(session_id, 'inchi'))
+        
+        elif action == 'complete_analysis':
+            return jsonify(_handle_button_analysis(session_id, 'complete'))
+        
+        else:
+            return jsonify({'error': f'Unknown action: {action}'}), 400
+        
+    except Exception as e:
+        return jsonify({'error': f'Action handling error: {str(e)}'}), 500
+
+def _handle_button_dimerization(session_id: str, star_index: int) -> Dict:
+    """Handle dimerization button action."""
+    session_psmiles = psmiles_processor.get_session_psmiles(session_id)
+    if not session_psmiles:
+        return {
+            'type': 'error',
+            'message': 'No PSMILES found in your session.'
+        }
+    
+    psmiles_index = len(session_psmiles) - 1
+    result = psmiles_processor.perform_dimerization(session_id, psmiles_index, star_index)
+    
+    if not result['success']:
+        return {'type': 'error', 'message': result['error']}
+    
+    response_message = f"""
+## 🔗 Dimerization Complete!
+
+**Operation**: {result['operation']}
+**Parent PSMILES**: `{result['parent_psmiles']}`
+**Dimer PSMILES**: `{result['canonical_psmiles']}`
+
+### 📊 Dimer Structure
+The dimer structure has been generated and visualized.
+"""
+    
+    return {
+        'type': 'psmiles_dimer',
+        'message': response_message,
+        'dimer_result': result,
+        'svg_content': result.get('svg_content', ''),
+        'svg_filename': result.get('svg_filename', ''),
+        'interactive_buttons': _generate_interactive_buttons(result['workflow_options']),
+        'timestamp': datetime.now().isoformat()
+    }
+
+def _handle_button_copolymerization(session_id: str, second_psmiles: str, pattern: List[int], is_random: bool = False) -> Dict:
+    """Handle copolymerization button action."""
+    session_psmiles = psmiles_processor.get_session_psmiles(session_id)
+    if not session_psmiles:
+        return {
+            'type': 'error',
+            'message': 'No PSMILES found in your session.'
+        }
+    
+    psmiles_index = len(session_psmiles) - 1
+    result = psmiles_processor.perform_copolymerization(session_id, psmiles_index, second_psmiles, pattern)
+    
+    if not result['success']:
+        return {'type': 'error', 'message': result['error']}
+    
+    random_note = " (randomly generated)" if is_random else ""
+    
+    response_message = f"""
+## 🧬 Copolymerization Complete!
+
+**Operation**: {result['operation']}
+**First PSMILES**: `{result['parent_psmiles1']}`
+**Second PSMILES**: `{result['parent_psmiles2']}`{random_note}
+**Copolymer PSMILES**: `{result['canonical_psmiles']}`
+
+### 📊 Copolymer Structure
+The alternating copolymer structure has been generated and visualized.
+"""
+    
+    return {
+        'type': 'psmiles_copolymer',
+        'message': response_message,
+        'copolymer_result': result,
+        'svg_content': result.get('svg_content', ''),
+        'svg_filename': result.get('svg_filename', ''),
+        'interactive_buttons': _generate_interactive_buttons(result['workflow_options']),
+        'timestamp': datetime.now().isoformat()
+    }
+
+def _handle_button_addition(session_id: str, description: str) -> Dict:
+    """Handle addition/modification button action using simplified copolymerization approach."""
+    session_psmiles = psmiles_processor.get_session_psmiles(session_id)
+    if not session_psmiles:
+        return {
+            'type': 'error',
+            'message': 'No PSMILES found in your session.'
+        }
+    
+    # Get the most recent PSMILES
+    base_psmiles = session_psmiles[-1]['original']
+    
+    # Validate the base PSMILES structure - only check for exactly 2 [*] symbols
+    star_count = base_psmiles.count('[*]')
+    if star_count != 2:
+        return {
+            'type': 'error',
+            'message': f'Invalid base PSMILES structure: {base_psmiles}. Found {star_count} [*] symbols, but exactly 2 are required.'
+        }
+    
+    # Define functional group fragments as PSMILES units
+    functional_group_fragments = {
+        'hydroxyl': '[*]C(O)[*]',  # Carbon with -OH attached
+        'carboxyl': '[*]C(=O)O[*]',  # Carboxyl group
+        'amine': '[*]C(N)[*]',  # Carbon with -NH2 attached
+        'amide': '[*]C(=O)N[*]',  # Amide group
+        'carbonyl': '[*]C(=O)[*]',  # Carbonyl group
+        'ester': '[*]C(=O)OC[*]',  # Ester linkage
+        'ether': '[*]COC[*]',  # Ether linkage
+        'alkene': '[*]C=C[*]',  # Alkene unit
+        'alkyne': '[*]C#C[*]',  # Alkyne unit
+        'haloalkane': '[*]C(Cl)[*]',  # Carbon with halogen (using Cl as example)
+        'aromatic': None  # Special handling for aromatic rings
+    }
+    
+    # Special handling for aromatic rings - randomly choose approach
+    if any(aromatic_keyword in description.lower() for aromatic_keyword in ['aromatic', 'benzene', 'phenyl', 'ring', 'phenylene']):
+        # Fixed aromatic options with valid SMILES chemistry
+        aromatic_options = [
+            '[*]c1ccc([*])cc1',    # Para-phenylene (1,4-substituted benzene)
+            '[*]c1cccc([*])c1',    # Meta-phenylene (1,3-substituted benzene) - FIXED
+            '[*]Cc1ccccc1C[*]',    # Benzyl groups attached to carbons - FIXED
+            '[*]C([*])c1ccccc1'    # Phenyl attached to carbon backbone
+        ]
+        functional_group_psmiles = random.choice(aromatic_options)
+        fragment_description = f"aromatic ring unit ({functional_group_psmiles})"
+    else:
+        # Find matching functional group - improved matching logic
+        functional_group_psmiles = None
+        fragment_description = None
+        
+        # Create a more comprehensive matching dictionary
+        matching_keywords = {
+            'hydroxyl': ['hydroxyl', 'hydroxy', '-oh', 'alcohol'],
+            'carboxyl': ['carboxyl', 'carboxy', '-cooh', 'carboxylic', 'acid'],
+            'amine': ['amine', 'amino', '-nh2', 'primary amine'],
+            'amide': ['amide', '-conh2', 'amido'],
+            'carbonyl': ['carbonyl', 'ketone', 'c=o', 'oxo'],
+            'ester': ['ester', '-coor', 'ester linkage'],
+            'ether': ['ether', '-ror', 'ether linkage', 'oxygen bridge', 'oxy'],
+            'alkene': ['alkene', 'double bond', 'c=c', 'unsaturated'],
+            'alkyne': ['alkyne', 'triple bond', 'c≡c', 'acetylene'],
+            'haloalkane': ['haloalkane', 'halogen', 'chloro', 'bromo', 'fluoro', 'iodo', '-x']
+        }
+        
+        # Check for matches using the comprehensive keyword list
+        description_lower = description.lower()
+        for group_name, keywords in matching_keywords.items():
+            if any(keyword in description_lower for keyword in keywords):
+                functional_group_psmiles = functional_group_fragments[group_name]
+                fragment_description = f"{group_name.replace('_', ' ')} unit ({functional_group_psmiles})"
+                break
+        
+        if not functional_group_psmiles:
+            return {
+                'type': 'error',
+                'message': f'Could not identify functional group from description: "{description}". Available groups: hydroxyl, carboxyl, amine, amide, carbonyl, ester, ether, alkene, alkyne, haloalkane, aromatic. Description received: "{description_lower}"'
+            }
+    
+    # Randomly choose connection pattern
+    connection_patterns = [
+        [0, 1],  # First->first, Second->second
+        [1, 0],  # First->second, Second->first
+        [0, 0],  # Connect both first stars
+        [1, 1]   # Connect both second stars
+    ]
+    chosen_pattern = random.choice(connection_patterns)
+    
+    # Use existing copolymerization function
+    psmiles_index = len(session_psmiles) - 1  # Index of most recent PSMILES
+    
+    result = psmiles_processor.perform_copolymerization(
+        session_id=session_id,
+        psmiles1_index=psmiles_index,
+        psmiles2_string=functional_group_psmiles,
+        connection_pattern=chosen_pattern
+    )
+    
+    if result['success']:
+        response_message = f"""
+## ➕ Addition Complete!
+
+**Original PSMILES**: `{base_psmiles}`
+**Your Request**: {description}
+**Added Fragment**: `{functional_group_psmiles}` ({fragment_description})
+**Connection Pattern**: {chosen_pattern}
+**Result PSMILES**: `{result['canonical_psmiles']}`
+
+### 📊 Modified Structure
+The functional group has been successfully added through copolymerization. The structure now contains alternating units of your original polymer and the new functional group.
+
+**Note**: This creates an alternating copolymer pattern rather than a simple substitution, which is often more realistic for polymer chemistry.
+"""
+        
+        return {
+            'type': 'psmiles_addition',
+            'message': response_message,
+            'modification_result': result,
+            'svg_content': result.get('svg_content', ''),
+            'svg_filename': result.get('svg_filename', ''),
+            'interactive_buttons': _generate_interactive_buttons(result['workflow_options']),
+            'addition_details': {
+                'original_psmiles': base_psmiles,
+                'functional_group': functional_group_psmiles,
+                'connection_pattern': chosen_pattern,
+                'fragment_description': fragment_description
+            },
+            'timestamp': datetime.now().isoformat()
+        }
+    else:
+        return {
+            'type': 'error', 
+            'message': f"Addition failed: {result.get('error', 'Unknown error during copolymerization')}"
+        }
+
+def _handle_button_analysis(session_id: str, analysis_type: str) -> Dict:
+    """Handle analysis button actions."""
+    session_psmiles = psmiles_processor.get_session_psmiles(session_id)
+    if not session_psmiles:
+        return {
+            'type': 'error',
+            'message': 'No PSMILES found in your session for analysis.'
+        }
+    
+    psmiles_index = len(session_psmiles) - 1  # Use most recent
+    
+    if analysis_type == 'fingerprints':
+        fingerprint_types = ['ci', 'rdkit', 'polyBERT']
+        result = psmiles_processor.get_fingerprints(session_id, psmiles_index, fingerprint_types)
+        
+        if not result['success']:
+            return {'type': 'error', 'message': result['error']}
+        
+        response_message = f"""
+## 🔬 Fingerprint Analysis
+
+**PSMILES**: `{result['psmiles']}`
+
+### Generated Fingerprints:
+"""
+        
+        for fp_type, fp_data in result['fingerprints'].items():
+            response_message += f"\n**{fp_type.upper()} Fingerprint:**\n"
+            if isinstance(fp_data, dict):
+                # Mordred fingerprints (showing first 10)
+                for key, value in fp_data.items():
+                    response_message += f"- {key}: {value}\n"
+            elif isinstance(fp_data, list):
+                response_message += f"Vector length: {len(fp_data)} (showing first 10): {fp_data[:10]}\n"
+            else:
+                response_message += f"{fp_data}\n"
+        
+        return {
+            'type': 'psmiles_fingerprints',
+            'message': response_message,
+            'fingerprint_result': result,
+            'timestamp': datetime.now().isoformat()
+        }
+    
+    elif analysis_type == 'inchi':
+        result = psmiles_processor.get_inchi_info(session_id, psmiles_index)
+        
+        if not result['success']:
+            return {'type': 'error', 'message': result['error']}
+        
+        response_message = f"""
+## 🔬 InChI Analysis
+
+**PSMILES**: `{result['psmiles']}`
+
+**InChI String**: `{result['inchi']}`
+
+**InChI Key**: `{result['inchi_key']}`
+
+The InChI (International Chemical Identifier) provides a unique text string identifier for the polymer structure.
+"""
+        
+        return {
+            'type': 'psmiles_inchi',
+            'message': response_message,
+            'inchi_result': result,
+            'timestamp': datetime.now().isoformat()
+        }
+    
+    elif analysis_type == 'complete':
+        # Run both fingerprints and InChI analysis
+        fingerprint_result = psmiles_processor.get_fingerprints(session_id, psmiles_index, ['ci', 'rdkit', 'polyBERT'])
+        inchi_result = psmiles_processor.get_inchi_info(session_id, psmiles_index)
+        
+        response_message = f"""
+## 🔬 Complete Analysis
+
+**PSMILES**: `{session_psmiles[psmiles_index]['original']}`
+
+### Fingerprint Analysis:
+"""
+        
+        if fingerprint_result['success']:
+            for fp_type, fp_data in fingerprint_result['fingerprints'].items():
+                response_message += f"\n**{fp_type.upper()}**: "
+                if isinstance(fp_data, list):
+                    response_message += f"Vector length {len(fp_data)}\n"
+                else:
+                    response_message += f"{str(fp_data)[:100]}...\n"
+        else:
+            response_message += f"Fingerprint generation failed: {fingerprint_result['error']}\n"
+        
+        response_message += "\n### InChI Analysis:\n"
+        if inchi_result['success']:
+            response_message += f"**InChI**: `{inchi_result['inchi']}`\n"
+            response_message += f"**InChI Key**: `{inchi_result['inchi_key']}`\n"
+        else:
+            response_message += f"InChI generation failed: {inchi_result['error']}\n"
+        
+        return {
+            'type': 'psmiles_complete_analysis',
+            'message': response_message,
+            'fingerprint_result': fingerprint_result,
+            'inchi_result': inchi_result,
+            'timestamp': datetime.now().isoformat()
+        }
+    
+    else:
+        return {'type': 'error', 'message': f'Unknown analysis type: {analysis_type}'}
+
+def _generate_random_psmiles() -> str:
+    """Generate a random PSMILES string for copolymerization."""
+    import random
+    
+    # List of common polymer building blocks
+    random_blocks = [
+        "[*]CC(=O)[*]",           # Polyethylene oxide-like
+        "[*]C(=O)O[*]",           # Polyester-like  
+        "[*]NC(=O)[*]",           # Polyamide-like
+        "[*]c1ccc(cc1)[*]",       # Aromatic
+        "[*]CC(C)[*]",            # Branched alkyl
+        "[*]C(=O)N[*]",           # Amide
+        "[*]OC(=O)[*]",           # Ester
+        "[*]CCOC(=O)[*]",         # Longer ester
+        "[*]NC(C)C(=O)[*]",       # Amino acid-like
+        "[*]C(=O)CCC(=O)[*]"      # Diketone-like
+    ]
+    
+    return random.choice(random_blocks)
 
 if __name__ == '__main__':
     print("🚀 Starting Insulin AI Web Application...")

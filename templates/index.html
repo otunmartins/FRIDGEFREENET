@@ -42,6 +42,30 @@
                 </div>
             </div>
             
+            <div class="model-selection">
+                <div class="mode-section">
+                    <h4>AI Model</h4>
+                    <div class="model-dropdown-container">
+                        <select id="modelSelect" class="model-select">
+                            <option value="">Loading models...</option>
+                        </select>
+                        <button id="switchModelBtn" class="switch-model-btn" title="Switch Model">
+                            <i class="fas fa-exchange-alt"></i>
+                        </button>
+                    </div>
+                    <div class="current-model-info" id="currentModelInfo">
+                        <div class="model-info-item">
+                            <span class="model-label">Current:</span>
+                            <span class="model-value" id="currentModelName">Loading...</span>
+                        </div>
+                        <div class="model-info-item">
+                            <span class="model-label">Type:</span>
+                            <span class="model-value" id="currentModelType">-</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
             <div class="examples-section">
                 <h4>Example Prompts</h4>
                 <div class="examples-list" id="examplesList">

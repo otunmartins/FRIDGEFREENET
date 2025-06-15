@@ -997,4 +997,953 @@ body {
 .message-bubble pre code {
   background: none;
   padding: 0;
+}
+
+/* Model Selection Styles */
+.model-selection {
+    margin-bottom: 1.5rem;
+}
+
+.model-dropdown-container {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+}
+
+.model-select {
+    flex: 1;
+    padding: 0.5rem;
+    border: 1px solid var(--border-color);
+    border-radius: 0.5rem;
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    font-size: 0.875rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.model-select:hover {
+    border-color: var(--primary-color);
+}
+
+.model-select:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1);
+}
+
+.switch-model-btn {
+    padding: 0.5rem;
+    border: 1px solid var(--border-color);
+    border-radius: 0.5rem;
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 2.5rem;
+}
+
+.switch-model-btn:hover {
+    background: var(--primary-color);
+    color: white;
+    border-color: var(--primary-color);
+}
+
+.switch-model-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.current-model-info {
+    background: var(--bg-secondary);
+    padding: 0.75rem;
+    border-radius: 0.5rem;
+    border: 1px solid var(--border-color);
+}
+
+.model-info-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.25rem;
+}
+
+.model-info-item:last-child {
+    margin-bottom: 0;
+}
+
+.model-label {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+.model-value {
+    font-size: 0.75rem;
+    color: var(--text-primary);
+    font-weight: 600;
+    max-width: 150px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Loading state for model selection */
+.model-select.loading {
+    opacity: 0.7;
+    cursor: not-allowed;
+}
+
+.model-select.loading option {
+    color: var(--text-secondary);
+}
+
+/* Interactive Workflow Buttons */
+.workflow-actions {
+    background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+    border-radius: 12px;
+    padding: 20px;
+    margin: 16px 0;
+    border: 1px solid #dee2e6;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.workflow-actions h4 {
+    color: #495057;
+    font-size: 1.1rem;
+    font-weight: 600;
+    margin-bottom: 16px;
+    text-align: center;
+}
+
+.action-categories {
+    display: grid;
+    gap: 16px;
+}
+
+.action-category {
+    background: white;
+    border-radius: 8px;
+    padding: 16px;
+    border: 1px solid #e9ecef;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+.action-category h5 {
+    color: #343a40;
+    font-size: 1rem;
+    font-weight: 600;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.button-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.action-btn, .action-btn-input {
+    border-radius: 6px;
+    font-size: 0.875rem;
+    font-weight: 500;
+    padding: 8px 16px;
+    border: none;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.action-btn:hover, .action-btn-input:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+}
+
+.action-btn:active, .action-btn-input:active {
+    transform: translateY(0);
+}
+
+/* Button styles */
+.btn-primary {
+    background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+    color: white;
+}
+
+.btn-primary:hover {
+    background: linear-gradient(135deg, #0056b3 0%, #004085 100%);
+}
+
+.btn-secondary {
+    background: linear-gradient(135deg, #6c757d 0%, #545b62 100%);
+    color: white;
+}
+
+.btn-secondary:hover {
+    background: linear-gradient(135deg, #545b62 0%, #3d4043 100%);
+}
+
+.btn-info {
+    background: linear-gradient(135deg, #17a2b8 0%, #117a8b 100%);
+    color: white;
+}
+
+.btn-info:hover {
+    background: linear-gradient(135deg, #117a8b 0%, #0c5460 100%);
+}
+
+.btn-success {
+    background: linear-gradient(135deg, #28a745 0%, #1e7e34 100%);
+    color: white;
+}
+
+.btn-success:hover {
+    background: linear-gradient(135deg, #1e7e34 0%, #155724 100%);
+}
+
+.btn-outline {
+    background: white;
+    border: 2px solid #007bff;
+    color: #007bff;
+}
+
+.btn-outline:hover {
+    background: #007bff;
+    color: white;
+}
+
+/* SVG Visualization */
+.svg-container {
+    background: white;
+    border-radius: 8px;
+    padding: 16px;
+    margin: 16px 0;
+    border: 1px solid #dee2e6;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+    text-align: center;
+    overflow-x: auto;
+}
+
+.svg-container svg {
+    max-width: 100%;
+    height: auto;
+    border-radius: 4px;
+}
+
+.has-svg-content {
+    background: #f8f9fa;
+    border-radius: 8px;
+    padding: 12px;
+}
+
+/* PSMILES Response Styling */
+.psmiles-response {
+    background: linear-gradient(135deg, #e3f2fd 0%, #f3e5f5 100%);
+    border-left: 4px solid #2196f3;
+}
+
+.psmiles-response code {
+    background: #1a1a1a;
+    color: #00ff00;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-family: 'Courier New', monospace;
+    font-weight: bold;
+}
+
+/* Modal Improvements */
+.modal-content {
+    border-radius: 12px;
+    border: none;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+}
+
+.modal-header {
+    background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+    color: white;
+    border-top-left-radius: 12px;
+    border-top-right-radius: 12px;
+    border-bottom: none;
+}
+
+.modal-header .btn-close {
+    filter: invert(1);
+}
+
+.modal-body {
+    padding: 24px;
+}
+
+.modal-footer {
+    border-top: 1px solid #dee2e6;
+    padding: 16px 24px;
+}
+
+/* Form Improvements */
+.form-label {
+    font-weight: 600;
+    color: #495057;
+    margin-bottom: 8px;
+}
+
+.form-control {
+    border-radius: 6px;
+    border: 1px solid #ced4da;
+    padding: 12px;
+    font-size: 0.9rem;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.form-control:focus {
+    border-color: #007bff;
+    box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25);
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+    .action-categories {
+        grid-template-columns: 1fr;
+    }
+    
+    .button-group {
+        flex-direction: column;
+    }
+    
+    .action-btn, .action-btn-input {
+        width: 100%;
+        justify-content: center;
+    }
+    
+    .workflow-actions {
+        padding: 16px;
+        margin: 12px 0;
+    }
+    
+    .svg-container {
+        padding: 12px;
+        margin: 12px 0;
+    }
+}
+
+/* Tooltips */
+.action-btn[title], .action-btn-input[title] {
+    position: relative;
+}
+
+.action-btn[title]:hover::after, .action-btn-input[title]:hover::after {
+    content: attr(title);
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #333;
+    color: white;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    white-space: nowrap;
+    z-index: 1000;
+}
+
+/* Loading States */
+.action-btn:disabled, .action-btn-input:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none !important;
+}
+
+.action-btn:disabled:hover, .action-btn-input:disabled:hover {
+    transform: none !important;
+    box-shadow: none !important;
+}
+
+/* Animation for new messages with buttons */
+@keyframes slideInUp {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.workflow-actions {
+    animation: slideInUp 0.3s ease-out;
+}
+
+/* ====== Conversational Workflow Styles ====== */
+
+/* Workflow start button container */
+.workflow-start-container {
+  margin-top: var(--spacing-md);
+  padding: var(--spacing-md);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-md);
+  text-align: center;
+}
+
+.workflow-start-btn {
+  padding: var(--spacing-sm) var(--spacing-lg);
+  background: var(--accent-color);
+  color: white;
+  border: none;
+  border-radius: var(--border-radius-md);
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  text-decoration: none;
+}
+
+.workflow-start-btn:hover {
+  background: var(--accent-hover);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+}
+
+/* Workflow status indicators */
+.workflow-status {
+  margin-top: var(--spacing-md);
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-radius: var(--border-radius-md);
+  font-size: 0.875rem;
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.workflow-status.active {
+  background: #e8f5e8;
+  color: var(--success-color);
+  border: 1px solid #b3e5b3;
+}
+
+/* Mode indicators */
+.mode-indicator {
+  margin-top: var(--spacing-md);
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-md);
+  font-size: 0.875rem;
+  text-align: center;
+}
+
+.workflow-context {
+  margin-top: var(--spacing-md);
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: #f0f7ff;
+  color: var(--accent-color);
+  border: 1px solid #b3d9ff;
+  border-radius: var(--border-radius-md);
+  font-size: 0.875rem;
+  text-align: center;
+}
+
+/* Interactive workflow container */
+.interactive-workflow-container {
+  margin-top: var(--spacing-lg);
+  padding: var(--spacing-lg);
+  background: var(--bg-secondary);
+  border: 2px solid var(--accent-color);
+  border-radius: var(--border-radius-lg);
+}
+
+.workflow-title {
+  color: var(--accent-color);
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin-bottom: var(--spacing-lg);
+  text-align: center;
+}
+
+.workflow-section {
+  margin-bottom: var(--spacing-lg);
+}
+
+.workflow-section:last-child {
+  margin-bottom: 0;
+}
+
+.workflow-section-title {
+  color: var(--text-primary);
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin-bottom: var(--spacing-md);
+  padding-bottom: var(--spacing-sm);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.workflow-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-sm);
+}
+
+.workflow-btn {
+  padding: var(--spacing-sm) var(--spacing-md);
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-md);
+  background: white;
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  font-size: 0.875rem;
+  font-weight: 500;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+}
+
+.workflow-btn:hover {
+  background: var(--bg-tertiary);
+  border-color: var(--accent-color);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
+}
+
+.workflow-btn.primary {
+  background: var(--accent-color);
+  color: white;
+  border-color: var(--accent-color);
+}
+
+.workflow-btn.primary:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+.workflow-btn.secondary {
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  border-color: var(--border-color);
+}
+
+.workflow-btn.secondary:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.workflow-btn.info {
+  background: #e7f3ff;
+  color: #0066cc;
+  border-color: #b3d9ff;
+}
+
+.workflow-btn.info:hover {
+  background: #d1e9ff;
+  border-color: #7cc3ff;
+}
+
+.workflow-btn.success {
+  background: #e8f5e8;
+  color: var(--success-color);
+  border-color: #b3e5b3;
+}
+
+.workflow-btn.success:hover {
+  background: #d4edda;
+  border-color: #7dd87d;
+}
+
+.workflow-btn.outline {
+  background: transparent;
+  color: var(--accent-color);
+  border-color: var(--accent-color);
+}
+
+.workflow-btn.outline:hover {
+  background: var(--accent-color);
+  color: white;
+}
+
+/* Workflow exit button */
+.workflow-exit-container {
+  margin-top: var(--spacing-lg);
+  padding-top: var(--spacing-lg);
+  border-top: 1px solid var(--border-color);
+  text-align: center;
+}
+
+.workflow-exit-btn {
+  padding: var(--spacing-sm) var(--spacing-lg);
+  background: var(--text-muted);
+  color: white;
+  border: none;
+  border-radius: var(--border-radius-md);
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  font-size: 0.875rem;
+}
+
+.workflow-exit-btn:hover {
+  background: var(--text-secondary);
+  transform: translateY(-1px);
+}
+
+/* Workflow input modal */
+.workflow-input-modal .modal-content {
+  max-width: 500px;
+  width: 90%;
+}
+
+.workflow-input-modal .input-field {
+  margin-bottom: var(--spacing-md);
+}
+
+.workflow-input-modal .input-field label {
+  display: block;
+  margin-bottom: var(--spacing-xs);
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.workflow-input-modal .input-field input,
+.workflow-input-modal .input-field textarea,
+.workflow-input-modal .input-field select {
+  width: 100%;
+  padding: var(--spacing-sm);
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-sm);
+  font-size: 0.875rem;
+  transition: border-color var(--transition-fast);
+}
+
+.workflow-input-modal .input-field input:focus,
+.workflow-input-modal .input-field textarea:focus,
+.workflow-input-modal .input-field select:focus {
+  outline: none;
+  border-color: var(--accent-color);
+  box-shadow: 0 0 0 2px rgba(13, 110, 253, 0.1);
+}
+
+/* Message type specific styles */
+.message.psmiles-message {
+  border-left: 3px solid var(--accent-color);
+}
+
+.message.conversation-ready {
+  background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+}
+
+.message.workflow-started {
+  background: linear-gradient(135deg, #e8f5e8 0%, #d4edda 100%);
+}
+
+.message.mode-switch {
+  background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%);
+}
+
+.message.generated-workflow {
+  background: linear-gradient(135deg, #f0f7ff 0%, #e7f3ff 100%);
+}
+
+.message.workflow-conversation {
+  background: linear-gradient(135deg, #f8f9ff 0%, #f0f4f8 100%);
+}
+
+/* Responsive workflow styles */
+@media (max-width: 768px) {
+  .interactive-workflow-container {
+    padding: var(--spacing-md);
+  }
+  
+  .workflow-buttons {
+    flex-direction: column;
+  }
+  
+  .workflow-btn {
+    justify-content: center;
+    text-align: center;
+  }
+  
+  .workflow-input-modal .modal-content {
+    width: 95%;
+    margin: var(--spacing-md);
+  }
+}
+
+@media (max-width: 480px) {
+  .workflow-start-container {
+    padding: var(--spacing-sm);
+  }
+  
+  .workflow-start-btn {
+    width: 100%;
+    justify-content: center;
+  }
+  
+  .workflow-title {
+    font-size: 1rem;
+  }
+  
+  .workflow-section-title {
+    font-size: 0.875rem;
+  }
+}
+
+/* ====== Workflow Entry Buttons ====== */
+.workflow-entry-container {
+    margin-top: var(--spacing-md);
+    padding: var(--spacing-md);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius-md);
+    animation: slideInUp 0.3s ease;
+}
+
+.workflow-entry-section {
+    margin-bottom: var(--spacing-sm);
+}
+
+.workflow-entry-section:last-child {
+    margin-bottom: 0;
+}
+
+.workflow-entry-title {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: var(--spacing-sm);
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+}
+
+.workflow-entry-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--spacing-sm);
+}
+
+.workflow-entry-btn {
+    padding: var(--spacing-sm) var(--spacing-md);
+    border: none;
+    border-radius: var(--border-radius-md);
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+    position: relative;
+    overflow: hidden;
+}
+
+.workflow-entry-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-md);
+}
+
+.workflow-entry-btn:active {
+    transform: translateY(0);
+}
+
+/* Workflow entry button styles */
+.workflow-entry-btn.btn-success {
+    background: var(--success-color);
+    color: white;
+}
+
+.workflow-entry-btn.btn-success:hover {
+    background: #157347;
+}
+
+.workflow-entry-btn.btn-primary {
+    background: var(--accent-color);
+    color: white;
+}
+
+.workflow-entry-btn.btn-primary:hover {
+    background: var(--accent-hover);
+}
+
+.workflow-entry-btn.btn-secondary {
+    background: #6c757d;
+    color: white;
+}
+
+.workflow-entry-btn.btn-secondary:hover {
+    background: #5c636a;
+}
+
+/* Enhanced general message with workflow option */
+.message.general-message.with-workflow-option {
+    position: relative;
+}
+
+.message.general-message.with-workflow-option .workflow-entry-container {
+    margin-top: var(--spacing-lg);
+    background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+    border: 2px solid var(--accent-color);
+    border-radius: var(--border-radius-lg);
+    position: relative;
+}
+
+.message.general-message.with-workflow-option .workflow-entry-container::before {
+    content: '';
+    position: absolute;
+    top: -1px;
+    left: -1px;
+    right: -1px;
+    bottom: -1px;
+    background: linear-gradient(45deg, var(--accent-color), var(--success-color));
+    border-radius: var(--border-radius-lg);
+    z-index: -1;
+    opacity: 0.1;
+}
+
+/* Responsive workflow entry buttons */
+@media (max-width: 768px) {
+    .workflow-entry-container {
+        padding: var(--spacing-sm);
+    }
+    
+    .workflow-entry-buttons {
+        flex-direction: column;
+    }
+    
+    .workflow-entry-btn {
+        width: 100%;
+        justify-content: center;
+    }
+}
+
+@media (max-width: 480px) {
+    .workflow-entry-title {
+        font-size: 0.8rem;
+    }
+    
+    .workflow-entry-btn {
+        font-size: 0.8rem;
+        padding: var(--spacing-xs) var(--spacing-sm);
+    }
+}
+
+/* Generated Button Styles - for LLM-generated HTML buttons */
+.generated-btn {
+    margin: 0.25rem;
+    padding: 0.375rem 0.75rem;
+    font-size: 0.875rem;
+    line-height: 1.5;
+    border-radius: 0.375rem;
+    border: 1px solid transparent;
+    transition: all 0.2s ease-in-out;
+    cursor: pointer;
+    text-decoration: none;
+    display: inline-block;
+}
+
+.generated-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+}
+
+.generated-btn:active {
+    transform: translateY(0);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+/* Button container for generated buttons */
+.message-content button[data-action] {
+    margin: 0.25rem;
+    padding: 0.5rem 1rem;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    display: inline-block;
+}
+
+.message-content button[data-action]:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+}
+
+.message-content button[data-action]:active {
+    transform: translateY(0);
+}
+
+/* Special styling for analysis buttons */
+.message-content button[data-action="fingerprints"] {
+    background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+}
+
+.message-content button[data-action="inchi"] {
+    background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
+}
+
+.message-content button[data-action="complete_analysis"] {
+    background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);
+}
+
+/* Ensure proper spacing around generated buttons */
+.message-content p:has(button[data-action]) {
+    margin: 1rem 0;
+    text-align: center;
+}
+
+.message-content div:has(button[data-action]) {
+    margin: 1rem 0;
+    text-align: center;
+}
+
+/* PSMILES Symbol Styling */
+.psmiles-symbol {
+    background: linear-gradient(135deg, #ff6b6b 0%, #ee5a24 100%);
+    color: white;
+    padding: 0.1rem 0.3rem;
+    border-radius: 0.25rem;
+    font-family: 'Courier New', monospace;
+    font-weight: bold;
+    font-size: 0.9em;
+    border: 1px solid #c44569;
+    display: inline-block;
+    margin: 0 0.1rem;
+    box-shadow: 0 1px 3px rgba(196, 69, 105, 0.3);
+}
+
+.psmiles-symbol:hover {
+    background: linear-gradient(135deg, #ee5a24 0%, #ff6b6b 100%);
+    transform: scale(1.05);
+    transition: all 0.2s ease;
+}
+
+/* Enhanced PSMILES code styling */
+.psmiles-code {
+    background: #f8f9fa !important;
+    border: 1px solid #e9ecef !important;
+    color: #0d6efd !important;
+    font-weight: 500 !important;
+    letter-spacing: 0.5px !important;
+    font-family: 'Courier New', monospace !important;
+}
+
+/* PSMILES code blocks should highlight [*] symbols even within code */
+.message-bubble code {
+    position: relative;
+}
+
+.message-bubble code:contains("[*]") {
+    background: linear-gradient(135deg, #f8f9fa 0%, #e3f2fd 100%);
+    border-color: #2196f3;
 } 
