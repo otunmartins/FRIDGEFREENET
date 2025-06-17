@@ -906,26 +906,9 @@ function populateModelSelect() {
         return;
     }
     
-    // Group models by type
-    const modelGroups = {
-        ollama: [],
-        llamol: []
-    };
-    
+    // Add Ollama models
     availableModels.forEach(model => {
         if (model.type === 'ollama') {
-            modelGroups.ollama.push(model);
-        } else if (model.type === 'llamol') {
-            modelGroups.llamol.push(model);
-        }
-    });
-    
-    // Add Ollama models
-    if (modelGroups.ollama.length > 0) {
-        const optgroup = document.createElement('optgroup');
-        optgroup.label = 'Ollama Models';
-        
-        modelGroups.ollama.forEach(model => {
             const option = document.createElement('option');
             option.value = `ollama:${model.name}`;
             option.textContent = `${model.name} (Ollama)`;
@@ -937,34 +920,9 @@ function populateModelSelect() {
                 option.selected = true;
             }
             
-            optgroup.appendChild(option);
-        });
-        
-        elements.modelSelect.appendChild(optgroup);
-    }
-    
-    // Add LlaSMol models
-    if (modelGroups.llamol.length > 0) {
-        const optgroup = document.createElement('optgroup');
-        optgroup.label = 'LlaSMol Models';
-        
-        modelGroups.llamol.forEach(model => {
-            const option = document.createElement('option');
-            option.value = `llamol:${model.name}`;
-            option.textContent = `${model.name} (LlaSMol)`;
-            
-            // Mark current model as selected
-            if (currentModelInfo && 
-                currentModelInfo.type === 'llamol' && 
-                currentModelInfo.name === model.name) {
-                option.selected = true;
-            }
-            
-            optgroup.appendChild(option);
-        });
-        
-        elements.modelSelect.appendChild(optgroup);
-    }
+            elements.modelSelect.appendChild(option);
+        }
+    });
     
     updateSwitchButton();
 }

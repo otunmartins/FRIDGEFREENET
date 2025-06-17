@@ -26,7 +26,6 @@ from chatbot_system import InsulinAIChatbot
 from mcp_client import SimplifiedMCPLiteratureMinerSync
 from psmiles_generator import PSMILESGenerator
 from psmiles_processor import PSMILESProcessor
-from llamol_integration import llamol_manager, LLAMOL_AVAILABLE
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'insulin-ai-secret-key-2024')
@@ -55,37 +54,25 @@ def initialize_systems():
             ollama_host=ollama_host
         )
         
-        # Initialize chatbot system with enhanced memory and model selection
+        # Initialize chatbot system with enhanced memory
         memory_type = os.environ.get('CHATBOT_MEMORY_TYPE', 'buffer_window')
         memory_dir = os.environ.get('CHATBOT_MEMORY_DIR', 'chat_memory')
-        default_model_type = os.environ.get('DEFAULT_MODEL_TYPE', 'ollama')  # 'ollama' or 'llamol'
-        llamol_model = os.environ.get('LLAMOL_MODEL', 'osunlp/LlaSMol-Mistral-7B')
         
         chatbot = InsulinAIChatbot(
-            model_type=default_model_type,
+            model_type="ollama",
             ollama_model=ollama_model,
             ollama_host=ollama_host,
-            llamol_model=llamol_model,
             memory_type=memory_type,
             memory_dir=memory_dir
         )
         
-        # Initialize PSMILES generator with model selection support
+        # Initialize PSMILES generator
         try:
-            psmiles_model_type = os.environ.get('PSMILES_MODEL_TYPE', 'ollama')
-            if psmiles_model_type == 'llamol' and LLAMOL_AVAILABLE:
-                # Use LlaSMol for PSMILES generation
-                psmiles_generator = PSMILESGenerator(
-                    model_type='llamol',
-                    llamol_model=llamol_model
-                )
-            else:
-                # Use Ollama for PSMILES generation
-                psmiles_generator = PSMILESGenerator(
-                    model_type='ollama',
-                    ollama_model=ollama_model,
-                    ollama_host=ollama_host
-                )
+            psmiles_generator = PSMILESGenerator(
+                model_type='ollama',
+                ollama_model=ollama_model,
+                ollama_host=ollama_host
+            )
             print("✅ PSMILES Generator initialized successfully!")
         except Exception as e:
             print(f"⚠️ PSMILES Generator initialization failed: {e}")
@@ -122,12 +109,11 @@ def index():
 
 @app.route('/api/chat', methods=['POST'])
 def chat():
-    """Handle chat messages from the frontend with multi-model support."""
+    """Handle chat messages from the frontend."""
     try:
         data = request.get_json()
         message = data.get('message', '').strip()
         chat_type = data.get('type', 'general')  # 'general', 'literature', 'research', 'mcp', 'psmiles'
-        model_type = data.get('model_type')  # Optional: 'ollama' or 'llamol'
         
         if not message:
             return jsonify({'error': 'Message cannot be empty'}), 400
@@ -137,15 +123,6 @@ def chat():
             session['session_id'] = str(uuid.uuid4())
         
         session_id = session['session_id']
-        
-        # Handle model switching if requested
-        if model_type and chatbot:
-            switch_success = chatbot.switch_model(model_type)
-            if not switch_success:
-                return jsonify({
-                    'error': f'Failed to switch to {model_type} model',
-                    'current_model': chatbot.get_model_info()
-                }), 400
         
         # Route message based on type
         if chat_type == 'literature':
@@ -1423,25 +1400,20 @@ def get_memory_config():
 
 @app.route('/api/models/info', methods=['GET'])
 def get_model_info():
-    """Get information about available and current models."""
+    """Get information about available models and current configuration."""
     try:
         if not chatbot:
             return jsonify({'error': 'Chatbot system not initialized'}), 500
         
         model_info = chatbot.get_model_info()
-        chemistry_capabilities = chatbot.get_chemistry_capabilities()
         
         return jsonify({
-            'success': True,
             'current_model': {
                 'type': model_info['model_type'],
                 'name': model_info['model_name'],
                 'memory_type': model_info['memory_type']
             },
             'available_models': model_info['available_models'],
-            'chemistry_capabilities': chemistry_capabilities,
-            'llamol_available': LLAMOL_AVAILABLE,
-            'llamol_loaded_models': model_info.get('llamol_loaded_models', []),
             'timestamp': datetime.now().isoformat()
         })
         
@@ -1450,7 +1422,7 @@ def get_model_info():
 
 @app.route('/api/models/switch', methods=['POST'])
 def switch_model():
-    """Switch between different model types."""
+    """Switch between different Ollama models."""
     try:
         if not chatbot:
             return jsonify({'error': 'Chatbot system not initialized'}), 500
@@ -1462,8 +1434,8 @@ def switch_model():
         if not model_type:
             return jsonify({'error': 'model_type is required'}), 400
         
-        if model_type not in ['ollama', 'llamol']:
-            return jsonify({'error': 'model_type must be either "ollama" or "llamol"'}), 400
+        if model_type != 'ollama':
+            return jsonify({'error': 'Only Ollama models are supported'}), 400
         
         success = chatbot.switch_model(model_type, model_name)
         
@@ -1486,66 +1458,6 @@ def switch_model():
             
     except Exception as e:
         return jsonify({'error': f'Model switching error: {str(e)}'}), 500
-
-@app.route('/api/models/llamol/load', methods=['POST'])
-def load_llamol_model():
-    """Load a specific LlaSMol model."""
-    try:
-        if not LLAMOL_AVAILABLE:
-            return jsonify({'error': 'LlaSMol not available'}), 400
-        
-        data = request.get_json()
-        model_name = data.get('model_name', 'osunlp/LlaSMol-Mistral-7B')
-        device = data.get('device', 'auto')
-        
-        success = llamol_manager.load_model(model_name, device)
-        
-        if success:
-            return jsonify({
-                'success': True,
-                'message': f'Successfully loaded LlaSMol model: {model_name}',
-                'loaded_models': llamol_manager.list_loaded_models(),
-                'timestamp': datetime.now().isoformat()
-            })
-        else:
-            return jsonify({
-                'success': False,
-                'error': f'Failed to load LlaSMol model: {model_name}'
-            }), 400
-            
-    except Exception as e:
-        return jsonify({'error': f'Model loading error: {str(e)}'}), 500
-
-@app.route('/api/models/llamol/unload', methods=['POST'])
-def unload_llamol_model():
-    """Unload a specific LlaSMol model to free memory."""
-    try:
-        if not LLAMOL_AVAILABLE:
-            return jsonify({'error': 'LlaSMol not available'}), 400
-        
-        data = request.get_json()
-        model_name = data.get('model_name')
-        
-        if not model_name:
-            return jsonify({'error': 'model_name is required'}), 400
-        
-        success = llamol_manager.unload_model(model_name)
-        
-        if success:
-            return jsonify({
-                'success': True,
-                'message': f'Successfully unloaded LlaSMol model: {model_name}',
-                'loaded_models': llamol_manager.list_loaded_models(),
-                'timestamp': datetime.now().isoformat()
-            })
-        else:
-            return jsonify({
-                'success': False,
-                'error': f'Model {model_name} was not loaded'
-            }), 400
-            
-    except Exception as e:
-        return jsonify({'error': f'Model unloading error: {str(e)}'}), 500
 
 @app.route('/api/status')
 def status():
@@ -1590,12 +1502,8 @@ def status():
                         'memory_type': model_info['memory_type']
                     },
                     'available_models': model_info['available_models'],
-                    'chemistry_capabilities': chemistry_capabilities,
-                    'llamol_available': LLAMOL_AVAILABLE
+                    'chemistry_capabilities': chemistry_capabilities
                 }
-                
-                if LLAMOL_AVAILABLE:
-                    status_data['systems']['chatbot']['llamol_loaded_models'] = model_info.get('llamol_loaded_models', [])
                     
             except Exception as e:
                 status_data['systems']['chatbot'] = {
@@ -1637,17 +1545,13 @@ def status():
         status_data['overall'] = {
             'healthy': active_systems >= 2,  # At least chatbot and one other system
             'active_systems': active_systems,
-            'total_systems': total_systems,
-            'llamol_integration': LLAMOL_AVAILABLE
+            'total_systems': total_systems
         }
         
         return jsonify(status_data)
         
     except Exception as e:
-        return jsonify({
-            'error': f'Status check failed: {str(e)}',
-            'timestamp': datetime.now().isoformat()
-        }), 500
+        return jsonify({'error': f'Status check failed: {str(e)}'}), 500
 
 @app.route('/api/examples')
 def examples():

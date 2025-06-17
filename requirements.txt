@@ -21,17 +21,6 @@ rdkit>=2024.9.1
 rdchiral>=1.1.0
 py3Dmol==2.0.4
 
-# LlaSMol integration dependencies
-torch>=2.0.0
-transformers>=4.35.0
-peft>=0.6.0
-accelerate>=0.24.0
-bitsandbytes>=0.41.0  # For efficient model quantization
-
-# Optional: For better performance with LlaSMol
-# flash-attn>=2.3.0  # Uncomment if you have compatible hardware
-# deepspeed>=0.11.0  # Uncomment for distributed training support
-
 # Development and testing
 pytest==7.4.3
 python-dotenv==1.0.0
@@ -41,5 +30,4 @@ jsonschema==4.19.2
 
 # MCP (Model Context Protocol) dependencies
 fastmcp>=0.1.0
-mcp>=1.0.0
-# Enhanced Semantic Scholar integration (Python 3.9 compatible) 
+mcp>=1.0.0 

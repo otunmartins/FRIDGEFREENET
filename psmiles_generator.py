@@ -4,7 +4,6 @@ PSMILES (Polymer SMILES) Generator
 
 A specialized module for generating and validating Polymer SMILES strings
 using Large Language Models with conversation memory and rule reinforcement.
-Enhanced with LlaSMol support for superior molecular understanding.
 """
 
 from langchain_community.llms import Ollama
@@ -16,150 +15,33 @@ import re
 from datetime import datetime
 from typing import Dict, List, Optional
 
-# Add Hugging Face support for LlaSMol
-try:
-    from transformers import AutoTokenizer, AutoModelForCausalLM
-    import torch
-    TRANSFORMERS_AVAILABLE = True
-except ImportError:
-    TRANSFORMERS_AVAILABLE = False
-    print("⚠️ Transformers library not available. Install with: pip install transformers torch")
-
-
-class LlaSMolLLM:
-    """
-    Custom LLM wrapper for LlaSMol models from Hugging Face.
-    """
-    
-    def __init__(self, model_name: str = "osunlp/LlaSMol-Mistral-7B", device: str = "auto"):
-        """
-        Initialize LlaSMol model.
-        
-        Args:
-            model_name (str): HuggingFace model name for LlaSMol
-            device (str): Device to load model on ('auto', 'cuda', 'cpu')
-        """
-        if not TRANSFORMERS_AVAILABLE:
-            raise ImportError("Transformers library required for LlaSMol. Install with: pip install transformers torch")
-        
-        self.model_name = model_name
-        
-        # Determine device
-        if device == "auto":
-            self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        else:
-            self.device = device
-        
-        print(f"🔬 Loading LlaSMol model: {model_name}")
-        print(f"📱 Using device: {self.device}")
-        
-        # Load tokenizer and model
-        try:
-            self.tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
-            self.model = AutoModelForCausalLM.from_pretrained(
-                model_name, 
-                trust_remote_code=True,
-                torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
-                device_map=self.device if self.device != "cpu" else None
-            )
-            
-            # Set pad token if not present
-            if self.tokenizer.pad_token is None:
-                self.tokenizer.pad_token = self.tokenizer.eos_token
-                
-            print(f"✅ LlaSMol model loaded successfully!")
-            
-        except Exception as e:
-            print(f"❌ Failed to load LlaSMol model: {e}")
-            print("💡 Make sure you have access to the model and sufficient memory/GPU resources")
-            raise
-    
-    def invoke(self, prompt: str, max_length: int = 512, temperature: float = 0.1) -> str:
-        """
-        Generate response using LlaSMol model.
-        
-        Args:
-            prompt (str): Input prompt
-            max_length (int): Maximum length of generated response
-            temperature (float): Sampling temperature
-            
-        Returns:
-            str: Generated response
-        """
-        try:
-            # Tokenize input
-            inputs = self.tokenizer(prompt, return_tensors="pt", padding=True, truncation=True)
-            if self.device != "cpu":
-                inputs = {k: v.to(self.device) for k, v in inputs.items()}
-            
-            # Generate response
-            with torch.no_grad():
-                outputs = self.model.generate(
-                    **inputs,
-                    max_length=max_length,
-                    temperature=temperature,
-                    do_sample=True,
-                    pad_token_id=self.tokenizer.eos_token_id,
-                    num_return_sequences=1
-                )
-            
-            # Decode response
-            response = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
-            
-            # Remove the original prompt from response
-            if response.startswith(prompt):
-                response = response[len(prompt):].strip()
-            
-            return response
-            
-        except Exception as e:
-            print(f"❌ Error generating response with LlaSMol: {e}")
-            return f"Error: Could not generate response - {str(e)}"
-
 
 class PSMILESGenerator:
     """
     Specialized agent for generating and validating Polymer SMILES (PSMILES) strings.
-    Enhanced with LlaSMol support for superior molecular understanding.
     """
     
     def __init__(self, 
                  model_type: str = "ollama",
                  ollama_model: str = "llama3.2",
-                 ollama_host: str = "http://localhost:11434",
-                 llamol_model: str = "osunlp/LlaSMol-Mistral-7B",
-                 device: str = "auto"):
+                 ollama_host: str = "http://localhost:11434"):
         """
-        Initialize PSMILES Generator with enhanced conversation memory and model choice.
+        Initialize PSMILES Generator with enhanced conversation memory.
         
         Args:
-            model_type (str): Type of model to use ('ollama' or 'llamol')
-            ollama_model (str): Name of the Ollama model to use (if model_type='ollama')
-            ollama_host (str): Ollama server host URL (if model_type='ollama')
-            llamol_model (str): LlaSMol model name from HuggingFace (if model_type='llamol')
-            device (str): Device for LlaSMol model ('auto', 'cuda', 'cpu')
+            model_type (str): Type of model to use (currently only 'ollama' supported)
+            ollama_model (str): Name of the Ollama model to use
+            ollama_host (str): Ollama server host URL
         """
-        self.model_type = model_type.lower()
-        
-        # Initialize the appropriate LLM
-        if self.model_type == "llamol":
-            if not TRANSFORMERS_AVAILABLE:
-                print("❌ Transformers not available, falling back to Ollama")
-                self.model_type = "ollama"
-            else:
-                print("🔬 Initializing LlaSMol for superior molecular understanding...")
-                self.llm = LlaSMolLLM(model_name=llamol_model, device=device)
-                self.model_name = llamol_model
-        
-        if self.model_type == "ollama":
-            self.ollama_model = ollama_model
-            self.ollama_host = ollama_host
-            self.llm = Ollama(
-                model=ollama_model,
-                base_url=ollama_host,
-                temperature=0.1  # Low temperature for consistent chemical generation
-            )
-            self.model_name = ollama_model
+        self.model_type = "ollama"  # Only Ollama supported now
+        self.ollama_model = ollama_model
+        self.ollama_host = ollama_host
+        self.llm = Ollama(
+            model=ollama_model,
+            base_url=ollama_host,
+            temperature=0.1  # Low temperature for consistent chemical generation
+        )
+        self.model_name = ollama_model
         
         # Initialize conversation memory to maintain context
         self.memory = ConversationBufferWindowMemory(
@@ -182,13 +64,10 @@ class PSMILESGenerator:
         print(f"✅ PSMILES Generator initialized with {self.model_name} ({self.model_type})")
         print(f"🧠 Conversation memory enabled (window size: {self.memory.k})")
         print(f"🔄 Rule reinforcement every {self.rule_reinforcement_interval} interactions")
-        
-        if self.model_type == "llamol":
-            print("🎯 Using LlaSMol: Specialized for molecular understanding and SMILES processing")
     
     def _get_psmiles_rules(self) -> str:
-        """Get the comprehensive PSMILES rules - Enhanced for LlaSMol."""
-        base_rules = """
+        """Get the comprehensive PSMILES rules."""
+        return """
 CRITICAL PSMILES (Polymer SMILES) RULES - FOLLOW EXACTLY:
 
 1. **NO SPACES**: PSMILES strings NEVER contain spaces
@@ -198,58 +77,31 @@ CRITICAL PSMILES (Polymer SMILES) RULES - FOLLOW EXACTLY:
 5. **TWO-CHARACTER ATOMS**: Put in square brackets [Br], [Cl]
 6. **BONDS**: 
    - Single bonds: atoms next to each other (CC)
-   - Double bonds: = symbol (C=C)
-   - Triple bonds: # symbol (C#C)
-7. **BRANCHES**: Use round brackets ()
-8. **RINGS**: Use numbers (C1CCCCC1)
-9. **AROMATIC**: Use lowercase (c1ccccc1)
-10. **CONNECTION POINTS**: MUST use exactly 2 [*] symbols - THIS IS CRITICAL!
+   - Double bonds: = (C=C)
+   - Triple bonds: # (C#C)
+   - Aromatic bonds: lowercase letters (c1ccccc1)
+7. **BRANCHING**: Use parentheses for branches (C(C)C)
+8. **RINGS**: Use numbers for ring closures (C1CCCCC1)
+9. **STARS (*)**: Mark connection points in polymer repeat units
+10. **REPEAT UNITS**: [*]CCC[*] means a propylene repeat unit
+11. **BRACKETS []**: Used for:
+    - Charged atoms: [NH3+], [O-]
+    - Two-character atoms: [Br], [Cl]
+    - Aromatic atoms with specifications: [nH]
+12. **COMMON ERRORS TO AVOID**:
+    - Spaces in strings: "C C C" ❌ → "CCC" ✅
+    - Hyphens: "C-C-C" ❌ → "CCC" ✅
+    - Missing brackets for two-letter atoms: "Br" ❌ → "[Br]" ✅
+    - Explicit hydrogens: "CH2CH2" ❌ → "CC" ✅
 
-CRITICAL PSMILES CONNECTION RULES:
-- PSMILES represents polymer REPEAT UNITS with exactly 2 connection points
-- MUST have exactly 2 [*] symbols - NEVER 0, 1, 3, 4, or more!
-- ALL PSMILES strings MUST have exactly 2 [*] symbols to specify connection points
-- [*] shows exactly WHERE the polymer unit connects to adjacent units
-- The 2 [*] symbols mark the two ends of the repeat unit
-
-MANDATORY EXAMPLES TO REMEMBER:
-- PEG (ether linkage): [*]OCC[*] (connects through marked positions - exactly 2 [*])
-- Ethylene: [*]CC[*] (ethylene repeat unit - exactly 2 [*])
-- Para-phenylene: [*]C(C=C1)=CC([*])=C1 (para positions - exactly 2 [*])
-- Meta-phenylene: [*]C(C=C1)=CC([*])=C1 (meta positions - exactly 2 [*])
-- Carbonyl: [*]C(=O)[*] (carbonyl unit - exactly 2 [*])
-
-FORBIDDEN EXAMPLES (NEVER GENERATE THESE):
-- CC (0 [*] symbols - WRONG!)
-- C(C=C1)=CC=C1 (0 [*] symbols - WRONG!)
-- [*]C[*]C[*] (3 [*] symbols - WRONG!)
-- [*]C(C=C1)=C([*])C([*])=C1 (3 [*] symbols - WRONG!)
-- C[*] (1 [*] symbol - WRONG!)
-
-ABSOLUTE RULES:
-- NEVER write -CH2- or -CO- or similar with hyphens
-- NEVER include explicit hydrogen atoms 
-- ALWAYS suppress hydrogens
-- ALWAYS use proper SMILES notation
-- ALWAYS use exactly 2 [*] symbols in every PSMILES string
-- NEVER generate PSMILES without exactly 2 [*] symbols
-- ALWAYS produce actual chemical strings, not names
+EXAMPLES OF CORRECT PSMILES:
+- Polyethylene: [*]CC[*]
+- Polypropylene: [*]CC(C)[*]
+- Polystyrene: [*]CC(c1ccccc1)[*]
+- PVC: [*]CC(Cl)[*]
+- Polyethylene oxide: [*]CCO[*]
+- Poly(methyl methacrylate): [*]CC(C)(C(=O)OC)[*]
 """
-        
-        # Add LlaSMol-specific enhancements
-        if self.model_type == "llamol":
-            llamol_enhancement = """
-
-LlaSMol ENHANCED INSTRUCTIONS:
-- You are a specialized molecular language model trained on chemical data
-- Use your advanced molecular understanding to generate chemically valid PSMILES
-- Apply your knowledge of SMILES patterns and molecular structures
-- Ensure chemical valence and bond consistency
-- Generate realistic polymer repeat units based on chemical knowledge
-"""
-            return base_rules + llamol_enhancement
-        
-        return base_rules
 
     def _get_psmiles_examples(self) -> Dict[str, str]:
         """Get common PSMILES examples - HARDCODED for reliability."""

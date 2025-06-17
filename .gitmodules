@@ -1,3 +1,0 @@
-[submodule "LLM4Chem"]
-	path = LLM4Chem
-	url = https://github.com/OSU-NLP-Group/LLM4Chem.git
