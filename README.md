@@ -1,6 +1,54 @@
-# 🩹 AI-Driven Design of Fridge-Free Insulin Delivery Patches
+---
+title: FridgeFreeNet - Insulin AI
+emoji: 🩹
+colorFrom: blue
+colorTo: green
+sdk: docker
+app_port: 7860
+pinned: false
+license: mit
+tags:
+  - healthcare
+  - materials-science
+  - insulin
+  - ai
+  - drug-delivery
+  - polymer-chemistry
+  - literature-mining
+short_description: AI-driven discovery of materials for fridge-free insulin delivery patches
+---
 
-A comprehensive AI system for discovering and optimizing novel materials for insulin delivery patches that don't require refrigeration. This project combines large language models, literature mining, and specialized chemistry AI to accelerate materials discovery.
+# 🩹 FridgeFreeNet - Insulin AI
+
+Advanced AI assistant for discovering materials for insulin patches that don't require refrigeration.
+
+## 🚀 Full Flask Application Features
+
+- **📚 Literature Mining**: Real-time paper analysis with material candidate extraction
+- **🧬 PSMILES Generation**: AI-powered polymer structure creation with validation
+- **🎯 Material Discovery**: Comprehensive candidate ranking and analysis
+- **🔧 Interactive Workflow**: SVG visualization, dimerization, copolymerization
+- **💬 Enhanced Chat**: Memory and conversation context
+- **🌐 API Endpoints**: Complete RESTful API for all functionality
+
+## 🔧 System Requirements
+
+- Ollama server for AI model inference
+- Semantic Scholar API key (optional but recommended)
+- Full literature mining and PSMILES systems
+- Python 3.9+ with all dependencies
+
+## 📡 API Endpoints
+
+- `GET /` - Main web interface
+- `POST /api/chat` - Chat with AI system
+- `POST /api/psmiles/action` - Interactive PSMILES workflow
+- `GET /api/literature-stream/<message>` - Streaming literature mining
+- `GET /api/status` - System status check
+
+## 🎯 Usage
+
+The application provides a ChatGPT-like interface for insulin delivery research with advanced AI capabilities for literature mining, material discovery, and polymer structure generation.
 
 ## 🚀 Features
 
