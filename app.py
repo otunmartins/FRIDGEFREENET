@@ -582,18 +582,38 @@ def handle_psmiles_query(message: str, session_id: str) -> Dict:
         elif any(keyword in lower_message for keyword in ['fingerprint', 'inchi', 'analyze']):
             return handle_analysis_request(message, session_id)
         
-        # Enhanced PSMILES pattern to extract PSMILES strings from text
-        psmiles_pattern = r'(\[[^\]]*\][A-Za-z0-9\[\]\(\)\=\#\*\-\+\\\/]*|\b[A-Za-z0-9\[\]\(\)\=\#\*\-\+\\\/]{5,})'
-        potential_psmiles = re.findall(psmiles_pattern, message)
+        # Enhanced PSMILES detection - more specific patterns
+        # Look for patterns that are more likely to be actual PSMILES strings
+        psmiles_patterns = [
+            r'\[\*\][A-Za-z0-9\[\]\(\)\=\#\-\+\\\/]*\[\*\]',  # Pattern with [*] at both ends
+            r'\[\*\][A-Za-z0-9\[\]\(\)\=\#\-\+\\\/]+',        # Pattern starting with [*]
+            r'[A-Za-z0-9\[\]\(\)\=\#\-\+\\\/]*\[\*\]',        # Pattern ending with [*]
+        ]
         
-        # Filter to likely PSMILES (contain common PSMILES elements)
-        psmiles_indicators = ['(', ')', '=', '[', ']', '*', 'C', 'N', 'O']
-        valid_psmiles = [p for p in potential_psmiles if len(p) > 2 and any(ind in p for ind in psmiles_indicators)]
+        potential_psmiles = []
+        for pattern in psmiles_patterns:
+            matches = re.findall(pattern, message)
+            potential_psmiles.extend(matches)
+        
+        # Additional filtering - must contain key PSMILES elements
+        valid_psmiles = []
+        for candidate in potential_psmiles:
+            # Must contain [*] or be a chemical-looking string with specific indicators
+            if '[*]' in candidate:
+                valid_psmiles.append(candidate)
+            elif (len(candidate) > 3 and 
+                  any(indicator in candidate for indicator in ['=', '#', 'C', 'N', 'O']) and
+                  not any(word in candidate.lower() for word in ['poly', 'acid', 'alcohol', 'amine', 'ester'])):
+                # Exclude common polymer names that might be mistaken for PSMILES
+                valid_psmiles.append(candidate)
+        
+        # Remove duplicates and sort by length (longer likely more complete)
+        valid_psmiles = sorted(list(set(valid_psmiles)), key=len, reverse=True)
         
         if any(keyword in lower_message for keyword in ['validate', 'check', 'verify']):
             # Validation request
             if valid_psmiles:
-                psmiles_string = max(valid_psmiles, key=len)
+                psmiles_string = valid_psmiles[0]
                 return handle_psmiles_validation(psmiles_string, message, session_id)
             else:
                 return {
@@ -608,12 +628,18 @@ def handle_psmiles_query(message: str, session_id: str) -> Dict:
             return handle_psmiles_examples(message)
         
         elif valid_psmiles:
-            # Direct PSMILES processing - this is the main workflow entry point
-            psmiles_string = max(valid_psmiles, key=len)
-            return process_psmiles_with_workflow(psmiles_string, session_id, message)
+            # Potential PSMILES found - validate before processing
+            psmiles_string = valid_psmiles[0]
+            
+            # Quick validation check using basic PSMILES rules
+            if _is_likely_psmiles(psmiles_string):
+                return process_psmiles_with_workflow(psmiles_string, session_id, message)
+            else:
+                # Not a valid PSMILES, treat as material description
+                return handle_psmiles_generation(message, session_id)
         
         else:
-            # Generate new PSMILES based on description
+            # No PSMILES detected - generate from description
             return handle_psmiles_generation(message, session_id)
             
     except Exception as e:
@@ -622,6 +648,37 @@ def handle_psmiles_query(message: str, session_id: str) -> Dict:
             'message': f'PSMILES processing error: {str(e)}',
             'timestamp': datetime.now().isoformat()
         }
+
+def _is_likely_psmiles(candidate: str) -> bool:
+    """
+    Quick validation to determine if a string is likely a valid PSMILES.
+    This prevents material names from being processed as PSMILES strings.
+    """
+    # Must contain [*] symbols for connection points
+    if '[*]' not in candidate:
+        return False
+    
+    # Count [*] symbols - should typically have exactly 2
+    star_count = candidate.count('[*]')
+    if star_count < 1 or star_count > 4:  # Allow some flexibility
+        return False
+    
+    # Should not contain common polymer name words
+    exclude_words = ['poly', 'acid', 'alcohol', 'amine', 'ester', 'glycol', 'vinyl', 'methyl', 'ethyl']
+    candidate_lower = candidate.lower()
+    if any(word in candidate_lower for word in exclude_words):
+        return False
+    
+    # Should contain chemical structure indicators
+    chemical_indicators = ['C', 'N', 'O', 'S', '=', '#', '(', ')', '-']
+    if not any(indicator in candidate for indicator in chemical_indicators):
+        return False
+    
+    # Check for reasonable length (not too short, not extremely long)
+    if len(candidate) < 5 or len(candidate) > 200:
+        return False
+    
+    return True
 
 def process_psmiles_with_workflow(psmiles_string: str, session_id: str, original_message: str) -> Dict:
     """Process PSMILES through the complete workflow with canonicalization and visualization."""
@@ -990,10 +1047,11 @@ def handle_psmiles_generation(message: str, session_id: str) -> Dict:
                 
                 # Auto-start the workflow with the generated PSMILES
                 if psmiles_processor and psmiles_processor.available:
-                    workflow_result = psmiles_processor.process_psmiles_workflow(psmiles, session_id, "generated")
-                    
-                    if workflow_result['success']:
-                        response_message = f"""
+                    try:
+                        workflow_result = psmiles_processor.process_psmiles_workflow(psmiles, session_id, "generated")
+                        
+                        if workflow_result['success']:
+                            response_message = f"""
 ## 🧪 PSMILES Generated & Processed!
 
 **Your Request**: {message}
@@ -1014,30 +1072,37 @@ def handle_psmiles_generation(message: str, session_id: str) -> Dict:
 ### 📊 Structure Visualization
 The polymer structure has been generated and saved as an SVG image.
 """
-                        
-                        if basic_val['errors']:
-                            response_message += f"\n**Issues Found**:\n"
-                            for error in basic_val['errors']:
-                                response_message += f"- ❌ {error}\n"
-                        
-                        if basic_val['warnings']:
-                            response_message += f"\n**Notes**:\n"
-                            for warning in basic_val['warnings']:
-                                response_message += f"- ⚠️ {warning}\n"
-                        
-                        # Return the full workflow response with interactive options
-                        return {
-                            'type': 'psmiles_generated_workflow',
-                            'message': response_message,
-                            'generated_psmiles': psmiles,
-                            'generation_result': result,
-                            'psmiles_result': workflow_result,
-                            'svg_content': workflow_result.get('svg_content', ''),
-                            'svg_filename': workflow_result.get('svg_filename', ''),
-                            'workflow_options': workflow_result['workflow_options'],
-                            'interactive_buttons': _generate_interactive_buttons(workflow_result['workflow_options']),
-                            'timestamp': datetime.now().isoformat()
-                        }
+                            
+                            if basic_val['errors']:
+                                response_message += f"\n**Issues Found**:\n"
+                                for error in basic_val['errors']:
+                                    response_message += f"- ❌ {error}\n"
+                            
+                            if basic_val['warnings']:
+                                response_message += f"\n**Notes**:\n"
+                                for warning in basic_val['warnings']:
+                                    response_message += f"- ⚠️ {warning}\n"
+                            
+                            # Return the full workflow response with interactive options
+                            return {
+                                'type': 'psmiles_generated_workflow',
+                                'message': response_message,
+                                'generated_psmiles': psmiles,
+                                'generation_result': result,
+                                'psmiles_result': workflow_result,
+                                'svg_content': workflow_result.get('svg_content', ''),
+                                'svg_filename': workflow_result.get('svg_filename', ''),
+                                'workflow_options': workflow_result['workflow_options'],
+                                'interactive_buttons': _generate_interactive_buttons(workflow_result['workflow_options']),
+                                'timestamp': datetime.now().isoformat()
+                            }
+                        else:
+                            # Fall through to fallback response
+                            pass
+                            
+                    except Exception as e:
+                        # Fall through to the fallback response
+                        pass
                 
                 # Fallback if workflow processor not available
                 response_message = f"""
@@ -2383,9 +2448,15 @@ if __name__ == '__main__':
     # Initialize systems
     if initialize_systems():
         print("🌟 All systems ready!")
-        app.run(debug=True, host='0.0.0.0', port=8003)
+        
+        # Get port from environment variable (HF Spaces uses 7860)
+        import os
+        port = int(os.environ.get('PORT', 7860))
+        
+        print(f"🌐 Starting server on 0.0.0.0:{port}")
+        app.run(debug=False, host='0.0.0.0', port=port)
     else:
         print("❌ Failed to initialize systems. Please check:")
         print("   1. Ollama is running (ollama serve)")
         print("   2. Required model is available (ollama pull llama3.2)")
-        print("   3. Environment variables are set correctly") 
+        print("   3. Environment variables are set correctly")

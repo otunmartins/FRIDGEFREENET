@@ -636,6 +636,93 @@ YOUR RESPONSE MUST START WITH "PSMILES: " and contain exactly 2 [*] symbols.
                 'psmiles': '[*]NC(=O)C[*]',
                 'explanation': 'This represents a polyamide repeat unit with exactly 2 connection points'
             },
+            # PVA and its variants - CRITICAL ADDITION
+            'pva': {
+                'psmiles': '[*]CC([*])O',
+                'explanation': 'This represents the vinyl alcohol repeat unit -CH2-CH(OH)- with exactly 2 connection points'
+            },
+            'poly(vinyl alcohol)': {
+                'psmiles': '[*]CC([*])O',
+                'explanation': 'This represents the vinyl alcohol repeat unit -CH2-CH(OH)- with exactly 2 connection points'
+            },
+            'polyvinyl alcohol': {
+                'psmiles': '[*]CC([*])O',
+                'explanation': 'This represents the vinyl alcohol repeat unit -CH2-CH(OH)- with exactly 2 connection points'
+            },
+            'vinyl alcohol': {
+                'psmiles': '[*]CC([*])O',
+                'explanation': 'This represents the vinyl alcohol repeat unit -CH2-CH(OH)- with exactly 2 connection points'
+            },
+            # PVP and variants
+            'pvp': {
+                'psmiles': '[*]CC([*])N1CCCC1=O',
+                'explanation': 'This represents the vinylpyrrolidone repeat unit with exactly 2 connection points'
+            },
+            'polyvinylpyrrolidone': {
+                'psmiles': '[*]CC([*])N1CCCC1=O',
+                'explanation': 'This represents the vinylpyrrolidone repeat unit with exactly 2 connection points'
+            },
+            'poly(vinylpyrrolidone)': {
+                'psmiles': '[*]CC([*])N1CCCC1=O',
+                'explanation': 'This represents the vinylpyrrolidone repeat unit with exactly 2 connection points'
+            },
+            'vinylpyrrolidone': {
+                'psmiles': '[*]CC([*])N1CCCC1=O',
+                'explanation': 'This represents the vinylpyrrolidone repeat unit with exactly 2 connection points'
+            },
+            # PLGA and variants
+            'plga': {
+                'psmiles': '[*]OC(=O)CC(=O)O[*]',
+                'explanation': 'This represents a simplified PLGA repeat unit with exactly 2 connection points'
+            },
+            'poly(lactic-co-glycolic acid)': {
+                'psmiles': '[*]OC(=O)CC(=O)O[*]',
+                'explanation': 'This represents a simplified PLGA repeat unit with exactly 2 connection points'
+            },
+            'pla': {
+                'psmiles': '[*]OC(=O)C([*])C',
+                'explanation': 'This represents the lactic acid repeat unit with exactly 2 connection points'
+            },
+            'polylactic acid': {
+                'psmiles': '[*]OC(=O)C([*])C',
+                'explanation': 'This represents the lactic acid repeat unit with exactly 2 connection points'
+            },
+            'poly(lactic acid)': {
+                'psmiles': '[*]OC(=O)C([*])C',
+                'explanation': 'This represents the lactic acid repeat unit with exactly 2 connection points'
+            },
+            # Chitosan and related
+            'chitosan': {
+                'psmiles': '[*]OC1C(N)C(O)C(O)C(CO)O[*]',
+                'explanation': 'This represents a simplified chitosan repeat unit with exactly 2 connection points'
+            },
+            # Alginate
+            'alginate': {
+                'psmiles': '[*]OC1C(O)C(O)C(C(=O)O)O[*]',
+                'explanation': 'This represents a simplified alginate repeat unit with exactly 2 connection points'
+            },
+            # Collagen (simplified)
+            'collagen': {
+                'psmiles': '[*]NC(=O)C([*])N',
+                'explanation': 'This represents a simplified collagen repeat unit with exactly 2 connection points'
+            },
+            # Additional common polymers
+            'pmma': {
+                'psmiles': '[*]CC([*])(C)C(=O)OC',
+                'explanation': 'This represents the methyl methacrylate repeat unit with exactly 2 connection points'
+            },
+            'poly(methyl methacrylate)': {
+                'psmiles': '[*]CC([*])(C)C(=O)OC',
+                'explanation': 'This represents the methyl methacrylate repeat unit with exactly 2 connection points'
+            },
+            'polyester': {
+                'psmiles': '[*]OC(=O)C[*]',
+                'explanation': 'This represents a simple polyester repeat unit with exactly 2 connection points'
+            },
+            'pet': {
+                'psmiles': '[*]OC(=O)C1=CC=C(C[*])C=C1',
+                'explanation': 'This represents a PET repeat unit with exactly 2 connection points'
+            },
         }
         
         # Check for exact matches first
@@ -643,10 +730,22 @@ YOUR RESPONSE MUST START WITH "PSMILES: " and contain exactly 2 [*] symbols.
             if key == request_lower:
                 return info
         
-        # Check for partial matches
+        # Check for partial matches - more comprehensive search
         for key, info in direct_mapping.items():
-            if key in request_lower:
+            if key in request_lower or any(word in request_lower for word in key.split()):
                 return info
+        
+        # Special handling for parentheses-based names like "Poly(vinyl alcohol) (PVA)"
+        # Extract the main polymer name
+        import re
+        # Match patterns like "Poly(something)" or "poly(something)"
+        poly_match = re.search(r'poly\(([^)]+)\)', request_lower)
+        if poly_match:
+            inner_name = poly_match.group(1).strip()
+            # Check if we have a mapping for this inner name
+            for key, info in direct_mapping.items():
+                if inner_name in key or key in inner_name:
+                    return info
         
         return None
     
@@ -671,21 +770,59 @@ YOUR RESPONSE MUST START WITH "PSMILES: " and contain exactly 2 [*] symbols.
             'polyamide': '[*]NC(=O)C[*]',
             'polyester': '[*]OC(=O)C[*]',
             'pet': '[*]OC(=O)C1=CC=C(C[*])C=C1',
-            'pvp': '[*]CC([*])C1=CN(C)C=C1',
+            'pvp': '[*]CC([*])N1CCCC1=O',
+            'polyvinylpyrrolidone': '[*]CC([*])N1CCCC1=O',
+            'poly(vinylpyrrolidone)': '[*]CC([*])N1CCCC1=O',
+            'vinylpyrrolidone': '[*]CC([*])N1CCCC1=O',
             'pva': '[*]CC([*])O',
+            'poly(vinyl alcohol)': '[*]CC([*])O',
+            'polyvinyl alcohol': '[*]CC([*])O',
+            'vinyl alcohol': '[*]CC([*])O',
+            'plga': '[*]OC(=O)CC(=O)O[*]',
+            'poly(lactic-co-glycolic acid)': '[*]OC(=O)CC(=O)O[*]',
+            'pla': '[*]OC(=O)C([*])C',
+            'polylactic acid': '[*]OC(=O)C([*])C',
+            'poly(lactic acid)': '[*]OC(=O)C([*])C',
+            'chitosan': '[*]OC1C(N)C(O)C(O)C(CO)O[*]',
+            'alginate': '[*]OC1C(O)C(O)C(C(=O)O)O[*]',
+            'collagen': '[*]NC(=O)C([*])N',
             'pmma': '[*]CC([*])(C)C(=O)OC',
+            'poly(methyl methacrylate)': '[*]CC([*])(C)C(=O)OC',
             'meta phenylene': '[*]C1=CC([*])=CC=C1',
             'para phenylene': '[*]C1=CC=C([*])C=C1',
             'ortho phenylene': '[*]C1=C([*])C=CC=C1'
         }
         
+        # First check for exact matches
+        for keyword, psmiles in fallback_mapping.items():
+            if keyword == request_lower:
+                return {
+                    'psmiles': psmiles,
+                    'pattern': 'fallback_exact_match',
+                    'note': f'Used exact fallback mapping for {keyword}'
+                }
+        
+        # Then check for partial matches
         for keyword, psmiles in fallback_mapping.items():
             if keyword in request_lower:
                 return {
                     'psmiles': psmiles,
-                    'pattern': 'fallback_mapping',
-                    'note': f'Used fallback mapping for {keyword}'
+                    'pattern': 'fallback_partial_match',
+                    'note': f'Used partial fallback mapping for {keyword}'
                 }
+        
+        # Special handling for parentheses-based names
+        import re
+        poly_match = re.search(r'poly\(([^)]+)\)', request_lower)
+        if poly_match:
+            inner_name = poly_match.group(1).strip()
+            for keyword, psmiles in fallback_mapping.items():
+                if inner_name in keyword or keyword in inner_name:
+                    return {
+                        'psmiles': psmiles,
+                        'pattern': 'fallback_parentheses_match',
+                        'note': f'Used parentheses fallback mapping for {inner_name} -> {keyword}'
+                    }
         
         # If no fallback found, try to find any chemical-looking string in response
         chemical_patterns = [
