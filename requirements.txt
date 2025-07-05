@@ -21,6 +21,10 @@ rdkit>=2024.9.1
 rdchiral>=1.1.0
 py3Dmol==2.0.4
 
+# PSP and polymer building
+psp>=1.0.0
+# Note: PACKMOL is also required but must be installed separately as it's not a Python package
+
 # LlaSMol integration dependencies
 torch>=2.0.0
 transformers>=4.35.0
@@ -42,4 +46,7 @@ jsonschema==4.19.2
 # MCP (Model Context Protocol) dependencies
 fastmcp>=0.1.0
 mcp>=1.0.0
-# Enhanced Semantic Scholar integration (Python 3.9 compatible) 
+# Enhanced Semantic Scholar integration (Python 3.9 compatible)
+
+# SELFIES for SMILES autocorrection
+selfies>=2.1.0 

@@ -523,10 +523,26 @@ function formatMessage(content) {
     let formatted = content.trim();
     
     // Handle SVG content specially - don't process markdown for SVG
-    if (formatted.includes('<svg') && formatted.includes('</svg>')) {
-        // Extract SVG and preserve it
+    if ((formatted.includes('<svg') && formatted.includes('</svg>')) || formatted.includes('<div class="svg-container">')) {
+        // Extract SVG container or raw SVG and preserve it
+        const svgContainerMatch = formatted.match(/(<div class="svg-container">[\s\S]*?<\/div>)/);
         const svgMatch = formatted.match(/(<svg[\s\S]*?<\/svg>)/);
-        if (svgMatch) {
+        
+        if (svgContainerMatch) {
+            const svgContent = svgContainerMatch[1];
+            formatted = formatted.replace(svgContainerMatch[1], `__SVG_CONTENT__`);
+            
+            // Process the rest as markdown
+            formatted = formatted
+                .replace(/&quot;/g, '"')
+                .replace(/&lt;/g, '<')
+                .replace(/&gt;/g, '>')
+                .replace(/&amp;/g, '&');
+            
+            // Restore SVG
+            formatted = formatted.replace(`__SVG_CONTENT__`, svgContent);
+            return formatted;
+        } else if (svgMatch) {
             const svgContent = svgMatch[1];
             formatted = formatted.replace(svgMatch[1], `__SVG_CONTENT__`);
             

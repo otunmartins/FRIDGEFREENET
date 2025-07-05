@@ -1,4 +1,17 @@
 # Python
+*.xyz
+*.inp
+*csv
+*_simulations/
+__pycache__/
+preprocessed_* 
+*pdb
+*png
+*svg
+*_output*/ 
+debug_*_output*/ 
+psp_demo_output/
+mining_results/ 
 __pycache__/
 *.py[cod]
 *$py.class

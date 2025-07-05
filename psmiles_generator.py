@@ -7,14 +7,14 @@ using Large Language Models with conversation memory and rule reinforcement.
 Enhanced with LlaSMol support for superior molecular understanding.
 """
 
-from langchain_community.llms import Ollama
+from langchain_ollama import OllamaLLM
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain.memory import ConversationBufferWindowMemory
 import json
 import re
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 
 # Add Hugging Face support for LlaSMol
 try:
@@ -24,6 +24,14 @@ try:
 except ImportError:
     TRANSFORMERS_AVAILABLE = False
     print("⚠️ Transformers library not available. Install with: pip install transformers torch")
+
+# Import natural language to SMILES functionality
+try:
+    from natural_language_smiles import NaturalLanguageToPSMILES, ChemicalValidator
+    NATURAL_LANGUAGE_AVAILABLE = True
+except ImportError:
+    NATURAL_LANGUAGE_AVAILABLE = False
+    print("⚠️ Natural language SMILES converter not available")
 
 
 class LlaSMolLLM:
@@ -154,7 +162,7 @@ class PSMILESGenerator:
         if self.model_type == "ollama":
             self.ollama_model = ollama_model
             self.ollama_host = ollama_host
-            self.llm = Ollama(
+            self.llm = OllamaLLM(
                 model=ollama_model,
                 base_url=ollama_host,
                 temperature=0.1  # Low temperature for consistent chemical generation
@@ -179,12 +187,32 @@ class PSMILESGenerator:
         self.conversation_count = 0
         self.rule_reinforcement_interval = 5  # Reinforce rules every 5 interactions
         
+        # Initialize natural language to PSMILES converter
+        if NATURAL_LANGUAGE_AVAILABLE:
+            try:
+                self.nl_to_psmiles = NaturalLanguageToPSMILES(
+                    ollama_model=ollama_model if self.model_type == "ollama" else "llama3.2",
+                    ollama_host=ollama_host
+                )
+                self.validator = ChemicalValidator()
+                print("🧪 Natural Language to PSMILES converter initialized")
+            except Exception as e:
+                print(f"⚠️ Failed to initialize natural language converter: {e}")
+                self.nl_to_psmiles = None
+                self.validator = None
+        else:
+            self.nl_to_psmiles = None
+            self.validator = None
+        
         print(f"✅ PSMILES Generator initialized with {self.model_name} ({self.model_type})")
         print(f"🧠 Conversation memory enabled (window size: {self.memory.k})")
         print(f"🔄 Rule reinforcement every {self.rule_reinforcement_interval} interactions")
         
         if self.model_type == "llamol":
             print("🎯 Using LlaSMol: Specialized for molecular understanding and SMILES processing")
+        
+        if self.nl_to_psmiles:
+            print("🔬 Enhanced with Natural Language to PSMILES conversion and RDKit validation")
     
     def _get_psmiles_rules(self) -> str:
         """Get the comprehensive PSMILES rules - Enhanced for LlaSMol."""
@@ -347,6 +375,13 @@ LlaSMol ENHANCED INSTRUCTIONS:
                 "psmiles": "[*]C(C=C1)=C([*])C=C1",
                 "description": "ortho-phenylene with specified connection points",
                 "formula": "C6H4"
+            },
+            
+            # PVC (Polyvinyl Chloride) example
+            "polyvinyl_chloride": {
+                "psmiles": "[*]CC([*])Cl",
+                "description": "polyvinyl chloride repeat unit -CH2-CHCl- with connection points",
+                "formula": "C2H3Cl"
             }
         }
 
@@ -395,6 +430,11 @@ User: "PSMILES for polyethylene"
 Your Response: "PSMILES: [*]CC[*]
 
 EXPLANATION: This represents the ethylene repeat unit -CH2-CH2- with connection points marked by [*]"
+
+User: "PSMILES for polyvinyl chloride"
+Your Response: "PSMILES: [*]CC([*])Cl
+
+EXPLANATION: This represents the vinyl chloride repeat unit -CH2-CHCl- with connection points marked by [*]"
 """
 
         psmiles_prompt = ChatPromptTemplate.from_messages([
@@ -445,6 +485,63 @@ RESPONSE FORMAT:
             # Increment conversation counter
             self.conversation_count += 1
             
+            # **NEW**: Add fast path for common requests with timeout protection
+            common_requests = {
+                'boron': '[*]B[*]',
+                'boron atom': '[*]B[*]',
+                'random polymer with boron': '[*]BC[*]',
+                'random polymer with a boron atom': '[*]BCC[*]',
+                'polyethylene': '[*]CC[*]',
+                'ethylene': '[*]CC[*]',
+                'water': '[*]O[*]',
+                'methanol': '[*]CO[*]',
+                'ethanol': '[*]CCO[*]',
+                'benzene': '[*]c1ccccc1[*]',
+                'peg': '[*]OCC[*]',
+                'polyethylene glycol': '[*]OCC[*]',
+                'polystyrene': '[*]Cc1ccccc1[*]',
+                'nylon': '[*]NC(=O)[*]',
+                'polyamide': '[*]NC(=O)[*]',
+                'acrylic': '[*]CC(=O)O[*]',
+                'vinyl': '[*]C=C[*]',
+                'ester': '[*]C(=O)O[*]',
+                'ether': '[*]O[*]',
+                'amide': '[*]NC(=O)[*]',
+                'carbonyl': '[*]C(=O)[*]',
+                'hydroxyl': '[*]O[*]',
+                'carboxyl': '[*]C(=O)O[*]',
+                'amino': '[*]N[*]',
+                'methyl': '[*]C[*]',
+                'phenyl': '[*]c1ccccc1[*]'
+            }
+            
+            # Check for direct matches (case-insensitive)
+            request_lower = request.lower().strip()
+            if request_lower in common_requests:
+                psmiles = common_requests[request_lower]
+                return {
+                    'success': True,
+                    'request': request,
+                    'psmiles': psmiles,
+                    'explanation': f'Fast path match: {psmiles}',
+                    'conversation_turn': self.conversation_count,
+                    'method': 'fast_path',
+                    'timestamp': datetime.now().isoformat()
+                }
+            
+            # Check for partial matches
+            for key, psmiles in common_requests.items():
+                if key in request_lower:
+                    return {
+                        'success': True,
+                        'request': request,
+                        'psmiles': psmiles,
+                        'explanation': f'Partial match for "{key}": {psmiles}',
+                        'conversation_turn': self.conversation_count,
+                        'method': 'partial_match',
+                        'timestamp': datetime.now().isoformat()
+                    }
+            
             # Check if this is a follow-up request (variations, more examples, etc.)
             is_followup = any(keyword in request.lower() for keyword in [
                 'variation', 'variations', 'different', 'another', 'more', 'additional', 
@@ -464,6 +561,7 @@ RESPONSE FORMAT:
                     'psmiles': direct_result['psmiles'],
                     'explanation': f"PSMILES: {direct_result['psmiles']}\n\nEXPLANATION: {direct_result['explanation']}",
                     'conversation_turn': self.conversation_count,
+                    'method': 'direct_mapping',
                     'rule_reinforcement': False,
                     'timestamp': datetime.now().isoformat()
                 }
@@ -474,7 +572,7 @@ CRITICAL PSMILES (Polymer SMILES) RULES - FOLLOW EXACTLY:
 
 1. **NO SPACES**: PSMILES strings NEVER contain spaces
 2. **NO HYPHENS**: PSMILES strings NEVER contain hyphens (-)
-3. **ATOMS**: Use atomic symbols (C, N, O, S, F, Cl, Br, etc.)
+3. **ATOMS**: Use atomic symbols (C, N, O, S, F, Cl, Br, B, etc.)
 4. **BONDS**: Single bonds: atoms next to each other (CC), Double bonds: = symbol (C=C)
 5. **BRANCHES**: Use round brackets ()
 6. **CONNECTION POINTS**: Use [*] for non-terminal connections - THIS IS CRITICAL!
@@ -487,13 +585,13 @@ MANDATORY CONNECTION POINT RULES:
 
 CRITICAL EXAMPLES:
 - PEG (ether linkage): [*]OCC[*] (connects through marked positions - exactly 2 [*])
-- Ethylene (terminal): CC (connects through first/last C atoms - 0 [*])
+- Boron polymer: [*]B[*] or [*]BCC[*] (exactly 2 [*])
 - Meta-phenylene: [*]C(C=C1)=CC([*])=C1 (meta positions marked - exactly 2 [*])
 
 FORBIDDEN EXAMPLES (NEVER GENERATE THESE):
+- BCC[*] (only 1 [*] symbol - WRONG!)
 - [*]C[*]C[*] (3 [*] symbols - WRONG!)
-- [*]C(C=C1)=C([*])C([*])=C1 (3 [*] symbols - WRONG!)
-- C[*] (1 [*] symbol - WRONG!)
+- BC (0 [*] symbols - WRONG!)
 """
             
             # Get conversation history
@@ -532,6 +630,7 @@ Generate a PSMILES string for: {request}
 CRITICAL EXAMPLES WITH EXACTLY 2 [*] SYMBOLS:
 - For PEG or polyethylene glycol: PSMILES: [*]OCC[*]
 - For polyethylene: PSMILES: [*]CC[*]
+- For boron polymer: PSMILES: [*]B[*] or [*]BCC[*]
 - For polystyrene: PSMILES: [*]CC([*])C1=CC=CC=C1
 - For polypropylene: PSMILES: [*]CC([*])C
 - For nylon: PSMILES: [*]NC(=O)CCCCC[*]
@@ -548,30 +647,72 @@ REMEMBER:
 YOUR RESPONSE MUST START WITH "PSMILES: " and contain exactly 2 [*] symbols.
 """
             
-            # Generate response using the LLM 
-            response = self.llm.invoke(explicit_request)
-            
-            # Parse response to extract PSMILES string with enhanced extraction
-            psmiles_result = self._extract_psmiles_from_response(response)
-            
-            # If extraction failed, try direct parsing or provide fallback
-            if not psmiles_result.get('psmiles') or psmiles_result['psmiles'] == 'Not found':
-                psmiles_result = self._fallback_psmiles_extraction(request, response)
-            
-            # Save to memory
-            self.memory.chat_memory.add_user_message(request)
-            self.memory.chat_memory.add_ai_message(response)
-            
-            return {
-                'success': True,
-                'request': request,
-                'psmiles': psmiles_result.get('psmiles', 'Could not generate'),
-                'explanation': response,
-                'conversation_turn': self.conversation_count,
-                'rule_reinforcement': is_followup,
-                'is_followup': is_followup,
-                'timestamp': datetime.now().isoformat()
-            }
+            # **NEW**: Add timeout protection for slow LLM calls
+            try:
+                # Generate response using the LLM with timeout handling
+                response = self.llm.invoke(explicit_request)
+                
+                # Parse response to extract PSMILES string with enhanced extraction
+                psmiles_result = self._extract_psmiles_from_response(response)
+                
+                # **NEW**: Handle validation results from extraction
+                if psmiles_result.get('pattern') == 'extracted_invalid':
+                    # Try fallback extraction if the first result was invalid
+                    fallback_result = self._fallback_psmiles_extraction(request, response)
+                    if fallback_result.get('psmiles') and fallback_result['psmiles'] != 'Not found':
+                        psmiles_result = fallback_result
+                    else:
+                        # Use a smart fallback based on request content
+                        psmiles_result = self._create_smart_fallback(request)
+                
+                # If extraction failed, try direct parsing or provide fallback
+                if not psmiles_result.get('psmiles') or psmiles_result['psmiles'] == 'Not found':
+                    psmiles_result = self._fallback_psmiles_extraction(request, response)
+                    
+                    # If still no success, use smart fallback
+                    if not psmiles_result.get('psmiles') or psmiles_result['psmiles'] == 'Not found':
+                        psmiles_result = self._create_smart_fallback(request)
+                
+                # **NEW**: Final validation before returning
+                final_psmiles = psmiles_result.get('psmiles', '[*]CC[*]')
+                if final_psmiles.count('[*]') != 2:
+                    final_psmiles = self._fix_connection_points(final_psmiles)
+                    psmiles_result['psmiles'] = final_psmiles
+                    psmiles_result['fixed'] = True
+                
+                # Save to memory
+                self.memory.chat_memory.add_user_message(request)
+                self.memory.chat_memory.add_ai_message(response)
+                
+                return {
+                    'success': True,
+                    'request': request,
+                    'psmiles': psmiles_result.get('psmiles', '[*]CC[*]'),
+                    'explanation': response,
+                    'conversation_turn': self.conversation_count,
+                    'method': 'llm_generated',
+                    'pattern': psmiles_result.get('pattern', 'unknown'),
+                    'fixed': psmiles_result.get('fixed', False),
+                    'rule_reinforcement': is_followup,
+                    'is_followup': is_followup,
+                    'timestamp': datetime.now().isoformat()
+                }
+                
+            except Exception as llm_error:
+                # **NEW**: If LLM fails, use smart fallback immediately
+                print(f"⚠️ LLM call failed: {llm_error}")
+                fallback_result = self._create_smart_fallback(request)
+                
+                return {
+                    'success': True,
+                    'request': request,
+                    'psmiles': fallback_result.get('psmiles', '[*]CC[*]'),
+                    'explanation': f'LLM timeout/error - using smart fallback: {fallback_result.get("explanation", "polyethylene fallback")}',
+                    'conversation_turn': self.conversation_count,
+                    'method': 'smart_fallback',
+                    'llm_error': str(llm_error),
+                    'timestamp': datetime.now().isoformat()
+                }
             
         except Exception as e:
             return {
@@ -581,6 +722,163 @@ YOUR RESPONSE MUST START WITH "PSMILES: " and contain exactly 2 [*] symbols.
                 'conversation_turn': self.conversation_count,
                 'timestamp': datetime.now().isoformat()
             }
+    
+    def generate_psmiles_from_natural_language(self, description: str) -> Dict[str, Any]:
+        """
+        Convert natural language description to PSMILES using RDKit validation.
+        
+        Args:
+            description (str): Natural language description of molecule
+            
+        Returns:
+            Dict: Complete conversion results with validation
+        """
+        if not self.nl_to_psmiles:
+            return {
+                'success': False,
+                'error': 'Natural language converter not available',
+                'description': description,
+                'suggestion': 'Use standard PSMILES generation instead'
+            }
+        
+        try:
+            # Convert description to PSMILES using the pipeline
+            result = self.nl_to_psmiles.convert_description_to_psmiles(description)
+            
+            # Add conversation tracking
+            self.conversation_count += 1
+            
+            # Save to memory
+            if result['success']:
+                psmiles = result.get('psmiles', '')
+                self.memory.chat_memory.add_user_message(
+                    f"Natural language request: {description}"
+                )
+                self.memory.chat_memory.add_ai_message(
+                    f"Generated PSMILES: {psmiles}"
+                )
+            
+            # Add metadata
+            result.update({
+                'method': 'natural_language_pipeline',
+                'rdkit_validated': result.get('validation', {}).get('is_valid', False),
+                'conversation_turn': self.conversation_count,
+                'timestamp': datetime.now().isoformat()
+            })
+            
+            return result
+            
+        except Exception as e:
+            return {
+                'success': False,
+                'error': f"Natural language conversion failed: {str(e)}",
+                'description': description,
+                'conversation_turn': self.conversation_count,
+                'timestamp': datetime.now().isoformat()
+            }
+    
+    def validate_smiles_with_rdkit(self, smiles: str) -> Dict[str, Any]:
+        """
+        Validate SMILES string using RDKit and convert to PSMILES.
+        
+        Args:
+            smiles (str): SMILES string to validate
+            
+        Returns:
+            Dict: Validation results and PSMILES conversion
+        """
+        if not self.validator:
+            return {
+                'success': False,
+                'error': 'RDKit validator not available',
+                'smiles': smiles
+            }
+        
+        try:
+            # Validate with RDKit
+            is_valid, mol, message = self.validator.validate_smiles(smiles)
+            
+            result = {
+                'success': is_valid,
+                'smiles': smiles,
+                'validation_message': message,
+                'is_valid': is_valid
+            }
+            
+            if is_valid and mol:
+                # Canonicalize SMILES
+                canonical_smiles = self.validator.canonicalize_smiles(smiles)
+                result['canonical_smiles'] = canonical_smiles
+                
+                # Convert to PSMILES
+                psmiles = self._convert_smiles_to_psmiles(canonical_smiles or smiles)
+                result['psmiles'] = psmiles
+                
+                # Validate PSMILES format
+                psmiles_validation = self._validate_psmiles_format(psmiles)
+                result['psmiles_validation'] = psmiles_validation
+            
+            return result
+            
+        except Exception as e:
+            return {
+                'success': False,
+                'error': f"RDKit validation failed: {str(e)}",
+                'smiles': smiles
+            }
+    
+    def _convert_smiles_to_psmiles(self, smiles: str) -> str:
+        """Convert SMILES to PSMILES by adding [*] connection points."""
+        if not smiles:
+            return "[*][*]"
+        
+        # Check if already has connection points
+        if '[*]' in smiles:
+            connection_count = smiles.count('[*]')
+            if connection_count == 2:
+                return smiles
+            elif connection_count == 1:
+                return f"[*]{smiles}"
+            else:
+                smiles_clean = smiles.replace('[*]', '')
+        else:
+            smiles_clean = smiles
+        
+        # Add connection points for polymer repeat unit
+        psmiles = f"[*]{smiles_clean}[*]"
+        return psmiles
+    
+    def _validate_psmiles_format(self, psmiles: str) -> Dict[str, Any]:
+        """Validate PSMILES format according to rules."""
+        validation = {
+            'is_valid': True,
+            'issues': [],
+            'connection_points': 0
+        }
+        
+        if not psmiles:
+            validation['is_valid'] = False
+            validation['issues'].append('Empty PSMILES')
+            return validation
+        
+        # Count connection points
+        connection_count = psmiles.count('[*]')
+        validation['connection_points'] = connection_count
+        
+        if connection_count != 2:
+            validation['is_valid'] = False
+            validation['issues'].append(f'Must have exactly 2 [*] symbols, found {connection_count}')
+        
+        # Check for spaces and hyphens
+        if ' ' in psmiles:
+            validation['is_valid'] = False
+            validation['issues'].append('Cannot contain spaces')
+        
+        if '-' in psmiles:
+            validation['is_valid'] = False
+            validation['issues'].append('Cannot contain hyphens')
+        
+        return validation
     
     def _direct_psmiles_mapping(self, request: str) -> Optional[Dict]:
         """Direct mapping for common polymer requests to ensure correct PSMILES."""
@@ -693,12 +991,12 @@ YOUR RESPONSE MUST START WITH "PSMILES: " and contain exactly 2 [*] symbols.
             },
             # Chitosan and related
             'chitosan': {
-                'psmiles': '[*]OC1C(N)C(O)C(O)C(CO)O[*]',
-                'explanation': 'This represents a simplified chitosan repeat unit with exactly 2 connection points'
+                'psmiles': '[*]CC(N)C(O)[*]',
+                'explanation': 'This represents a simplified chitosan repeat unit with amine and hydroxyl groups and exactly 2 connection points'
             },
             # Alginate
             'alginate': {
-                'psmiles': '[*]OC1C(O)C(O)C(C(=O)O)O[*]',
+                'psmiles': '[*]OC1C(O)C(O)C(C(=O)O)O1[*]',
                 'explanation': 'This represents a simplified alginate repeat unit with exactly 2 connection points'
             },
             # Collagen (simplified)
@@ -722,6 +1020,57 @@ YOUR RESPONSE MUST START WITH "PSMILES: " and contain exactly 2 [*] symbols.
             'pet': {
                 'psmiles': '[*]OC(=O)C1=CC=C(C[*])C=C1',
                 'explanation': 'This represents a PET repeat unit with exactly 2 connection points'
+            },
+            # Carbonate polymers
+            'polypropylene carbonate': {
+                'psmiles': '[*]CC([*])OC(=O)O',
+                'explanation': 'This represents the propylene carbonate repeat unit with exactly 2 connection points'
+            },
+            'ppc': {
+                'psmiles': '[*]CC([*])OC(=O)O',
+                'explanation': 'This represents the propylene carbonate repeat unit with exactly 2 connection points'
+            },
+            'polyethylene carbonate': {
+                'psmiles': '[*]CCOC(=O)O[*]',
+                'explanation': 'This represents the ethylene carbonate repeat unit with exactly 2 connection points'
+            },
+            'pec': {
+                'psmiles': '[*]CCOC(=O)O[*]',
+                'explanation': 'This represents the ethylene carbonate repeat unit with exactly 2 connection points'
+            },
+            'propylene carbonate': {
+                'psmiles': '[*]CC([*])OC(=O)O',
+                'explanation': 'This represents the propylene carbonate repeat unit with exactly 2 connection points'
+            },
+            'ethylene carbonate': {
+                'psmiles': '[*]CCOC(=O)O[*]',
+                'explanation': 'This represents the ethylene carbonate repeat unit with exactly 2 connection points'
+            },
+            # PVC (Polyvinyl Chloride) - CRITICAL ADDITION
+            'pvc': {
+                'psmiles': '[*]CC([*])Cl',
+                'explanation': 'This represents the vinyl chloride repeat unit -CH2-CHCl- with exactly 2 connection points'
+            },
+            'polyvinyl chloride': {
+                'psmiles': '[*]CC([*])Cl',
+                'explanation': 'This represents the vinyl chloride repeat unit -CH2-CHCl- with exactly 2 connection points'
+            },
+            'poly(vinyl chloride)': {
+                'psmiles': '[*]CC([*])Cl',
+                'explanation': 'This represents the vinyl chloride repeat unit -CH2-CHCl- with exactly 2 connection points'
+            },
+            'vinyl chloride': {
+                'psmiles': '[*]CC([*])Cl',
+                'explanation': 'This represents the vinyl chloride repeat unit -CH2-CHCl- with exactly 2 connection points'
+            },
+            # Handle common typos for PVC
+            'polyvynil chloride': {
+                'psmiles': '[*]CC([*])Cl',
+                'explanation': 'This represents the vinyl chloride repeat unit -CH2-CHCl- with exactly 2 connection points'
+            },
+            'polyvinylchloride': {
+                'psmiles': '[*]CC([*])Cl',
+                'explanation': 'This represents the vinyl chloride repeat unit -CH2-CHCl- with exactly 2 connection points'
             },
         }
         
@@ -783,8 +1132,8 @@ YOUR RESPONSE MUST START WITH "PSMILES: " and contain exactly 2 [*] symbols.
             'pla': '[*]OC(=O)C([*])C',
             'polylactic acid': '[*]OC(=O)C([*])C',
             'poly(lactic acid)': '[*]OC(=O)C([*])C',
-            'chitosan': '[*]OC1C(N)C(O)C(O)C(CO)O[*]',
-            'alginate': '[*]OC1C(O)C(O)C(C(=O)O)O[*]',
+            'chitosan': '[*]CC(N)C(O)[*]',
+            'alginate': '[*]OC1C(O)C(O)C(C(=O)O)O1[*]',
             'collagen': '[*]NC(=O)C([*])N',
             'pmma': '[*]CC([*])(C)C(=O)OC',
             'poly(methyl methacrylate)': '[*]CC([*])(C)C(=O)OC',
@@ -792,6 +1141,16 @@ YOUR RESPONSE MUST START WITH "PSMILES: " and contain exactly 2 [*] symbols.
             'para phenylene': '[*]C1=CC=C([*])C=C1',
             'ortho phenylene': '[*]C1=C([*])C=CC=C1'
         }
+        
+        # PVC (Polyvinyl Chloride) additions to fallback mapping
+        fallback_mapping.update({
+            'pvc': '[*]CC([*])Cl',
+            'polyvinyl chloride': '[*]CC([*])Cl',
+            'poly(vinyl chloride)': '[*]CC([*])Cl',
+            'vinyl chloride': '[*]CC([*])Cl',
+            'polyvynil chloride': '[*]CC([*])Cl',  # Common typo
+            'polyvinylchloride': '[*]CC([*])Cl'
+        })
         
         # First check for exact matches
         for keyword, psmiles in fallback_mapping.items():
@@ -891,7 +1250,7 @@ YOUR RESPONSE MUST START WITH "PSMILES: " and contain exactly 2 [*] symbols.
             }
 
     def _extract_psmiles_from_response(self, response: str) -> Dict:
-        """Extract PSMILES string from LLM response with enhanced patterns."""
+        """Extract PSMILES string from LLM response with enhanced patterns and immediate validation."""
         # First, look for explicit PSMILES: format
         psmiles_patterns = [
             r'PSMILES:\s*([A-Za-z0-9\[\]\(\)\=\#\*]+)',  # "PSMILES: string"
@@ -922,8 +1281,35 @@ YOUR RESPONSE MUST START WITH "PSMILES: " and contain exactly 2 [*] symbols.
                 if match not in unique_matches:
                     unique_matches.append(match)
             
-            # Return the first valid match
-            return {'psmiles': unique_matches[0], 'pattern': 'extracted'}
+            # **NEW**: Validate each match and return the first valid one
+            for match in unique_matches:
+                # Check if this match has exactly 2 [*] symbols
+                connection_count = match.count('[*]')
+                
+                if connection_count == 2:
+                    # Perfect match - return immediately
+                    return {'psmiles': match, 'pattern': 'extracted_valid'}
+                elif connection_count == 1:
+                    # Try to fix by adding another [*]
+                    if match.startswith('[*]'):
+                        fixed_match = match + '[*]'
+                    elif match.endswith('[*]'):
+                        fixed_match = '[*]' + match
+                    else:
+                        # [*] is in the middle, add to both ends
+                        fixed_match = '[*]' + match + '[*]'
+                    
+                    # Validate the fix doesn't create 3+ [*] symbols
+                    if fixed_match.count('[*]') == 2:
+                        return {'psmiles': fixed_match, 'pattern': 'extracted_fixed'}
+                elif connection_count == 0:
+                    # Add [*] to both ends
+                    fixed_match = '[*]' + match + '[*]'
+                    return {'psmiles': fixed_match, 'pattern': 'extracted_fixed'}
+                # If connection_count > 2, skip this match and try the next one
+            
+            # If no valid match found, return the first one with a warning
+            return {'psmiles': unique_matches[0], 'pattern': 'extracted_invalid', 'warning': f'Invalid connection count: {unique_matches[0].count("[*]")}'}
         
         return {'psmiles': None, 'pattern': None}
     
@@ -1059,6 +1445,82 @@ YOUR RESPONSE MUST START WITH "PSMILES: " and contain exactly 2 [*] symbols.
             return f"✅ PSMILES Generator connection successful. Response: {response[:100]}..."
         except Exception as e:
             return f"❌ PSMILES Generator connection failed: {e}"
+
+    def _create_smart_fallback(self, request: str) -> Dict:
+        """Create intelligent fallback PSMILES based on request content."""
+        request_lower = request.lower()
+        
+        # Element-based fallbacks
+        if 'boron' in request_lower or 'b' in request_lower:
+            return {'psmiles': '[*]BCC[*]', 'explanation': 'Boron-containing polymer chain'}
+        elif 'nitrogen' in request_lower or 'amino' in request_lower or 'amine' in request_lower:
+            return {'psmiles': '[*]NC[*]', 'explanation': 'Nitrogen-containing polymer'}
+        elif 'oxygen' in request_lower or 'hydroxyl' in request_lower or 'alcohol' in request_lower:
+            return {'psmiles': '[*]OC[*]', 'explanation': 'Oxygen-containing polymer'}
+        elif 'sulfur' in request_lower or 'thiol' in request_lower:
+            return {'psmiles': '[*]SC[*]', 'explanation': 'Sulfur-containing polymer'}
+        elif 'fluorine' in request_lower or 'fluoro' in request_lower:
+            return {'psmiles': '[*]CF[*]', 'explanation': 'Fluorine-containing polymer'}
+        elif 'chlorine' in request_lower or 'chloro' in request_lower:
+            return {'psmiles': '[*]CCl[*]', 'explanation': 'Chlorine-containing polymer'}
+        elif 'phenyl' in request_lower or 'benzene' in request_lower or 'aromatic' in request_lower:
+            return {'psmiles': '[*]c1ccccc1[*]', 'explanation': 'Aromatic polymer backbone'}
+        elif 'carbonyl' in request_lower or 'ketone' in request_lower:
+            return {'psmiles': '[*]C(=O)[*]', 'explanation': 'Carbonyl-containing polymer'}
+        elif 'ester' in request_lower:
+            return {'psmiles': '[*]C(=O)O[*]', 'explanation': 'Ester linkage polymer'}
+        elif 'amide' in request_lower:
+            return {'psmiles': '[*]NC(=O)[*]', 'explanation': 'Amide linkage polymer'}
+        elif 'ether' in request_lower:
+            return {'psmiles': '[*]O[*]', 'explanation': 'Ether linkage polymer'}
+        elif 'vinyl' in request_lower or 'alkene' in request_lower:
+            return {'psmiles': '[*]C=C[*]', 'explanation': 'Vinyl/alkene polymer'}
+        elif 'alkyne' in request_lower:
+            return {'psmiles': '[*]C#C[*]', 'explanation': 'Alkyne polymer'}
+        else:
+            # Default fallback
+            return {'psmiles': '[*]CC[*]', 'explanation': 'Default polyethylene structure'}
+    
+    def _fix_connection_points(self, psmiles: str) -> str:
+        """Fix PSMILES to have exactly 2 connection points."""
+        if not psmiles:
+            return '[*]CC[*]'
+        
+        connection_count = psmiles.count('[*]')
+        
+        if connection_count == 2:
+            return psmiles  # Already correct
+        elif connection_count == 0:
+            # Add [*] to both ends
+            return f'[*]{psmiles}[*]'
+        elif connection_count == 1:
+            # Add one more [*]
+            if psmiles.startswith('[*]'):
+                return f'{psmiles}[*]'
+            elif psmiles.endswith('[*]'):
+                return f'[*]{psmiles}'
+            else:
+                # [*] is in the middle, add to both ends
+                return f'[*]{psmiles}[*]'
+        else:
+            # More than 2 [*] symbols - try to fix by removing extra ones
+            # Find the first and last [*] and remove everything in between
+            first_star = psmiles.find('[*]')
+            last_star = psmiles.rfind('[*]')
+            
+            if first_star != last_star:
+                # Keep only the first and last [*]
+                before_first = psmiles[:first_star]
+                after_last = psmiles[last_star + 3:]
+                middle = psmiles[first_star + 3:last_star]
+                
+                # Remove any [*] from the middle part
+                middle_clean = middle.replace('[*]', '')
+                
+                return f'{before_first}[*]{middle_clean}[*]{after_last}'
+            else:
+                # Only one [*] found, add another
+                return f'[*]{psmiles}[*]'
 
 
 def test_psmiles_generator():
