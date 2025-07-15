@@ -36,6 +36,13 @@ try:
 except ImportError:
     MD_INTEGRATION_AVAILABLE = False
 
+# Import debugging utilities
+try:
+    from debug_tracer import tracer, enable_runtime_debugging
+    DEBUGGING_AVAILABLE = True
+except ImportError:
+    DEBUGGING_AVAILABLE = False
+
 # Page configuration
 st.set_page_config(
     page_title="Insulin Delivery Patch AI Lab",
@@ -1321,6 +1328,48 @@ def display_3d_structure(pdb_file_path):
         </div>
         """
 
+def _remove_water_only(fixer, log_output):
+    """
+    Remove only water molecules (HOH, WAT) while preserving polymer (UNL) and other residues.
+    
+    Args:
+        fixer: PDBFixer instance
+        log_output: Logging function
+    """
+    try:
+        # Get the current topology
+        topology = fixer.topology
+        
+        # Find water residues to remove
+        water_residues = []
+        for residue in topology.residues():
+            if residue.name in ['HOH', 'WAT']:
+                water_residues.append(residue)
+        
+        if not water_residues:
+            log_output("      No water molecules found to remove")
+            return
+        
+        # Create a modeller to selectively remove water
+        from openmm.app import Modeller
+        modeller = Modeller(fixer.topology, fixer.positions)
+        
+        # Remove water residues
+        modeller.delete(water_residues)
+        log_output(f"      Removed {len(water_residues)} water molecules")
+        
+        # Update the fixer with the new topology and positions
+        fixer.topology = modeller.topology
+        fixer.positions = modeller.positions
+        
+        # Verify polymer is still there
+        unl_count = sum(1 for residue in fixer.topology.residues() if residue.name == 'UNL')
+        log_output(f"      ✅ Preserved {unl_count} UNL polymer residues")
+        
+    except Exception as e:
+        log_output(f"      ⚠️ Error in selective water removal: {e}")
+        log_output("      Falling back to keeping all residues")
+
 def preprocess_pdb_standalone(pdb_path: str, 
                             remove_water: bool = True,
                             remove_heterogens: bool = False,
@@ -1395,15 +1444,32 @@ def preprocess_pdb_standalone(pdb_path: str,
                     water_residues.append(residue)
             
             if water_residues:
-                fixer.removeHeterogens(keepWater=False)
-                log_output(f"      Removed {len(water_residues)} water molecules")
+                # Check if we have polymer (UNL residues) before removing heterogens
+                has_polymer = any(residue.name == 'UNL' for residue in fixer.topology.residues())
+                
+                if has_polymer:
+                    log_output("      🧬 Detected polymer (UNL) - removing water selectively...")
+                    # Custom water removal that preserves polymer
+                    _remove_water_only(fixer, log_output)
+                    log_output(f"      Selectively removed {len(water_residues)} water molecules (preserved UNL)")
+                else:
+                    fixer.removeHeterogens(keepWater=False)
+                    log_output(f"      Removed {len(water_residues)} water molecules")
             else:
                 log_output("      No water molecules found")
         
         # Remove other heterogens if requested
         if remove_heterogens:
-            log_output("   🧪 Removing heterogens...")
-            fixer.removeHeterogens(keepWater=not remove_water)
+            # Check if we have polymer (UNL residues) - if so, preserve them
+            has_polymer = any(residue.name == 'UNL' for residue in fixer.topology.residues())
+            
+            if has_polymer:
+                log_output("   🧬 Detected polymer residues (UNL) - preserving them...")
+                log_output("   ⚠️  Skipping heterogen removal to preserve polymer components")
+                # Don't remove heterogens when polymer is present
+            else:
+                log_output("   🧪 Removing heterogens (no polymer detected)...")
+                fixer.removeHeterogens(keepWater=not remove_water)
         
         # Find missing residues
         if add_missing_residues:
@@ -1514,6 +1580,75 @@ page = st.sidebar.selectbox(
     "Select Component",
     ["Framework Overview", "Literature Mining (LLM)", "PSMILES Generation", "Active Learning", "Material Evaluation", "MD Simulation"]
 )
+
+# Debugging Section
+if DEBUGGING_AVAILABLE:
+    with st.sidebar.expander("🔍 Debug Tools"):
+        st.markdown("**Runtime Debugging**")
+        
+        debug_mode = st.selectbox(
+            "Debug Mode",
+            ["Off", "Signal-based", "Function Tracing", "Periodic Dumps"],
+            help="Enable runtime debugging to monitor program execution"
+        )
+        
+        if debug_mode == "Signal-based":
+            if st.button("🚀 Enable Signal Debugging"):
+                try:
+                    import os
+                    tracer.enable_signal_tracing()
+                    st.success(f"✅ Signal debugging enabled!")
+                    st.info(f"Send signal: `kill -USR1 {os.getpid()}`")
+                except Exception as e:
+                    st.error(f"❌ Failed to enable signal debugging: {e}")
+        
+        elif debug_mode == "Function Tracing":
+            if st.button("🔄 Enable Function Tracing"):
+                try:
+                    tracer.enable_function_tracing()
+                    st.success("✅ Function tracing enabled!")
+                    st.warning("⚠️ This will be verbose - check console output")
+                except Exception as e:
+                    st.error(f"❌ Failed to enable function tracing: {e}")
+            
+            if st.button("🛑 Disable Function Tracing"):
+                try:
+                    tracer.disable_function_tracing()
+                    st.success("✅ Function tracing disabled!")
+                except Exception as e:
+                    st.error(f"❌ Failed to disable function tracing: {e}")
+        
+        elif debug_mode == "Periodic Dumps":
+            interval = st.slider("Dump Interval (seconds)", 10, 300, 30)
+            if st.button("⏰ Start Periodic Dumps"):
+                try:
+                    tracer.periodic_stack_dump(interval)
+                    st.success(f"✅ Periodic stack dumps enabled (every {interval}s)")
+                except Exception as e:
+                    st.error(f"❌ Failed to enable periodic dumps: {e}")
+        
+        # Process info
+        if st.button("📊 Show Process Info"):
+            import os
+            st.info(f"**Process ID:** {os.getpid()}")
+            st.info(f"**Working Directory:** {os.getcwd()}")
+            
+        # Manual stack trace
+        if st.button("📋 Get Stack Trace Now"):
+            try:
+                import traceback
+                import io
+                
+                # Capture current stack trace
+                f = io.StringIO()
+                traceback.print_stack(file=f)
+                stack_trace = f.getvalue()
+                
+                st.text_area("Current Stack Trace", stack_trace, height=300)
+            except Exception as e:
+                st.error(f"❌ Failed to get stack trace: {e}")
+else:
+    st.sidebar.info("🔍 Debug tools not available (debug_tracer.py not found)")
 
 # Main content based on selected page
 if page == "Framework Overview":
@@ -3802,6 +3937,82 @@ elif page == "MD Simulation":
                         simulation_input_file = temp_sim_path
                         st.success(f"✅ File uploaded: {uploaded_sim_file.name}")
                 
+                # Manual polymer file selection option
+                if simulation_input_file:
+                    st.markdown("#### 🧪 Polymer File Selection (Advanced)")
+                    
+                    polymer_selection_expander = st.expander("🔧 Manual Polymer File Selection", expanded=False)
+                    
+                    with polymer_selection_expander:
+                        st.markdown("**Use this section if automatic polymer detection fails:**")
+                        st.info("The system will automatically detect polymer files, but you can override this selection if needed.")
+                        
+                        # Find available polymer directories
+                        polymer_dirs = list(Path('.').glob("insulin_polymer_output_*"))
+                        
+                        if polymer_dirs:
+                            st.markdown(f"**Found {len(polymer_dirs)} polymer output directories:**")
+                            
+                            # Sort by modification time (most recent first)
+                            polymer_dirs.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+                            
+                            polymer_options = {}
+                            for polymer_dir in polymer_dirs:
+                                # Get polymer files in this directory
+                                polymer_files = []
+                                for subdir in ['molecules', 'packmol']:
+                                    subdir_path = polymer_dir / subdir
+                                    if subdir_path.exists():
+                                        polymer_files.extend(list(subdir_path.glob("*.pdb")))
+                                        polymer_files.extend(list(subdir_path.glob("*.xyz")))
+                                
+                                if polymer_files:
+                                    # Show directory with file count and modification time
+                                    mod_time = datetime.fromtimestamp(polymer_dir.stat().st_mtime)
+                                    display_name = f"{polymer_dir.name} ({len(polymer_files)} files, {mod_time.strftime('%Y-%m-%d %H:%M')})"
+                                    polymer_options[display_name] = str(polymer_dir)
+                            
+                            if polymer_options:
+                                use_manual_polymer = st.checkbox("🎯 Use Manual Polymer Selection", 
+                                                               help="Override automatic polymer detection")
+                                
+                                if use_manual_polymer:
+                                    selected_polymer_dir = st.selectbox(
+                                        "Select Polymer Directory:", 
+                                        list(polymer_options.keys()),
+                                        help="Choose the polymer directory to use for force field parameterization"
+                                    )
+                                    
+                                    # Show files in selected directory
+                                    selected_path = Path(polymer_options[selected_polymer_dir])
+                                    st.markdown(f"**Files in {selected_path.name}:**")
+                                    
+                                    all_files = []
+                                    for subdir in ['molecules', 'packmol']:
+                                        subdir_path = selected_path / subdir
+                                        if subdir_path.exists():
+                                            files = list(subdir_path.glob("*.pdb")) + list(subdir_path.glob("*.xyz"))
+                                            for file in files:
+                                                all_files.append(f"📄 {subdir}/{file.name}")
+                                    
+                                    if all_files:
+                                        for file in all_files:
+                                            st.write(f"  {file}")
+                                    else:
+                                        st.warning("No polymer files found in selected directory")
+                                    
+                                    # Store the selection for use in simulation
+                                    st.session_state.manual_polymer_dir = str(selected_path)
+                                    st.success(f"✅ Manual polymer selection: {selected_path.name}")
+                                else:
+                                    # Clear manual selection
+                                    if 'manual_polymer_dir' in st.session_state:
+                                        del st.session_state.manual_polymer_dir
+                            else:
+                                st.warning("No polymer files found in any directory")
+                        else:
+                            st.warning("No polymer output directories found. Generate polymer structures first using the 3D Structure Builder.")
+                
                 # Simulation parameters
                 if simulation_input_file:
                     st.markdown("#### Simulation Parameters")
@@ -4207,7 +4418,8 @@ elif page == "MD Simulation":
                                 equilibration_steps=equilibration_steps,
                                 production_steps=production_steps,
                                 save_interval=save_interval,
-                                output_callback=simple_console_callback
+                                output_callback=simple_console_callback,
+                                manual_polymer_dir=st.session_state.get('manual_polymer_dir')
                             )
                             
                             st.success(f"✅ Simulation started with ID: {simulation_id}")

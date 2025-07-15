@@ -53,6 +53,24 @@ except ImportError:
     OPENFF_AVAILABLE = False
     print("⚠️  OpenFF toolkit not available. Install with: conda install -c conda-forge openff-toolkit")
 
+# RDKit imports for polymer SMILES conversion
+try:
+    from rdkit import Chem
+    from rdkit.Chem import AllChem, rdMolDescriptors
+    RDKIT_AVAILABLE = True
+except ImportError:
+    RDKIT_AVAILABLE = False
+    print("⚠️  RDKit not available. Install with: conda install -c conda-forge rdkit")
+
+# OpenBabel imports for XYZ to SMILES conversion
+try:
+    from openbabel import pybel
+    import openbabel as ob
+    OPENBABEL_AVAILABLE = True
+except ImportError:
+    OPENBABEL_AVAILABLE = False
+    print("⚠️  OpenBabel not available. Install with: conda install -c conda-forge openbabel")
+
 # Analysis imports
 try:
     import mdtraj as md
@@ -396,91 +414,505 @@ class ProperOpenMMSimulator:
         pdb_files.sort(key=lambda x: (x.name == "packmol.pdb", x.stat().st_mtime), reverse=True)
         latest_pdb = pdb_files[0]
         
-        print(f"   📄 Latest polymer PDB: {latest_pdb.name}")
-        print(f"   ✅ Found polymer reference: {latest_pdb}")
+        print(f"   📄 Latest polymer PDB: {latest_pdb}")
         
         return str(latest_pdb)
     
-    def _extract_protein_system(self, topology, positions, keep_residues):
-        """Extract a clean protein system"""
-        # Create modeller to extract subset
-        modeller = Modeller(topology, positions)
+    def convert_polymer_file_to_smiles(self, polymer_file_path: str) -> Optional[str]:
+        """Convert polymer XYZ file to SMILES string using OpenBabel (PDB files no longer supported)"""
+        print(f"   🧪 Converting polymer file to SMILES: {polymer_file_path}")
         
-        # Get residues to delete (everything except protein and water)
-        residues_to_delete = []
-        for residue in topology.residues():
-            if residue not in keep_residues:
-                residues_to_delete.append(residue)
-        
-        if residues_to_delete:
-            modeller.delete(residues_to_delete)
-        
-        return modeller.topology, modeller.positions
-    
-    def create_molecule_from_residue(self, residue):
-        """Create an OpenFF Molecule object from a topology residue"""
-        if not OPENFF_AVAILABLE:
-            raise ImportError("OpenFF toolkit is not available")
-            
         try:
-            # Get atoms and bonds from residue
-            atoms = list(residue.atoms())
+            file_path = Path(polymer_file_path)
             
-            # Create a molecule representation based on the residue structure
-            # For UNL residues, we'll analyze the structure to create appropriate SMILES
+            if not file_path.exists():
+                print(f"   ❌ Polymer file not found: {polymer_file_path}")
+                return None
             
-            # Count carbons in the residue
-            carbon_count = sum(1 for atom in atoms if atom.element.symbol == 'C')
-            hydrogen_count = sum(1 for atom in atoms if atom.element.symbol == 'H')
-            
-            print(f"   🧪 Analyzing {residue.name}: {carbon_count} C, {hydrogen_count} H atoms")
-            
-            if carbon_count > 0:
-                # Create a simple alkane chain representation
-                # This is a simplified approach - in reality, you'd parse the actual structure
-                if carbon_count == 1:
-                    smiles = 'C'
-                elif carbon_count == 2:
-                    smiles = 'CC'
-                elif carbon_count <= 20:
-                    # Linear alkane chain
-                    smiles = 'C' + 'C' * (carbon_count - 2) + 'C' if carbon_count > 2 else 'CC'
+            # Only process XYZ files - skip PDB files
+            if file_path.suffix.lower() == '.xyz':
+                # Use OpenBabel for XYZ files
+                if not OPENBABEL_AVAILABLE:
+                    print(f"   ❌ OpenBabel not available for XYZ conversion")
+                    return None
+                
+                print(f"   📄 Reading XYZ file with OpenBabel...")
+                
+                # Use the OpenBabel-based XYZ to SMILES converter
+                smiles = self._convert_xyz_to_smiles_with_connectivity(file_path)
+                
+                if smiles:
+                    print(f"   ✅ Generated SMILES from XYZ: {smiles}")
+                    return smiles
                 else:
-                    # For very long chains, use a representative 20-carbon chain
-                    smiles = 'C' + 'C' * 18 + 'C'  # eicosane (C20H42)
-                
-                print(f"   🧪 Creating molecule for {residue.name} with {carbon_count} carbons")
-                print(f"   🧪 Using SMILES: {smiles}")
-                
-                try:
-                    molecule = Molecule.from_smiles(smiles)
-                    print(f"   ✅ Successfully created molecule with {molecule.n_atoms} atoms")
-                    return molecule
-                except Exception as e:
-                    print(f"   ⚠️  Failed to create molecule from SMILES '{smiles}': {e}")
-                    # Fallback: create a simple ethane molecule
-                    fallback_molecule = Molecule.from_smiles('CC')
-                    print(f"   🔄 Using ethane fallback")
-                    return fallback_molecule
+                    print(f"   ❌ Failed to generate SMILES from XYZ file")
+                    return None
+                        
+            elif file_path.suffix.lower() == '.pdb':
+                print(f"   ⚠️  PDB file processing disabled - only XYZ files supported")
+                print(f"   💡 Convert {file_path.name} to XYZ format to process with OpenBabel")
+                return None
+                        
             else:
-                # Fallback for residues without carbons
-                print(f"   ⚠️  No carbons found in {residue.name}, using methane as fallback")
-                return Molecule.from_smiles('C')
+                print(f"   ❌ Unsupported file format: {file_path.suffix}")
+                print(f"   💡 Only XYZ files are supported for polymer processing")
+                return None
                 
         except Exception as e:
-            print(f"   ❌ Error creating molecule from residue {residue.name}: {e}")
-            # Emergency fallback to methane
+            print(f"   ❌ Error converting polymer file to SMILES: {e}")
+            return None
+    
+    def _clean_and_read_pdb(self, pdb_file_path: str) -> Optional[Chem.Mol]:
+        """Legacy PDB cleaning method - no longer used since we only process XYZ files"""
+        print(f"   ⚠️  PDB cleaning method called but PDB processing is disabled")
+        print(f"   💡 Convert PDB files to XYZ format to use OpenBabel processing")
+        return None
+    
+    def _read_xyz_with_connectivity(self, xyz_file_path: str) -> Optional[str]:
+        """Legacy method - now redirects to OpenBabel-based XYZ to SMILES conversion"""
+        print(f"   🔄 Redirecting to OpenBabel-based XYZ conversion...")
+        return self._convert_xyz_to_smiles_with_connectivity(Path(xyz_file_path))
+    
+    def _sanitize_molecule_robust(self, mol: Chem.Mol) -> Optional[Chem.Mol]:
+        """Legacy RDKit molecule sanitization - no longer used since we only process XYZ files with OpenBabel"""
+        print(f"   ⚠️  RDKit sanitization method called but PDB processing is disabled")
+        print(f"   💡 OpenBabel handles molecule validation automatically for XYZ files")
+        return None
+    
+    def find_polymer_files_and_convert_to_smiles(self, pdb_file_path: str, manual_polymer_dir: str = None) -> List[str]:
+        """Find polymer files in insulin_polymer_output_* folders and convert to SMILES"""
+        print(f"\n🔍 Looking for polymer files to convert to SMILES...")
+        
+        polymer_smiles = []
+        conversion_stats = {'total_files': 0, 'successful': 0, 'failed': 0}
+        
+        # Check if manual polymer directory is specified
+        if manual_polymer_dir:
+            print(f"   🎯 Using manual polymer directory: {manual_polymer_dir}")
+            polymer_dirs = [Path(manual_polymer_dir)]
+        else:
+            # Search in the working directory (where polymer output directories are typically created)
+            search_dir = Path.cwd()
+            # Also search in parent of pdb_file_path as fallback
+            pdb_dir = Path(pdb_file_path).parent if pdb_file_path else Path.cwd()
+            
+            # Find all insulin_polymer_output_* directories (search in working directory first)
+            polymer_dirs = list(search_dir.glob("insulin_polymer_output_*"))
+            
+            # If not found in working directory, search in PDB directory
+            if not polymer_dirs:
+                print(f"   🔍 No polymer directories found in working directory, searching in PDB directory...")
+                polymer_dirs = list(pdb_dir.glob("insulin_polymer_output_*"))
+        
+        if not polymer_dirs:
+            print(f"   ❌ No insulin_polymer_output_* directories found")
+            if manual_polymer_dir:
+                print(f"   🔍 Manual directory specified but not found: {manual_polymer_dir}")
+            else:
+                print(f"   🔍 Searched in: {Path.cwd()} and {Path(pdb_file_path).parent if pdb_file_path else Path.cwd()}")
+            return polymer_smiles
+        
+        # Sort by modification time to get the latest first
+        polymer_dirs.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+        
+        # Process ALL directories to find polymer files - XYZ ONLY
+        for i, polymer_dir in enumerate(polymer_dirs):
+            print(f"   📁 Checking polymer directory: {polymer_dir.name}")
+            
+            # Check molecules subdirectory first
+            molecules_dir = polymer_dir / "molecules"
+            if molecules_dir.exists():
+                print(f"   📁 Found molecules directory: {molecules_dir}")
+                
+                # Look for polymer XYZ files ONLY (skip PDB files)
+                polymer_files = list(molecules_dir.glob("polymer_*.xyz"))
+                
+                if polymer_files:
+                    print(f"   📄 Found {len(polymer_files)} XYZ polymer files in {polymer_dir.name}")
+                    
+                    for polymer_file in polymer_files:
+                        print(f"   🧪 Processing: {polymer_file.name}")
+                        conversion_stats['total_files'] += 1
+                        
+                        smiles = self.convert_polymer_file_to_smiles(str(polymer_file))
+                        if smiles:
+                            polymer_smiles.append(smiles)
+                            conversion_stats['successful'] += 1
+                            print(f"   ✅ Successfully converted {polymer_file.name} to SMILES")
+                        else:
+                            conversion_stats['failed'] += 1
+                            print(f"   ❌ Failed to convert {polymer_file.name}")
+                else:
+                    print(f"   ❌ No XYZ polymer files found in {molecules_dir}")
+            else:
+                print(f"   ❌ No molecules directory found in {polymer_dir}")
+        
+        # Print comprehensive statistics
+        print(f"\n📊 Conversion Statistics:")
+        print(f"   📄 Total polymer files found: {conversion_stats['total_files']}")
+        print(f"   ✅ Successful conversions: {conversion_stats['successful']}")
+        print(f"   ❌ Failed conversions: {conversion_stats['failed']}")
+        
+        if polymer_smiles:
+            print(f"   🎉 Successfully converted {len(polymer_smiles)} polymer files to SMILES")
+            
+            # Remove duplicate SMILES (in case multiple files generate the same SMILES)
+            unique_smiles = list(set(polymer_smiles))
+            if len(unique_smiles) != len(polymer_smiles):
+                print(f"   🔄 Removed {len(polymer_smiles) - len(unique_smiles)} duplicate SMILES")
+                polymer_smiles = unique_smiles
+            
+            print(f"   📝 Final unique SMILES count: {len(polymer_smiles)}")
+            for i, smiles in enumerate(polymer_smiles):
+                # Truncate very long SMILES for display
+                display_smiles = smiles[:100] + "..." if len(smiles) > 100 else smiles
+                print(f"   🧪 Polymer {i+1} SMILES: {display_smiles}")
+        else:
+            print(f"   ❌ No polymer files could be converted to SMILES")
+            
+            # Provide diagnostic information
+            print(f"\n🔍 Diagnostic Information:")
+            print(f"   📁 Searched {len(polymer_dirs)} polymer directories")
+            print(f"   📄 Found {conversion_stats['total_files']} polymer files")
+            print(f"   ⚠️  Common issues:")
+            print(f"      • PDB formatting problems (residue numbering)")
+            print(f"      • XYZ valence calculation errors")
+            print(f"      • Missing connectivity information")
+            print(f"   💡 Suggestion: Check polymer file formats and consider manual cleaning")
+        
+        return polymer_smiles
+    
+    def create_molecule_from_smiles(self, smiles: str) -> Optional[Molecule]:
+        """Create OpenFF Molecule from SMILES string"""
+        try:
+            print(f"   🧪 Creating OpenFF Molecule from SMILES: {smiles}")
+            molecule = Molecule.from_smiles(smiles, allow_undefined_stereo=True)
+            print(f"   ✅ Created OpenFF Molecule with {molecule.n_atoms} atoms")
+            return molecule
+        except Exception as e:
+            print(f"   ❌ Failed to create OpenFF Molecule from SMILES: {e}")
+            return None
+
+    def extract_smiles_from_xyz_files(self, pdb_file_path: str = None, manual_polymer_dir: str = None) -> List[str]:
+        """Extract SMILES from XYZ files with OpenBabel connectivity inference"""
+        print(f"   🎯 Focusing on XYZ files for correct molecular structure...")
+        
+        if not OPENBABEL_AVAILABLE:
+            print(f"   ❌ OpenBabel not available - cannot process XYZ files")
+            return []
+        
+        xyz_smiles = []
+        xyz_files = []
+        
+        # Find all XYZ files in polymer directories
+        search_dirs = []
+        
+        if pdb_file_path:
+            pdb_dir = Path(pdb_file_path).parent
+            search_dirs.append(pdb_dir)
+        
+        search_dirs.append(Path.cwd())
+        
+        for search_dir in search_dirs:
+            polymer_dirs = list(search_dir.glob("insulin_polymer_output_*"))
+            for polymer_dir in polymer_dirs:
+                for subdir in ['molecules', 'packmol']:
+                    subdir_path = polymer_dir / subdir
+                    if subdir_path.exists():
+                        xyz_files.extend(list(subdir_path.glob("*.xyz")))
+        
+        # Remove duplicates
+        xyz_files = list(set(xyz_files))
+        print(f"   📄 Found {len(xyz_files)} XYZ files")
+        
+        for i, xyz_file in enumerate(xyz_files):
             try:
-                fallback_molecule = Molecule.from_smiles('C')
-                print(f"   🔄 Using methane emergency fallback")
-                return fallback_molecule
-            except Exception as e2:
-                print(f"   ❌ Even fallback failed: {e2}")
-                raise RuntimeError(f"Could not create any molecule for residue {residue.name}")
+                print(f"   🧪 Processing XYZ file {i+1}/{len(xyz_files)}: {xyz_file.name}")
+                smiles = self._convert_xyz_to_smiles_with_connectivity(xyz_file)
+                
+                if smiles and smiles not in xyz_smiles:
+                    xyz_smiles.append(smiles)
+                    print(f"      ✅ Generated SMILES: {smiles}")
+                else:
+                    print(f"      ⚠️  Duplicate or failed SMILES generation")
+                    
+            except Exception as e:
+                print(f"      ❌ Failed to process {xyz_file.name}: {e}")
+                continue
+        
+        print(f"   📝 Generated {len(xyz_smiles)} unique SMILES from XYZ files")
+        return xyz_smiles
+    
+    def _convert_xyz_to_smiles_with_connectivity(self, xyz_file_path: Path) -> Optional[str]:
+        """Convert XYZ file to SMILES using OpenBabel for better topology inference"""
+        try:
+            print(f"      📄 Reading XYZ file: {xyz_file_path.name}")
+            
+            if not OPENBABEL_AVAILABLE:
+                print(f"      ❌ OpenBabel not available - cannot convert XYZ to SMILES")
+                return None
+            
+            # Method 1: Use OpenBabel with PyBel for direct XYZ to SMILES conversion
+            try:
+                print(f"      🔄 Using OpenBabel for XYZ to SMILES conversion...")
+                
+                # Read XYZ file with OpenBabel
+                mol = next(pybel.readfile("xyz", str(xyz_file_path)))
+                
+                if mol is None:
+                    print(f"      ❌ Failed to read XYZ file with OpenBabel")
+                    return None
+                
+                print(f"      📊 Molecule loaded: {len(mol.atoms)} atoms")
+                
+                # Add hydrogens if needed
+                mol.addh()
+                print(f"      🧪 Added hydrogens, total atoms: {len(mol.atoms)}")
+                
+                # Perform connectivity perception
+                mol.OBMol.ConnectTheDots()
+                mol.OBMol.PerceiveBondOrders()
+                
+                print(f"      🔗 Connectivity perceived: {mol.OBMol.NumBonds()} bonds")
+                
+                # Generate SMILES
+                smiles = mol.write("smi").strip()
+                
+                if smiles:
+                    print(f"      ✅ Generated SMILES with OpenBabel: {smiles}")
+                    return smiles
+                else:
+                    print(f"      ⚠️  OpenBabel generated empty SMILES")
+                
+            except Exception as e:
+                print(f"      ⚠️  OpenBabel direct conversion failed: {e}")
+            
+            # Method 2: Manual OpenBabel processing with custom connectivity
+            try:
+                print(f"      🔄 Trying manual OpenBabel processing...")
+                
+                # Create OpenBabel molecule manually
+                obmol = ob.OBMol()
+                
+                # Read XYZ file manually for better control
+                with open(xyz_file_path, 'r') as f:
+                    lines = f.readlines()
+                
+                if len(lines) < 2:
+                    print(f"      ❌ Invalid XYZ file format")
+                    return None
+                
+                # Parse XYZ format
+                n_atoms = int(lines[0].strip())
+                if len(lines) < n_atoms + 2:
+                    print(f"      ❌ Incomplete XYZ file")
+                    return None
+                
+                print(f"      📊 Atoms in file: {n_atoms}")
+                
+                # Add atoms with coordinates
+                for i in range(2, 2 + n_atoms):
+                    parts = lines[i].strip().split()
+                    if len(parts) >= 4:
+                        element = parts[0]
+                        x, y, z = float(parts[1]), float(parts[2]), float(parts[3])
+                        
+                        # Create OpenBabel atom
+                        atom = obmol.NewAtom()
+                        atom.SetAtomicNum(ob.GetAtomicNum(element))
+                        atom.SetVector(x, y, z)
+                
+                # Perceive connectivity
+                obmol.ConnectTheDots()
+                obmol.PerceiveBondOrders()
+                
+                # Add hydrogens
+                obmol.AddHydrogens()
+                
+                print(f"      🧪 Created molecule with {obmol.NumAtoms()} atoms, {obmol.NumBonds()} bonds")
+                
+                # Convert to SMILES
+                conv = ob.OBConversion()
+                conv.SetOutFormat("smi")
+                
+                smiles = conv.WriteString(obmol).strip()
+                
+                if smiles:
+                    print(f"      ✅ Generated SMILES with manual OpenBabel: {smiles}")
+                    return smiles
+                else:
+                    print(f"      ⚠️  Manual OpenBabel generated empty SMILES")
+                
+            except Exception as e:
+                print(f"      ⚠️  Manual OpenBabel processing failed: {e}")
+            
+            # Method 3: Fallback to simple molecular formula
+            try:
+                print(f"      🔄 Falling back to molecular formula...")
+                
+                # Read XYZ file to get element counts
+                with open(xyz_file_path, 'r') as f:
+                    lines = f.readlines()
+                
+                if len(lines) < 2:
+                    return None
+                
+                n_atoms = int(lines[0].strip())
+                if len(lines) < n_atoms + 2:
+                    return None
+                
+                # Count elements
+                from collections import Counter
+                elements = []
+                for i in range(2, 2 + n_atoms):
+                    parts = lines[i].strip().split()
+                    if len(parts) >= 4:
+                        elements.append(parts[0])
+                
+                element_counts = Counter(elements)
+                
+                # Create simple molecular formula as fallback
+                formula_parts = []
+                for element in sorted(element_counts.keys()):
+                    count = element_counts[element]
+                    if count > 1:
+                        formula_parts.append(f"{element}{count}")
+                    else:
+                        formula_parts.append(element)
+                
+                formula = ''.join(formula_parts)
+                print(f"      ⚠️  Fallback molecular formula: {formula}")
+                
+                # Return as disconnected atoms (not ideal but better than nothing)
+                atom_smiles = '.'.join([element for element in elements if element != 'H'])
+                return atom_smiles if atom_smiles else formula
+                
+            except Exception as e:
+                print(f"      ⚠️  Fallback formula generation failed: {e}")
+            
+            print(f"      ❌ All XYZ conversion methods failed")
+            return None
+            
+        except Exception as e:
+            print(f"      ❌ XYZ processing failed: {e}")
+            return None
+
+    def extract_unl_residues_from_topology(self, topology) -> List[str]:
+        """Extract UNL residues from topology with proper bond information and convert to SMILES"""
+        print(f"   🔍 Extracting UNL residues with bond information from topology...")
+        
+        if not RDKIT_AVAILABLE:
+            print(f"   ❌ RDKit not available - cannot generate proper SMILES")
+            return []
+        
+        unl_smiles = []
+        unl_residues = [res for res in topology.residues() if res.name == 'UNL']
+        
+        print(f"   📊 Found {len(unl_residues)} UNL residues in topology")
+        
+        # Create a mapping from topology atoms to indices for bond lookups
+        atom_to_index = {}
+        for i, atom in enumerate(topology.atoms()):
+            atom_to_index[atom] = i
+        
+        for i, residue in enumerate(unl_residues):
+            try:
+                print(f"   🧪 Processing UNL residue {i+1}/{len(unl_residues)} (ID: {residue.id})")
+                
+                # Get all atoms in this residue
+                residue_atoms = list(residue.atoms())
+                print(f"      📊 Atoms in residue: {len(residue_atoms)}")
+                
+                # Create RDKit molecule
+                mol = Chem.RWMol()
+                
+                # Add atoms to molecule and create mapping
+                atom_map = {}  # Maps topology atom to RDKit atom index
+                for j, atom in enumerate(residue_atoms):
+                    element = atom.element.symbol if atom.element else 'C'
+                    print(f"         Atom {j+1}: {atom.name} ({element})")
+                    
+                    # Create RDKit atom
+                    rdkit_atom = Chem.Atom(element)
+                    rdkit_idx = mol.AddAtom(rdkit_atom)
+                    atom_map[atom] = rdkit_idx
+                
+                # Find bonds involving atoms in this residue
+                bonds_added = 0
+                residue_atom_set = set(residue_atoms)
+                
+                for bond in topology.bonds():
+                    atom1, atom2 = bond
+                    
+                    # Check if both atoms are in this residue
+                    if atom1 in residue_atom_set and atom2 in residue_atom_set:
+                        if atom1 in atom_map and atom2 in atom_map:
+                            rdkit_idx1 = atom_map[atom1]
+                            rdkit_idx2 = atom_map[atom2]
+                            
+                            # Add bond (default to single bond)
+                            mol.AddBond(rdkit_idx1, rdkit_idx2, Chem.BondType.SINGLE)
+                            bonds_added += 1
+                            print(f"         Bond: {atom1.name}-{atom2.name}")
+                
+                print(f"      🔗 Added {bonds_added} bonds")
+                
+                # Convert to regular molecule
+                mol = mol.GetMol()
+                
+                if mol is None:
+                    print(f"      ❌ Failed to create RDKit molecule")
+                    continue
+                
+                # Try to sanitize the molecule
+                try:
+                    Chem.SanitizeMol(mol)
+                    print(f"      ✅ Molecule sanitized successfully")
+                except Exception as e:
+                    print(f"      ⚠️  Sanitization failed: {e}")
+                    # Try without sanitization
+                    pass
+                
+                # Generate SMILES
+                try:
+                    smiles = Chem.MolToSmiles(mol, allHsExplicit=False)
+                    if smiles and smiles not in unl_smiles:
+                        unl_smiles.append(smiles)
+                        print(f"      ✅ Generated SMILES: {smiles}")
+                        print(f"      📊 Molecule: {mol.GetNumAtoms()} atoms, {mol.GetNumBonds()} bonds")
+                    else:
+                        print(f"      ⚠️  Duplicate or empty SMILES")
+                except Exception as e:
+                    print(f"      ❌ SMILES generation failed: {e}")
+                    
+                    # Fallback: create a simple disconnected SMILES
+                    print(f"      🔄 Falling back to disconnected SMILES...")
+                    atom_counts = {}
+                    for atom in residue_atoms:
+                        element = atom.element.symbol if atom.element else 'C'
+                        if element != 'H':  # Skip hydrogens
+                            atom_counts[element] = atom_counts.get(element, 0) + 1
+                    
+                    smiles_parts = []
+                    for element, count in atom_counts.items():
+                        smiles_parts.extend([element] * count)
+                    
+                    fallback_smiles = '.'.join(smiles_parts)
+                    if fallback_smiles and fallback_smiles not in unl_smiles:
+                        unl_smiles.append(fallback_smiles)
+                        print(f"      ⚠️  Fallback SMILES: {fallback_smiles}")
+                    
+            except Exception as e:
+                print(f"      ❌ Failed to process UNL residue {i+1}: {e}")
+                continue
+        
+        print(f"   📝 Generated {len(unl_smiles)} unique UNL SMILES from topology")
+        return unl_smiles
 
     def create_proper_system(self, composition: Dict[str, Any], 
                            temperature: float = 310.0, 
-                           pdb_file_path: str = None) -> Tuple[mm.System, app.Topology, np.ndarray, Dict]:
+                           pdb_file_path: str = None,
+                           manual_polymer_dir: str = None) -> Tuple[mm.System, app.Topology, np.ndarray, Dict]:
         """Create system using proper AMBER force fields with mixed system support"""
         
         print(f"\n🔧 Creating system with AMBER force fields...")
@@ -547,19 +979,112 @@ class ProperOpenMMSimulator:
         
         # Create molecules list for small molecules (polymers)
         molecules = []
+        topology_smiles = []  # Initialize for scope
+        xyz_smiles = []  # Initialize for scope
         if composition['needs_gaff']:
             print(f"   🧪 Creating molecule definitions for polymer residues...")
             
-            # Create OpenFF Molecule objects for each UNL residue
-            for residue in composition['polymer_residues']:
-                molecule = self.create_molecule_from_residue(residue)
-                molecules.append(molecule)
+            # First priority: Extract SMILES from XYZ files (correct structure)
+            xyz_smiles = self.extract_smiles_from_xyz_files(pdb_file_path, manual_polymer_dir)
             
-            print(f"   ✅ Created {len(molecules)} molecule definitions")
+            if xyz_smiles:
+                print(f"   ✅ Found {len(xyz_smiles)} SMILES from XYZ files (correct structure)")
+                
+                # Create OpenFF Molecule objects from XYZ-extracted SMILES
+                for smiles in xyz_smiles:
+                    molecule = self.create_molecule_from_smiles(smiles)
+                    if molecule:
+                        molecules.append(molecule)
+                
+                print(f"   ✅ Created {len(molecules)} molecule definitions from XYZ files")
+                topology_smiles = xyz_smiles  # For reporting purposes
             
-            system = system_generator.create_system(
+            # Second priority: Try topology extraction
+            if not molecules:
+                print(f"   ⚠️  XYZ extraction failed, trying topology extraction...")
+                topology_smiles = self.extract_unl_residues_from_topology(modeller.topology)
+                
+                if topology_smiles:
+                    print(f"   ✅ Found {len(topology_smiles)} UNL SMILES from topology extraction")
+                    
+                    # Create OpenFF Molecule objects from topology-extracted SMILES
+                    for smiles in topology_smiles:
+                        molecule = self.create_molecule_from_smiles(smiles)
+                        if molecule:
+                            molecules.append(molecule)
+                    
+                    print(f"   ✅ Created {len(molecules)} molecule definitions from topology UNL residues")
+            
+            # Third priority: Fall back to external XYZ files only
+            if not molecules:
+                print(f"   ⚠️  Topology extraction failed, trying external XYZ files...")
+                
+                # Use the existing XYZ extraction method - this is more reliable
+                external_xyz_smiles = self.extract_smiles_from_xyz_files(pdb_file_path, manual_polymer_dir)
+                
+                print(f"   🔍 Found {len(external_xyz_smiles)} XYZ SMILES from external file search")
+                
+                if external_xyz_smiles:
+                    print(f"   ✅ Found {len(external_xyz_smiles)} XYZ SMILES")
+                    
+                    # Create OpenFF Molecule objects from SMILES
+                    for smiles in external_xyz_smiles:
+                        molecule = self.create_molecule_from_smiles(smiles)
+                        if molecule:
+                            molecules.append(molecule)
+                    
+                    print(f"   ✅ Created {len(molecules)} molecule definitions from external XYZ SMILES")
+                else:
+                    print(f"   ❌ No XYZ SMILES found from external files")
+                    print(f"   ⚠️  Skipping PDB files - only processing XYZ files per configuration")
+            
+            if molecules:
+                print(f"   🎯 Using {len(molecules)} polymer molecules for GAFF parameterization")
+                
+                # Determine the source for reporting
+                if xyz_smiles and len(molecules) > 0:
+                    source = "XYZ files (correct structure)"
+                elif topology_smiles and len(molecules) > 0:
+                    source = "Topology UNL extraction"
+                else:
+                    source = "External polymer files"
+                
+                print(f"   📝 Molecule source: {source}")
+                
+                # Add molecules to the SystemGenerator BEFORE creating the system
+                print(f"   📋 Adding {len(molecules)} molecules to SystemGenerator...")
+                for i, molecule in enumerate(molecules):
+                    print(f"      Adding molecule {i+1}: {molecule.n_atoms} atoms")
+                
+                # Register all molecules with the SystemGenerator
+                system_generator.add_molecules(molecules)
+                print(f"   ✅ All molecules registered with SystemGenerator")
+                
+                # Now create the system (without molecules parameter)
+                system = system_generator.create_system(modeller.topology)
+            else:
+                print(f"   ⚠️  No molecules created from SMILES, falling back to standard force field")
+                # Fallback to standard force field without GAFF
+                forcefield = ForceField('amber/protein.ff14SB.xml', 'implicit/gbn2.xml')
+                system = forcefield.createSystem(
+                    modeller.topology,
+                    nonbondedMethod=app.CutoffNonPeriodic,
+                    nonbondedCutoff=1.0*unit.nanometer,
+                    constraints=HBonds,
+                    removeCMMotion=True,
+                    hydrogenMass=4*unit.amu
+                )
+        else:
+            print(f"   ⚠️  No polymer SMILES found, using standard force field")
+            # Fallback to standard force field without GAFF
+            forcefield = ForceField('amber/protein.ff14SB.xml', 'implicit/gbn2.xml')
+            system = forcefield.createSystem(
                 modeller.topology,
-                molecules=molecules
+                nonbondedMethod=app.CutoffNonPeriodic,
+                nonbondedCutoff=1.0*unit.nanometer,
+                constraints=HBonds,
+                removeCMMotion=True,
+                hydrogenMass=4*unit.amu
             )
         
         system_info = {
@@ -587,15 +1112,16 @@ class ProperOpenMMSimulator:
         return system, modeller.topology, modeller.positions, system_info
     
     def run_proper_simulation_with_preprocessing(self, pdb_file: str,
-                                               pre_processed_topology,
-                                               pre_processed_positions,
-                                               temperature: float = 310.0,
-                                               equilibration_steps: int = 5000000,
-                                               production_steps: int = 25000000,
-                                               save_interval: int = 1000,
-                                               output_prefix: str = None,
-                                               stop_condition_check: Optional[Callable] = None,
-                                               output_callback: Optional[Callable] = None) -> Dict[str, Any]:
+                                           pre_processed_topology,
+                                           pre_processed_positions,
+                                           temperature: float = 310.0,
+                                           equilibration_steps: int = 5000000,
+                                           production_steps: int = 25000000,
+                                           save_interval: int = 1000,
+                                           output_prefix: str = None,
+                                           stop_condition_check: Optional[Callable] = None,
+                                           output_callback: Optional[Callable] = None,
+                                           manual_polymer_dir: str = None) -> Dict[str, Any]:
         """Run proper MD simulation with pre-processed topology and positions"""
         
         # Helper function to handle output
@@ -641,7 +1167,7 @@ class ProperOpenMMSimulator:
             log_output(f"   • Needs GAFF: {composition['needs_gaff']}")
             
             system, topology, positions, system_info = self.create_proper_system(
-                composition, temperature, pdb_file
+                composition, temperature, pdb_file, manual_polymer_dir
             )
             
             # Continue with the rest of the simulation exactly as in run_proper_simulation
@@ -1155,24 +1681,27 @@ class ProperOpenMMSimulator:
                 'production_stats': prod_stats,
                 'energy_analysis': {
                     'initial_pe': initial_pe,
-                    'minimized_pe': final_pe,
-                    'minimization_change': energy_change
+                    'final_pe': final_pe,
+                    'minimization_change': energy_change,
+                    'minimization_time': minimize_time
                 },
                 'files': {
-                    'equilibration_dcd': str(eq_dir / "equilibration.dcd"),
-                    'production_dcd': str(prod_dir / "production.dcd"),
-                    'final_pdb': str(prod_dir / "final_structure.pdb"),
-                    'production_data': str(prod_dir / "production.csv"),
-                    'analysis_plots': str(sim_dir / "comprehensive_analysis.png")
+                    'production_trajectory': str(prod_dir / "production.dcd"),
+                    'equilibration_trajectory': str(eq_dir / "equilibration.dcd"),
+                    'final_structure': str(prod_dir / "final_structure.pdb"),
+                    'production_log': str(prod_dir / "production.csv"),
+                    'equilibration_log': str(eq_dir / "equilibration.csv"),
+                    'plots': str(sim_dir / "analysis_plots.png")
                 },
                 'success': True
             }
             
-            # Save comprehensive report
-            with open(sim_dir / "simulation_report.json", 'w') as f:
-                json.dump(results, f, indent=2, default=str)
+            # Save simulation report
+            with open(str(sim_dir / "simulation_report.json"), 'w') as f:
+                json.dump(results, f, indent=2)
             
-            print(f"📄 Comprehensive report saved: {sim_dir / 'simulation_report.json'}")
+            print(f"\n🎉 Simulation completed successfully!")
+            print(f"📊 Results saved to: {sim_dir}")
             
             return results
             
@@ -1264,6 +1793,44 @@ class ProperOpenMMSimulator:
             
         except Exception as e:
             print(f"     ⚠️  Plot generation failed: {e}")
+
+def test_polymer_smiles_conversion(pdb_file_path: str = None):
+    """Test function to verify polymer SMILES conversion functionality"""
+    print(f"\n🧪 Testing Polymer SMILES Conversion")
+    print(f"=" * 50)
+    
+    if pdb_file_path is None:
+        # Look for any PDB file in the current directory
+        pdb_files = list(Path('.').glob("*.pdb"))
+        if not pdb_files:
+            print(f"❌ No PDB files found in current directory")
+            return
+        pdb_file_path = str(pdb_files[0])
+    
+    print(f"📄 Using PDB file: {pdb_file_path}")
+    
+    # Create simulator instance
+    simulator = ProperOpenMMSimulator()
+    
+    # Test polymer SMILES conversion
+    polymer_smiles = simulator.find_polymer_files_and_convert_to_smiles(pdb_file_path)
+    
+    if polymer_smiles:
+        print(f"\n✅ Successfully converted {len(polymer_smiles)} polymer files to SMILES:")
+        for i, smiles in enumerate(polymer_smiles):
+            print(f"   {i+1}. {smiles}")
+            
+            # Test creating OpenFF Molecule from SMILES
+            molecule = simulator.create_molecule_from_smiles(smiles)
+            if molecule:
+                print(f"      ✅ OpenFF Molecule created: {molecule.n_atoms} atoms, {molecule.n_bonds} bonds")
+            else:
+                print(f"      ❌ Failed to create OpenFF Molecule")
+    else:
+        print(f"\n❌ No polymer SMILES found")
+    
+    print(f"\n🔚 Test completed")
+    return polymer_smiles
 
 def main():
     """Main function for proper AMBER simulation with implicit solvent"""

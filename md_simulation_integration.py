@@ -209,16 +209,32 @@ class MDSimulationIntegration:
                         water_residues.append(residue)
                 
                 if water_residues:
-                    fixer.removeHeterogens(keepWater=False)
-                    log_output(f"      Removed {len(water_residues)} water molecules")
+                    # Check if we have polymer (UNL residues) before removing heterogens
+                    has_polymer = any(residue.name == 'UNL' for residue in fixer.topology.residues())
+                    
+                    if has_polymer:
+                        log_output("      🧬 Detected polymer (UNL) - removing water selectively...")
+                        # Custom water removal that preserves polymer
+                        self._remove_water_only(fixer, log_output)
+                        log_output(f"      Selectively removed {len(water_residues)} water molecules (preserved UNL)")
+                    else:
+                        fixer.removeHeterogens(keepWater=False)
+                        log_output(f"      Removed {len(water_residues)} water molecules")
                 else:
                     log_output("      No water molecules found")
             
-            # Note: NOT removing heterogens to preserve polymer components
+            # Note: Check for polymer (UNL) residues and preserve them
             if remove_heterogens:
-                log_output("   🧪 Removing heterogens (keeping polymers)...")
-                # This is typically not recommended for insulin-polymer systems
-                fixer.removeHeterogens(keepWater=not remove_water)
+                # Check if we have polymer (UNL residues) - if so, preserve them
+                has_polymer = any(residue.name == 'UNL' for residue in fixer.topology.residues())
+                
+                if has_polymer:
+                    log_output("   🧬 Detected polymer residues (UNL) - preserving them...")
+                    log_output("   ⚠️  Skipping heterogen removal to preserve polymer components")
+                    # Don't remove heterogens when polymer is present
+                else:
+                    log_output("   🧪 Removing heterogens (no polymer detected)...")
+                    fixer.removeHeterogens(keepWater=not remove_water)
             else:
                 log_output("   🧪 Preserving polymer components (not removing heterogens)")
             
@@ -293,13 +309,56 @@ class MDSimulationIntegration:
                 'processing_completed': False
             }
     
+    def _remove_water_only(self, fixer, log_output):
+        """
+        Remove only water molecules (HOH, WAT) while preserving polymer (UNL) and other residues.
+        
+        Args:
+            fixer: PDBFixer instance
+            log_output: Logging function
+        """
+        try:
+            # Get the current topology
+            topology = fixer.topology
+            
+            # Find water residues to remove
+            water_residues = []
+            for residue in topology.residues():
+                if residue.name in ['HOH', 'WAT']:
+                    water_residues.append(residue)
+            
+            if not water_residues:
+                log_output("      No water molecules found to remove")
+                return
+            
+            # Create a modeller to selectively remove water
+            from openmm.app import Modeller
+            modeller = Modeller(fixer.topology, fixer.positions)
+            
+            # Remove water residues
+            modeller.delete(water_residues)
+            log_output(f"      Removed {len(water_residues)} water molecules")
+            
+            # Update the fixer with the new topology and positions
+            fixer.topology = modeller.topology
+            fixer.positions = modeller.positions
+            
+            # Verify polymer is still there
+            unl_count = sum(1 for residue in fixer.topology.residues() if residue.name == 'UNL')
+            log_output(f"      ✅ Preserved {unl_count} UNL polymer residues")
+            
+        except Exception as e:
+            log_output(f"      ⚠️ Error in selective water removal: {e}")
+            log_output("      Falling back to keeping all residues")
+    
     def run_md_simulation_async(self, pdb_file: str,
                               temperature: float = 310.0,
                               equilibration_steps: int = 125000,
                               production_steps: int = 2500000,
                               save_interval: int = 500,
                               output_prefix: str = None,
-                              output_callback: Optional[Callable] = None) -> str:
+                              output_callback: Optional[Callable] = None,
+                              manual_polymer_dir: str = None) -> str:
         """
         Run MD simulation asynchronously with proper preprocessing
         
@@ -311,6 +370,7 @@ class MDSimulationIntegration:
             save_interval: Steps between saved frames
             output_prefix: Prefix for output files
             output_callback: Callback function for output messages
+            manual_polymer_dir: Manual polymer directory for force field parameterization
         
         Returns:
             Simulation ID
@@ -327,6 +387,7 @@ class MDSimulationIntegration:
             'equilibration_steps': equilibration_steps,
             'production_steps': production_steps,
             'save_interval': save_interval,
+            'manual_polymer_dir': manual_polymer_dir,
             'status': 'starting',
             'start_time': time.time()
         }
@@ -335,7 +396,7 @@ class MDSimulationIntegration:
         self.simulation_thread = threading.Thread(
             target=self._run_simulation_thread,
             args=(simulation_id, pdb_file, temperature, equilibration_steps, 
-                  production_steps, save_interval, output_callback)
+                  production_steps, save_interval, output_callback, manual_polymer_dir)
         )
         self.simulation_thread.daemon = True
         self.simulation_thread.start()
@@ -347,7 +408,8 @@ class MDSimulationIntegration:
     def _run_simulation_thread(self, simulation_id: str, pdb_file: str,
                              temperature: float, equilibration_steps: int,
                              production_steps: int, save_interval: int,
-                             output_callback: Optional[Callable]):
+                             output_callback: Optional[Callable],
+                             manual_polymer_dir: str = None):
         """Run the simulation in a separate thread"""
         
         def log_output(message: str):
@@ -359,6 +421,10 @@ class MDSimulationIntegration:
         try:
             # Step 1: Preprocess PDB file with PDBFixer
             log_output(f"🔧 Step 1: Preprocessing PDB file with PDBFixer")
+            
+            # Add info about manual polymer selection
+            if manual_polymer_dir:
+                log_output(f"🎯 Using manual polymer directory: {manual_polymer_dir}")
             
             preprocess_result = self.preprocess_pdb_file(
                 pdb_file,
@@ -411,7 +477,8 @@ class MDSimulationIntegration:
                 save_interval=save_interval,
                 output_prefix=simulation_id,
                 stop_condition_check=check_stop_condition,
-                output_callback=log_output
+                output_callback=log_output,
+                manual_polymer_dir=manual_polymer_dir
             )
             
             # Update simulation status
