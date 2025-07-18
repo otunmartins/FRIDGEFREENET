@@ -3,6 +3,8 @@
 MD Simulation Integration for Insulin-AI App
 Combines PDBFixer preprocessing, water removal, and OpenMM MD simulation
 with real-time output streaming and progress monitoring
+
+Now includes automatic MM-GBSA binding energy calculation after MD completion
 """
 
 import os
@@ -51,11 +53,23 @@ try:
 except ImportError:
     PROPER_OPENMM_AVAILABLE = False
 
+# Import MM-GBSA calculator
+try:
+    from insulin_mmgbsa_calculator import InsulinMMGBSACalculator
+    MMGBSA_AVAILABLE = True
+except ImportError:
+    MMGBSA_AVAILABLE = False
+
 class MDSimulationIntegration:
-    """Integrated MD simulation system for insulin-AI app"""
+    """Integrated MD simulation system for insulin-AI app with MM-GBSA analysis"""
     
-    def __init__(self, output_dir: str = "integrated_md_simulations"):
-        """Initialize the MD simulation integration system"""
+    def __init__(self, output_dir: str = "integrated_md_simulations", enable_mmgbsa: bool = True):
+        """Initialize the MD simulation integration system
+        
+        Args:
+            output_dir: Directory for MD simulation outputs
+            enable_mmgbsa: Whether to automatically run MM-GBSA after MD completion
+        """
         
         # Check dependencies
         self.dependencies_available = self._check_dependencies()
@@ -69,6 +83,17 @@ class MDSimulationIntegration:
         
         # Initialize proper OpenMM simulator
         self.openmm_simulator = ProperOpenMMSimulator(str(self.output_dir))
+        
+        # Initialize MM-GBSA calculator if available
+        self.enable_mmgbsa = enable_mmgbsa and MMGBSA_AVAILABLE
+        if self.enable_mmgbsa:
+            mmgbsa_output_dir = self.output_dir / "mmgbsa_results"
+            self.mmgbsa_calculator = InsulinMMGBSACalculator(str(mmgbsa_output_dir))
+            print(f"🧮 MM-GBSA calculator enabled")
+        else:
+            self.mmgbsa_calculator = None
+            if enable_mmgbsa and not MMGBSA_AVAILABLE:
+                print(f"⚠️  MM-GBSA requested but not available")
         
         # Output streaming setup
         self.output_queue = queue.Queue()
@@ -87,9 +112,10 @@ class MDSimulationIntegration:
             'openmm': OPENMM_AVAILABLE,
             'pdbfixer': PDBFIXER_AVAILABLE,
             'openmmforcefields': OPENMMFORCEFIELDS_AVAILABLE,
-            'proper_openmm': PROPER_OPENMM_AVAILABLE
+            'proper_openmm': PROPER_OPENMM_AVAILABLE,
+            'mmgbsa': MMGBSA_AVAILABLE
         }
-        deps['all_available'] = all(deps.values())
+        deps['all_available'] = all(deps[k] for k in ['openmm', 'pdbfixer', 'openmmforcefields', 'proper_openmm'])
         return deps
     
     def get_dependency_status(self) -> Dict[str, Any]:
@@ -512,6 +538,42 @@ class MDSimulationIntegration:
                     energy = simulation_results['energy_analysis']
                     log_output(f"🔋 Energy change: {energy['minimization_change']:.1f} kJ/mol")
                 
+                # Step 4: Run MM-GBSA calculation if enabled and MD completed successfully
+                if self.enable_mmgbsa and not simulation_results.get('user_stopped', False):
+                    log_output(f"\n🧮 Step 4: Starting MM-GBSA binding energy calculation")
+                    
+                    try:
+                        # Update simulation status to indicate MM-GBSA is running
+                        self.current_simulation['status'] = 'mmgbsa_running'
+                        
+                        mmgbsa_results = self.mmgbsa_calculator.calculate_binding_energy(
+                            simulation_dir=str(self.output_dir),
+                            simulation_id=simulation_id,
+                            output_callback=log_output
+                        )
+                        
+                        if mmgbsa_results and mmgbsa_results.get('success', False):
+                            log_output(f"✅ MM-GBSA calculation completed!")
+                            log_output(f"🔋 Insulin-Polymer binding energy: {mmgbsa_results['corrected_binding_energy']:.2f} ± {mmgbsa_results['binding_energy_std']:.2f} kcal/mol")
+                            log_output(f"🧪 Entropy correction: {mmgbsa_results['entropy_correction']:.4f} kcal/mol")
+                            
+                            # Add MM-GBSA results to simulation results
+                            simulation_results['mmgbsa_results'] = mmgbsa_results
+                            self.current_simulation['results'] = simulation_results
+                            self.current_simulation['status'] = 'completed_with_mmgbsa'
+                            
+                        else:
+                            log_output(f"⚠️ MM-GBSA calculation failed, but MD simulation was successful")
+                            simulation_results['mmgbsa_results'] = mmgbsa_results or {'success': False, 'error': 'Unknown error'}
+                            self.current_simulation['results'] = simulation_results
+                            self.current_simulation['status'] = 'completed_mmgbsa_failed'
+                            
+                    except Exception as mmgbsa_error:
+                        log_output(f"⚠️ MM-GBSA calculation failed: {str(mmgbsa_error)}")
+                        simulation_results['mmgbsa_results'] = {'success': False, 'error': str(mmgbsa_error)}
+                        self.current_simulation['results'] = simulation_results
+                        self.current_simulation['status'] = 'completed_mmgbsa_failed'
+                
             else:
                 log_output(f"❌ MD simulation failed: {simulation_results.get('error', 'Unknown error')}")
                 
@@ -585,7 +647,7 @@ class MDSimulationIntegration:
             return {'success': False, 'error': str(e)}
     
     def analyze_simulation_results(self, simulation_id: str) -> Dict[str, Any]:
-        """Analyze simulation results"""
+        """Analyze simulation results including MM-GBSA data"""
         try:
             sim_dir = self.output_dir / simulation_id
             
@@ -621,6 +683,23 @@ class MDSimulationIntegration:
                 'timing': report_data.get('timing', {}),
                 'performance': report_data.get('performance', {})
             }
+            
+            # Add MM-GBSA results if available
+            if 'mmgbsa_results' in report_data:
+                mmgbsa_data = report_data['mmgbsa_results']
+                analysis_result['mmgbsa_results'] = mmgbsa_data
+                
+                # Add summary info to basic_info for easy access
+                if mmgbsa_data.get('success', False):
+                    analysis_result['basic_info']['binding_energy'] = mmgbsa_data.get('corrected_binding_energy', 'N/A')
+                    analysis_result['basic_info']['binding_energy_std'] = mmgbsa_data.get('binding_energy_std', 'N/A')
+                    analysis_result['basic_info']['entropy_correction'] = mmgbsa_data.get('entropy_correction', 'N/A')
+                    analysis_result['basic_info']['mmgbsa_available'] = True
+                else:
+                    analysis_result['basic_info']['mmgbsa_available'] = False
+                    analysis_result['basic_info']['mmgbsa_error'] = mmgbsa_data.get('error', 'Unknown error')
+            else:
+                analysis_result['basic_info']['mmgbsa_available'] = False
             
             return analysis_result
             

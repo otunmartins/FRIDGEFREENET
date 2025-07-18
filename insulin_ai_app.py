@@ -36,6 +36,14 @@ try:
 except ImportError:
     MD_INTEGRATION_AVAILABLE = False
 
+# Import comprehensive analysis system
+try:
+    from insulin_delivery_analysis_integration import InsulinDeliveryAnalysisIntegration
+    from insulin_comprehensive_analyzer import InsulinComprehensiveAnalyzer
+    COMPREHENSIVE_ANALYSIS_AVAILABLE = True
+except ImportError:
+    COMPREHENSIVE_ANALYSIS_AVAILABLE = False
+
 # Import debugging utilities
 try:
     from debug_tracer import tracer, enable_runtime_debugging
@@ -1578,7 +1586,7 @@ st.sidebar.title("Framework Navigation")
 
 page = st.sidebar.selectbox(
     "Select Component",
-    ["Framework Overview", "Literature Mining (LLM)", "PSMILES Generation", "Active Learning", "Material Evaluation", "MD Simulation"]
+    ["Framework Overview", "Literature Mining (LLM)", "PSMILES Generation", "Active Learning", "Material Evaluation", "MD Simulation", "Comprehensive Analysis"]
 )
 
 # Debugging Section
@@ -4477,7 +4485,153 @@ elif page == "MD Simulation":
                                     st.metric("Final Temperature (K)", f"{temp_stats['mean']:.1f} ± {temp_stats['std']:.1f}")
                                     st.metric("Target Deviation (K)", f"{temp_stats['target_deviation']:.1f}")
                             
-                            # Energy analysis
+                            # MM-GBSA Binding Energy Results
+                            if basic_info.get('mmgbsa_available', False):
+                                st.markdown("#### 🧮 MM-GBSA Binding Energy Analysis")
+                                st.markdown("*Insulin-Polymer interaction free energy calculated with entropy correction*")
+                                
+                                mmgbsa_col1, mmgbsa_col2, mmgbsa_col3 = st.columns(3)
+                                
+                                with mmgbsa_col1:
+                                    binding_energy = basic_info.get('binding_energy', 'N/A')
+                                    binding_std = basic_info.get('binding_energy_std', 'N/A')
+                                    
+                                    if binding_energy != 'N/A' and binding_std != 'N/A':
+                                        # Color-code based on binding strength
+                                        if binding_energy < -10:
+                                            delta_color = "inverse"  # Strong binding (good)
+                                            binding_strength = "Strong"
+                                        elif binding_energy < -5:
+                                            delta_color = "normal"   # Moderate binding
+                                            binding_strength = "Moderate"
+                                        else:
+                                            delta_color = "off"      # Weak binding
+                                            binding_strength = "Weak"
+                                        
+                                        st.metric(
+                                            "🔋 Binding Energy", 
+                                            f"{binding_energy:.2f} ± {binding_std:.2f} kcal/mol",
+                                            delta=f"{binding_strength} binding",
+                                            delta_color=delta_color
+                                        )
+                                    else:
+                                        st.metric("🔋 Binding Energy", "N/A")
+                                
+                                with mmgbsa_col2:
+                                    entropy_correction = basic_info.get('entropy_correction', 'N/A')
+                                    if entropy_correction != 'N/A':
+                                        st.metric(
+                                            "🌀 Entropy Correction", 
+                                            f"{entropy_correction:.4f} kcal/mol",
+                                            help="Entropy contribution to binding free energy"
+                                        )
+                                    else:
+                                        st.metric("🌀 Entropy Correction", "N/A")
+                                
+                                with mmgbsa_col3:
+                                    # Check if detailed MMGBSA results are available
+                                    if 'mmgbsa_results' in analysis_result:
+                                        mmgbsa_data = analysis_result['mmgbsa_results']
+                                        num_frames = mmgbsa_data.get('number_of_frames', 'N/A')
+                                        raw_binding = mmgbsa_data.get('raw_binding_energy', 'N/A')
+                                        
+                                        st.metric("📊 Frames Analyzed", f"{num_frames}")
+                                        
+                                        if raw_binding != 'N/A':
+                                            st.metric(
+                                                "⚡ Raw Binding Energy", 
+                                                f"{raw_binding:.2f} kcal/mol",
+                                                help="Binding energy before entropy correction"
+                                            )
+                                
+                                # Show binding energy interpretation
+                                if binding_energy != 'N/A':
+                                    if binding_energy < -10:
+                                        st.success("🎯 **Strong insulin-polymer binding detected!** This indicates excellent affinity for insulin stabilization.")
+                                    elif binding_energy < -5:
+                                        st.info("🎯 **Moderate insulin-polymer binding.** Good potential for insulin stabilization.")
+                                    elif binding_energy < 0:
+                                        st.warning("🎯 **Weak but favorable binding.** Some insulin stabilization expected.")
+                                    else:
+                                        st.error("🎯 **Unfavorable binding energy.** This polymer may not effectively stabilize insulin.")
+                                
+                                # Download MM-GBSA results if available
+                                if 'mmgbsa_results' in analysis_result:
+                                    mmgbsa_data = analysis_result['mmgbsa_results']
+                                    
+                                    st.markdown("##### 📁 MM-GBSA Data Downloads")
+                                    mmgbsa_download_col1, mmgbsa_download_col2 = st.columns(2)
+                                    
+                                    with mmgbsa_download_col1:
+                                        # Frame binding energies
+                                        frame_results_file = mmgbsa_data.get('frame_results_file')
+                                        if frame_results_file and os.path.exists(frame_results_file):
+                                            with open(frame_results_file, 'rb') as f:
+                                                csv_content = f.read()
+                                            st.download_button(
+                                                "📊 Download Frame Binding Energies (CSV)",
+                                                csv_content,
+                                                file_name=f"mmgbsa_frame_energies_{selected_sim_id}.csv",
+                                                mime="text/csv",
+                                                help="Per-frame binding energy calculations"
+                                            )
+                                    
+                                    with mmgbsa_download_col2:
+                                        # Entropy analysis
+                                        entropy_file = mmgbsa_data.get('entropy_analysis_file')
+                                        if entropy_file and os.path.exists(entropy_file):
+                                            with open(entropy_file, 'rb') as f:
+                                                entropy_content = f.read()
+                                            st.download_button(
+                                                "🌀 Download Entropy Analysis (CSV)",
+                                                entropy_content,
+                                                file_name=f"mmgbsa_entropy_analysis_{selected_sim_id}.csv",
+                                                mime="text/csv",
+                                                help="Detailed entropy correction analysis"
+                                            )
+                                
+                                # Show detailed binding energy components if available
+                                if 'mmgbsa_results' in analysis_result:
+                                    mmgbsa_data = analysis_result['mmgbsa_results']
+                                    individual_energies = mmgbsa_data.get('individual_energies', {})
+                                    
+                                    if individual_energies:
+                                        with st.expander("🔬 Detailed Energy Components"):
+                                            st.markdown("**Energy breakdown for understanding the binding mechanism:**")
+                                            
+                                            component_col1, component_col2, component_col3 = st.columns(3)
+                                            
+                                            with component_col1:
+                                                complex_energies = individual_energies.get('complex', [])
+                                                if complex_energies:
+                                                    avg_complex = np.mean(complex_energies)
+                                                    st.metric("🏗️ Complex Energy", f"{avg_complex:.1f} kcal/mol")
+                                            
+                                            with component_col2:
+                                                insulin_energies = individual_energies.get('insulin', [])
+                                                if insulin_energies:
+                                                    avg_insulin = np.mean(insulin_energies)
+                                                    st.metric("🧬 Insulin Energy", f"{avg_insulin:.1f} kcal/mol")
+                                            
+                                            with component_col3:
+                                                polymer_energies = individual_energies.get('polymer', [])
+                                                if polymer_energies:
+                                                    avg_polymer = np.mean(polymer_energies)
+                                                    st.metric("🧪 Polymer Energy", f"{avg_polymer:.1f} kcal/mol")
+                                            
+                                            st.markdown("*Binding Energy = Complex Energy - (Insulin Energy + Polymer Energy)*")
+                            
+                            elif basic_info.get('mmgbsa_available', False) == False and 'mmgbsa_error' in basic_info:
+                                st.markdown("#### 🧮 MM-GBSA Binding Energy Analysis")
+                                st.error(f"❌ MM-GBSA calculation failed: {basic_info['mmgbsa_error']}")
+                                st.info("💡 The MD simulation completed successfully, but binding energy calculation encountered issues.")
+                            
+                            else:
+                                st.markdown("#### 🧮 MM-GBSA Binding Energy Analysis")
+                                st.info("ℹ️ MM-GBSA calculation not available for this simulation.")
+                                st.markdown("*MM-GBSA binding energy calculation is automatically performed for new simulations.*")
+                            
+                            # Energy analysis (existing code)
                             if 'energy_analysis' in analysis_result:
                                 energy = analysis_result['energy_analysis']
                                 st.markdown("#### ⚡ Energy Analysis")
