@@ -25,17 +25,6 @@ py3Dmol==2.0.4
 psp>=1.0.0
 # Note: PACKMOL is also required but must be installed separately as it's not a Python package
 
-# LlaSMol integration dependencies
-torch>=2.0.0
-transformers>=4.35.0
-peft>=0.6.0
-accelerate>=0.24.0
-bitsandbytes>=0.41.0  # For efficient model quantization
-
-# Optional: For better performance with LlaSMol
-# flash-attn>=2.3.0  # Uncomment if you have compatible hardware
-# deepspeed>=0.11.0  # Uncomment for distributed training support
-
 # Development and testing
 pytest==7.4.3
 python-dotenv==1.0.0

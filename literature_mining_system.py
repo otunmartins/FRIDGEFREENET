@@ -254,7 +254,7 @@ Generate 8 natural language search queries now that will maximize material disco
                     'content': strategy_prompt
                 }],
                 options={
-                    'temperature': 0.3,  # Slightly higher for more diverse queries
+                    'temperature': 0.7,  # Higher temperature for more diverse search queries
                     'num_predict': 1500
                 }
             )

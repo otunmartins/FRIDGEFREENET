@@ -944,15 +944,13 @@ function populateModelSelect() {
     
     // Group models by type
     const modelGroups = {
-        ollama: [],
-        llamol: []
+        ollama: []
     };
     
+    // Categorize models by type (LlaSMol removed)
     availableModels.forEach(model => {
         if (model.type === 'ollama') {
             modelGroups.ollama.push(model);
-        } else if (model.type === 'llamol') {
-            modelGroups.llamol.push(model);
         }
     });
     
@@ -979,28 +977,7 @@ function populateModelSelect() {
         elements.modelSelect.appendChild(optgroup);
     }
     
-    // Add LlaSMol models
-    if (modelGroups.llamol.length > 0) {
-        const optgroup = document.createElement('optgroup');
-        optgroup.label = 'LlaSMol Models';
-        
-        modelGroups.llamol.forEach(model => {
-            const option = document.createElement('option');
-            option.value = `llamol:${model.name}`;
-            option.textContent = `${model.name} (LlaSMol)`;
-            
-            // Mark current model as selected
-            if (currentModelInfo && 
-                currentModelInfo.type === 'llamol' && 
-                currentModelInfo.name === model.name) {
-                option.selected = true;
-            }
-            
-            optgroup.appendChild(option);
-        });
-        
-        elements.modelSelect.appendChild(optgroup);
-    }
+    // LlaSMol integration removed
     
     updateSwitchButton();
 }

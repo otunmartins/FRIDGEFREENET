@@ -12,7 +12,7 @@ FALLBACK_MODEL = "gpt2"
 # UI Configuration
 THEME = "soft"
 MAX_TOKENS = 512
-TEMPERATURE = 0.7
+TEMPERATURE = 0.8  # Higher temperature for diverse candidate generation
 
 # Example prompts for different modes
 EXAMPLE_PROMPTS = {

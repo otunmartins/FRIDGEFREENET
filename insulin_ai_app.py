@@ -321,7 +321,8 @@ def validate_psmiles_processor(processor) -> bool:
     required_methods = [
         '_validate_psmiles_format',
         'process_psmiles_workflow',
-        '_fix_connection_points'
+        '_fix_connection_points',
+        'process_psmiles_workflow_with_autorepair'  # New auto-repair method
     ]
     
     for method_name in required_methods:
@@ -331,6 +332,32 @@ def validate_psmiles_processor(processor) -> bool:
     
     return True
 
+def force_refresh_psmiles_processor():
+    """Force refresh PSMILESProcessor to get latest functionality including auto-repair."""
+    try:
+        # Clear any cached PSMILESProcessor
+        if 'psmiles_processor' in st.session_state:
+            del st.session_state.psmiles_processor
+        
+        # Force reimport of the module to get latest code
+        import importlib
+        import psmiles_processor
+        importlib.reload(psmiles_processor)
+        
+        # Create new instance with latest functionality
+        from psmiles_processor import PSMILESProcessor
+        new_processor = PSMILESProcessor()
+        
+        # Verify it has the auto-repair method
+        if hasattr(new_processor, 'process_psmiles_workflow_with_autorepair'):
+            st.session_state.psmiles_processor = new_processor
+            return True, "✅ PSMILESProcessor refreshed with auto-repair functionality!"
+        else:
+            return False, "❌ Refreshed processor still missing auto-repair method"
+            
+    except Exception as e:
+        return False, f"❌ Failed to refresh PSMILESProcessor: {str(e)}"
+
 def safe_get_session_object(obj_name: str, default=None):
     """Safely get a session state object with validation."""
     if validate_session_state_object(obj_name):
@@ -338,6 +365,17 @@ def safe_get_session_object(obj_name: str, default=None):
         
         # Special validation for PSMILESProcessor
         if obj_name == 'psmiles_processor' and hasattr(obj, '__class__'):
+            # Check if it has the auto-repair method
+            if not hasattr(obj, 'process_psmiles_workflow_with_autorepair'):
+                print(f"🔄 PSMILESProcessor missing auto-repair method, forcing refresh...")
+                success, message = force_refresh_psmiles_processor()
+                if success:
+                    print(f"✅ PSMILESProcessor refreshed successfully")
+                    return st.session_state[obj_name]
+                else:
+                    print(f"❌ Failed to refresh PSMILESProcessor: {message}")
+                    return default
+            
             if not validate_psmiles_processor(obj):
                 print(f"🔄 PSMILESProcessor validation failed, forcing re-initialization...")
                 # Force re-initialization by clearing the cache
@@ -1731,8 +1769,22 @@ with st.sidebar.expander("🔧 System Status", expanded=False):
     processor = safe_get_session_object('psmiles_processor')
     if processor and validate_psmiles_processor(processor):
         st.success("✅ PSMILESProcessor: OK")
+        if hasattr(processor, 'process_psmiles_workflow_with_autorepair'):
+            st.success("✅ Auto-Repair: Available")
+        else:
+            st.warning("⚠️ Auto-Repair: Missing")
     else:
         st.error("❌ PSMILESProcessor: Missing methods")
+        
+        # Quick fix button for missing auto-repair
+        if st.button("🔧 Fix PSMILESProcessor", help="Refresh PSMILESProcessor with latest auto-repair functionality"):
+            with st.spinner("Refreshing PSMILESProcessor..."):
+                success, message = force_refresh_psmiles_processor()
+                if success:
+                    st.success(message)
+                    st.rerun()
+                else:
+                    st.error(message)
     
     # Clear cache button
     if st.button("🔄 Force Refresh Systems", help="Clear cache and reinitialize all systems"):
@@ -1750,7 +1802,7 @@ with st.sidebar.expander("🔧 System Status", expanded=False):
                         if key != 'status':
                             st.session_state[key] = value
                     st.success("✅ Systems refreshed successfully!")
-                    st.experimental_rerun()
+                    st.rerun()
                 else:
                     st.error(f"❌ Failed to refresh: {systems.get('error', 'Unknown error')}")
         except Exception as e:
@@ -2323,6 +2375,24 @@ elif page == "PSMILES Generation":
                     
                     functionalized_candidates = []
                     if auto_functionalize:
+                        # **CRITICAL: Ensure PSMILESProcessor has auto-repair functionality**
+                        psmiles_processor = safe_get_session_object('psmiles_processor')
+                        if not psmiles_processor:
+                            st.error("❌ PSMILES Processor not available. Please restart the application.")
+                            st.stop()
+                        
+                        # Double-check for auto-repair method
+                        if not hasattr(psmiles_processor, 'process_psmiles_workflow_with_autorepair'):
+                            st.warning("🔧 PSMILESProcessor missing auto-repair functionality. Refreshing...")
+                            success, message = force_refresh_psmiles_processor()
+                            if success:
+                                st.success("✅ PSMILESProcessor refreshed with auto-repair!")
+                                psmiles_processor = st.session_state.psmiles_processor
+                            else:
+                                st.error(f"❌ Failed to refresh PSMILESProcessor: {message}")
+                                st.error("🔄 **Please use the 'Fix PSMILESProcessor' button in the sidebar and try again.**")
+                                st.stop()
+                        
                         for candidate in selected_candidates:
                             # Apply intelligent functionalization based on structure type
                             original = candidate['psmiles']
@@ -2335,8 +2405,8 @@ elif page == "PSMILES Generation":
                                     st.error("❌ PSMILES Processor not available")
                                     continue
                                 
-                                # Add original PSMILES to session for processing
-                                workflow_result = psmiles_processor.process_psmiles_workflow(
+                                # Add original PSMILES to session for processing WITH AUTO-REPAIR
+                                workflow_result = psmiles_processor.process_psmiles_workflow_with_autorepair(
                                     original, st.session_state.session_id, "automated_functionalization"
                                 )
                                 
@@ -2358,8 +2428,8 @@ elif page == "PSMILES Generation":
                                             first_functionalized = first_result['canonical_psmiles']
                                             first_groups = [group['name'] for group in first_result['applied_groups']]
                                             
-                                            # Process the first functionalized PSMILES for second round
-                                            second_workflow = psmiles_processor.process_psmiles_workflow(
+                                            # Process the first functionalized PSMILES for second round WITH AUTO-REPAIR
+                                            second_workflow = psmiles_processor.process_psmiles_workflow_with_autorepair(
                                                 first_functionalized, st.session_state.session_id, "automated_second_functionalization"
                                             )
                                             
@@ -2561,7 +2631,7 @@ elif page == "PSMILES Generation":
                                 # Safely get the processor with validation
                                 psmiles_processor = safe_get_session_object('psmiles_processor')
                                 if psmiles_processor and validate_psmiles_processor(psmiles_processor):
-                                    workflow_result = psmiles_processor.process_psmiles_workflow(
+                                    workflow_result = psmiles_processor.process_psmiles_workflow_with_autorepair(
                                         psmiles_to_visualize, st.session_state.session_id, "automated_pipeline"
                                     )
                                 else:
@@ -2696,6 +2766,32 @@ elif page == "PSMILES Generation":
                                         temp_info += repair_info
                                     break
                             
+                            # **AUTO-REPAIR STATUS** - Show if auto-repair was applied
+                            if svg_content:
+                                # Check if the workflow result contains auto-repair information
+                                try:
+                                    psmiles_processor = safe_get_session_object('psmiles_processor')
+                                    if psmiles_processor:
+                                        # Check the last workflow result for auto-repair info
+                                        session_psmiles = psmiles_processor.get_session_psmiles(st.session_state.session_id)
+                                        if session_psmiles:
+                                            # Get the processing result from session
+                                            for session_entry in session_psmiles:
+                                                if session_entry.get('canonical_psmiles') == candidate['functionalized']:
+                                                    workflow_result = session_entry
+                                                    break
+                                            else:
+                                                workflow_result = None
+                                            
+                                            if workflow_result and workflow_result.get('auto_repair_applied'):
+                                                st.success("🔧 **AUTO-REPAIR APPLIED**")
+                                                st.info(f"✨ Original: `{workflow_result['original_psmiles']}`")
+                                                st.info(f"🎯 Repaired: `{workflow_result['canonical_psmiles']}`")
+                                                st.info(f"🔬 Method: {workflow_result['repair_method']}")
+                                                st.success("✅ **Structure successfully fixed and visualization working!**")
+                                except Exception as e:
+                                    pass  # Silent fail - auto-repair detection is optional
+                            
                             # Create hybrid method badge if available
                             method_badges = {
                                 'direct_validated': '🎯✅ Direct + Validated',
@@ -2804,7 +2900,7 @@ elif page == "PSMILES Generation":
                                     st.error("❌ PSMILES Processor not available. Please restart the application.")
                                     st.stop()
                                 
-                                workflow_result = psmiles_processor.process_psmiles_workflow(
+                                workflow_result = psmiles_processor.process_psmiles_workflow_with_autorepair(
                                     material_request, st.session_state.session_id, "initial"
                                 )
                                 
@@ -2961,7 +3057,7 @@ elif page == "PSMILES Generation":
                                 st.error("❌ PSMILES Processor not available. Please restart the application.")
                                 st.stop()
                             
-                            workflow_result = psmiles_processor.process_psmiles_workflow(
+                            workflow_result = psmiles_processor.process_psmiles_workflow_with_autorepair(
                                 result['psmiles'], st.session_state.session_id, "initial"
                             )
                             

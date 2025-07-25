@@ -1161,3 +1161,326 @@ class PSMILESProcessor:
                 'success': False,
                 'error': f"Copolymer library error: {str(e)}"
             } 
+
+    def auto_repair_failed_psmiles(self, failed_psmiles, max_attempts=3):
+        """
+        Auto-repair failed PSMILES by re-processing through SMILES repair pipeline.
+        
+        Args:
+            failed_psmiles (str): The PSMILES that failed sanitization
+            max_attempts (int): Maximum repair attempts (increased to 3 for better coverage)
+            
+        Returns:
+            dict: Repair result with success status and repaired PSMILES
+        """
+        try:
+            print(f"🔧 AUTO-REPAIR: Attempting to fix failed PSMILES: {failed_psmiles}")
+            
+            # Convert PSMILES to SMILES for repair
+            if failed_psmiles.count('[*]') == 2:
+                # Remove connection points and add caps
+                smiles_for_repair = failed_psmiles.replace('[*]', 'H')
+                print(f"   Converted to SMILES for repair: {smiles_for_repair}")
+                
+                # Import our SMILES repair system
+                try:
+                    from natural_language_smiles import clean_malformed_smiles, autocorrect_selfies
+                    
+                    # Attempt repair with multiple strategies
+                    for attempt in range(max_attempts):
+                        print(f"   🔄 Repair attempt {attempt + 1}/{max_attempts}")
+                        
+                        # Try different repair strategies (now aggressive repair comes earlier)
+                        if attempt == 0:
+                            # Aggressive pattern-based repair (moved to first attempt)
+                            repaired_smiles = self._aggressive_smiles_repair(smiles_for_repair)
+                            print(f"      Aggressive repair: {smiles_for_repair} → {repaired_smiles}")
+                        elif attempt == 1:
+                            # Basic cleaning
+                            repaired_smiles = clean_malformed_smiles(smiles_for_repair)
+                            print(f"      Basic cleaning: {smiles_for_repair} → {repaired_smiles}")
+                        elif attempt == 2:
+                            # SELFIES repair
+                            repaired_smiles = autocorrect_selfies(smiles_for_repair)
+                            print(f"      SELFIES repair: {smiles_for_repair} → {repaired_smiles}")
+                        
+                        if repaired_smiles and repaired_smiles != smiles_for_repair:
+                            print(f"   ✅ Repair successful: {repaired_smiles}")
+                            
+                            # Convert back to PSMILES
+                            repaired_psmiles = f"[*]{repaired_smiles}[*]"
+                            
+                            # **CRITICAL: Final PSMILES post-processing to fix connection point valency**
+                            print(f"   🔧 Final PSMILES post-processing...")
+                            
+                            # Fix connection point valency issues
+                            original_repaired = repaired_psmiles
+                            
+                            # **SOPHISTICATED: Handle carbonyl connection point issues**
+                            # Pattern: [*]C(=O)1... -> [*]CC(=O)... (move carbonyl off connection point)
+                            if '[*]C(=O)' in repaired_psmiles:
+                                print(f"      🎯 Detected carbonyl connection point - restructuring...")
+                                # Replace [*]C(=O)1CC(=O)S1[*] with [*]CC(=O)CC(=O)S1[*]
+                                repaired_psmiles = repaired_psmiles.replace('[*]C(=O)1CC(=O)S1[*]', '[*]CC(=O)CC(=O)S1[*]')
+                                # More general pattern fixes
+                                repaired_psmiles = repaired_psmiles.replace('[*]C(=O)1', '[*]CC(=O)')
+                                repaired_psmiles = repaired_psmiles.replace('[*]C(=O)', '[*]CC(=O)')
+                            
+                            # Standard fixes
+                            repaired_psmiles = repaired_psmiles.replace('[*]O=C', '[*]CC(=O)')  # More conservative fix
+                            repaired_psmiles = repaired_psmiles.replace('C=O[*]', 'C(=O)[*]')  # End fix
+                            repaired_psmiles = repaired_psmiles.replace('[*]O=', '[*]C')       # General O= fix
+                            repaired_psmiles = repaired_psmiles.replace('=O[*]', 'O[*]')       # End =O fix
+                            
+                            # **CRITICAL: Handle ring closure issues with connection points**
+                            # If we have [*]...1 where connection point is part of ring, restructure
+                            import re
+                            ring_pattern = r'\[\*\]([A-Z])\(([^)]+)\)(\d+)'
+                            if re.search(ring_pattern, repaired_psmiles):
+                                print(f"      🔧 Fixing ring closure on connection point...")
+                                # Move ring number to a better position
+                                repaired_psmiles = re.sub(ring_pattern, r'[*]\1\3(\2)', repaired_psmiles)
+                            
+                            if original_repaired != repaired_psmiles:
+                                print(f"      PSMILES connection fix: {original_repaired} → {repaired_psmiles}")
+                            
+                            # **FALLBACK: Replace impossible structures with valid alternatives**
+                            # If we still have valency issues, use a fallback approach
+                            fallback_patterns = {
+                                # Replace impossible sulfur-carbonyl rings with valid linear structures
+                                '[*]CC(=O)1CC(=O)S1[*]': '[*]CC(=O)CC(=O)S[*]',     # Remove impossible ring
+                                '[*]C(=O)1CC(=O)S1[*]': '[*]C(=O)CC(=O)S[*]',       # Remove impossible ring
+                                '[*]O=C1CC(=O)S1[*]': '[*]CC(=O)CC(=O)S[*]',        # Original impossible structure
+                                # Add more fallback patterns as needed
+                                '[*]CC(=O)CC(=O)SCO[*]': '[*]CC(=O)CC(=O)S[*]',     # Remove problematic CO
+                            }
+                            
+                            fallback_applied = False
+                            for problematic, valid_alternative in fallback_patterns.items():
+                                if problematic in repaired_psmiles:
+                                    print(f"      ⚡ FALLBACK: {problematic} → {valid_alternative}")
+                                    repaired_psmiles = repaired_psmiles.replace(problematic, valid_alternative)
+                                    fallback_applied = True
+                                    break  # Apply only one fallback
+                            
+                            if fallback_applied:
+                                print(f"      🎯 Fallback repair applied: {repaired_psmiles}")
+                            
+                            # Test if the repair worked by trying to create molecule
+                            try:
+                                from rdkit import Chem
+                                test_mol = Chem.MolFromSmiles(repaired_smiles)
+                                if test_mol:
+                                    Chem.SanitizeMol(test_mol)
+                                    print(f"   🎯 Repair validation successful!")
+                                    
+                                    return {
+                                        'success': True,
+                                        'original_psmiles': failed_psmiles,
+                                        'repaired_psmiles': repaired_psmiles,
+                                        'repair_method': f'attempt_{attempt + 1}',
+                                        'intermediate_smiles': repaired_smiles
+                                    }
+                                else:
+                                    print(f"   ❌ Repair attempt {attempt + 1} failed: Invalid molecule")
+                                    continue
+                                    
+                            except Exception as e:
+                                print(f"   ❌ Repair attempt {attempt + 1} failed sanitization: {e}")
+                                continue
+                        else:
+                            print(f"   ⚠️ Repair attempt {attempt + 1}: No changes made or repair failed")
+                    
+                    # All repair attempts failed
+                    return {
+                        'success': False,
+                        'error': f'All {max_attempts} repair attempts failed',
+                        'original_psmiles': failed_psmiles
+                    }
+                
+                except ImportError:
+                    return {
+                        'success': False,
+                        'error': 'SMILES repair system not available - install natural_language_smiles module',
+                        'original_psmiles': failed_psmiles
+                    }
+            else:
+                return {
+                    'success': False,
+                    'error': 'Invalid PSMILES format (wrong number of connection points)',
+                    'original_psmiles': failed_psmiles
+                }
+                
+        except Exception as e:
+            return {
+                'success': False,
+                'error': f'Auto-repair failed with exception: {str(e)}',
+                'original_psmiles': failed_psmiles
+            }
+    
+    def _aggressive_smiles_repair(self, smiles):
+        """
+        Aggressive SMILES repair for stubborn cases.
+        
+        Args:
+            smiles (str): SMILES to repair
+            
+        Returns:
+            str: Repaired SMILES or None if failed
+        """
+        try:
+            print(f"   🔨 Aggressive repair for: {smiles}")
+            
+            # Common problematic patterns and their fixes
+            repair_patterns = [
+                # **CRITICAL: Fix connection point valency issues first**
+                (r'\[\*\]O=C', '[*]C(=O)'),                # Fix [*]O=C to [*]C(=O) - most critical
+                (r'C=O\[\*\]', 'C(=O)[*]'),                # Fix C=O[*] to C(=O)[*]
+                
+                # **CRITICAL: Fix specific problematic ring closures with sulfur**
+                (r'SCO(\d+)H$', r'S\1'),                    # Fix SCO1H -> S1 (remove invalid CO connection)
+                (r'SCO(\d+)', r'S\1'),                      # Fix SCO1 -> S1 (general case)
+                (r'S\(=O\)\(=O\)CO(\d+)', r'S(=O)(=O)\1'), # Fix sulfone with invalid CO ring
+                
+                # **CRITICAL: Fix HO=C oxygen valency issues**
+                (r'^HO=C', 'O=C'),                         # Fix starting HO=C to O=C
+                (r'HO=C', 'O=C'),                          # Fix HO=C anywhere
+                (r'([A-Z])O=C', r'\1OC(=O)'),              # Fix X-O=C to X-OC(=O)
+                
+                # Fix terminal carbonyl issues
+                (r'C=O$', 'C(=O)O'),                       # Terminal carbonyl to carboxylic acid
+                (r'C=OH$', 'C(=O)O'),                      # Fix C=OH to carboxylic acid
+                
+                # **NEW: Fix problematic sulfur ring structures**
+                (r'=C(\d+)CC\(=O\)SCO\1', r'=C\1CC(=O)S\1'),  # Fix the specific ring pattern
+                (r'C(\d+)CC\(=O\)SCO\1', r'C\1CC(=O)S\1'),    # Alternative ring pattern
+                (r'O=C(\d+)CC\(=O\)SCO\1H', r'O=C\1CC(=O)S\1'),  # Full pattern with terminal H
+                
+                # **NEW: Simplify complex sulfur-oxygen connections**
+                (r'SCO(\d+)([A-Z])', r'S\1\2'),            # SCO1X -> S1X
+                (r'SCO(\d+)$', r'S\1'),                     # SCO1 at end -> S1
+                (r'SOC(\d+)', r'S\1'),                      # SOC1 -> S1
+                (r'CSO(\d+)', r'CS\1'),                     # CSO1 -> CS1
+                
+                # Fix general sulfur valency issues
+                (r'S\(=O\)\(=O\)', 'S(=O)(=O)'),          # Ensure proper sulfone notation
+                (r'S\(=O\)=O', 'S(=O)(=O)'),              # Fix mixed sulfone notation
+                (r'S=O=O', 'S(=O)(=O)'),                  # Fix double bond sulfone
+                
+                # Fix carbon valency issues
+                (r'C=O=O', 'C(=O)O'),                     # Fix carbon dioxide-like pattern
+                (r'C\(=O\)=O', 'C(=O)O'),                 # Fix carboxylic acid pattern
+                
+                # Fix general oxygen valency issues
+                (r'=OH$', 'O'),                           # Fix terminal =OH to just O
+                (r'([A-Z])=OH', r'\1O'),                  # Fix X=OH to XO
+                
+                # **NEW: Ring closure number preservation and fixing**
+                (r'([A-Z])(\d+)([A-Z])', r'\1\2\3'),      # Preserve valid ring numbers
+                (r'(\d+)([A-Z])(\d+)', r'\1\2\3'),        # Preserve numbers between atoms
+                
+                # **NEW: Terminal hydrogen fixing**
+                (r'(\d+)H$', r'\1'),                      # Remove terminal H after ring closure
+                (r'([A-Z])H$', r'\1'),                    # Remove terminal H after atom (if not needed)
+                
+                # More aggressive fixes for terminal issues
+                (r'C=O([A-Z])', r'C(=O)\1'),              # Fix C=O followed by atom to C(=O)
+                (r'([A-Z])C=O$', r'\1C(=O)O'),           # Fix anything-C=O at end to carboxylic acid
+            ]
+            
+            repaired = smiles
+            for pattern, replacement in repair_patterns:
+                import re
+                old_smiles = repaired
+                repaired = re.sub(pattern, replacement, repaired)
+                if repaired != old_smiles:
+                    print(f"      Applied pattern {pattern} -> {replacement}")
+                    print(f"      Result: {repaired}")
+            
+            # Try to create and sanitize molecule
+            from rdkit import Chem
+            test_mol = Chem.MolFromSmiles(repaired)
+            if test_mol:
+                Chem.SanitizeMol(test_mol)
+                canonical = Chem.MolToSmiles(test_mol)
+                print(f"   ✅ Aggressive repair successful: {canonical}")
+                return canonical
+            else:
+                print(f"   ❌ Aggressive repair failed: Invalid molecule")
+                return None
+                
+        except Exception as e:
+            print(f"   ❌ Aggressive repair exception: {e}")
+            return None
+
+    def process_psmiles_workflow_with_autorepair(self, psmiles, session_id, context="default", max_repair_attempts=2):
+        """
+        Enhanced PSMILES processing with automatic repair for failed structures.
+        
+        Args:
+            psmiles (str): PSMILES string to process
+            session_id (str): Session identifier
+            context (str): Processing context
+            max_repair_attempts (int): Maximum auto-repair attempts
+            
+        Returns:
+            dict: Processing result with repair information if applied
+        """
+        try:
+            print(f"🔬 ENHANCED PROCESSING: {psmiles}")
+            
+            # First attempt: Standard processing
+            result = self.process_psmiles_workflow(psmiles, session_id, context)
+            
+            if result['success']:
+                print(f"   ✅ Standard processing successful")
+                return result
+            else:
+                error_msg = result.get('error', 'Unknown error')
+                print(f"   ❌ Standard processing failed: {error_msg}")
+                
+                # Check if this is a sanitization error that can be auto-repaired
+                if 'SANITIZE_PROPERTIES' in error_msg or 'Invalid chemistry' in error_msg:
+                    print(f"   🔧 Detected sanitization error - attempting auto-repair...")
+                    
+                    # Attempt auto-repair
+                    repair_result = self.auto_repair_failed_psmiles(psmiles, max_repair_attempts)
+                    
+                    if repair_result['success']:
+                        repaired_psmiles = repair_result['repaired_psmiles']
+                        print(f"   ✅ Auto-repair successful: {repaired_psmiles}")
+                        
+                        # Try processing the repaired PSMILES
+                        repaired_result = self.process_psmiles_workflow(repaired_psmiles, session_id, f"{context}_autorepaired")
+                        
+                        if repaired_result['success']:
+                            # Add repair information to the result
+                            repaired_result['auto_repair_applied'] = True
+                            repaired_result['original_psmiles'] = psmiles
+                            repaired_result['repair_method'] = repair_result['repair_method']
+                            repaired_result['repair_intermediate'] = repair_result['intermediate_smiles']
+                            
+                            print(f"   🎉 AUTO-REPAIR SUCCESS: Processing successful after repair!")
+                            return repaired_result
+                        else:
+                            print(f"   ❌ Repaired PSMILES still failed processing")
+                            # Return original error but include repair attempt info
+                            result['auto_repair_attempted'] = True
+                            result['repair_failure'] = repaired_result.get('error', 'Repaired processing failed')
+                            return result
+                    else:
+                        print(f"   ❌ Auto-repair failed: {repair_result['error']}")
+                        # Return original error but note repair was attempted
+                        result['auto_repair_attempted'] = True
+                        result['repair_failure'] = repair_result['error']
+                        return result
+                else:
+                    print(f"   ℹ️ Error not suitable for auto-repair: {error_msg}")
+                    return result
+                    
+        except Exception as e:
+            return {
+                'success': False,
+                'error': f'Enhanced processing failed: {str(e)}',
+                'original_psmiles': psmiles
+            } 

@@ -9,7 +9,7 @@ This system provides specialized conversation modes:
 - Literature: Integration with literature mining
 
 Enhanced with persistent conversation memory using LangChain memory components.
-Now supports multiple model backends including Ollama and LlaSMol.
+Now supports Ollama model backend for conversational AI.
 """
 
 import os
@@ -25,37 +25,29 @@ from langchain_core.runnables import RunnablePassthrough
 from langchain.memory import ConversationBufferMemory, ConversationSummaryMemory, ConversationBufferWindowMemory
 from langchain.schema import BaseMessage
 
-# Import LlaSMol integration
-try:
-    from llamol_integration import LlaSMolChatWrapper, llamol_manager, LLAMOL_AVAILABLE
-    print("✅ LlaSMol integration available")
-except ImportError as e:
-    LLAMOL_AVAILABLE = False
-    print(f"⚠️ LlaSMol integration not available: {e}")
+# Removed LlaSMol integration - using Ollama only
 
 
 class InsulinAIChatbot:
     """
     Conversational AI system for insulin delivery patch research.
     Enhanced with persistent LangChain memory for conversation context.
-    Now supports multiple model backends: Ollama and LlaSMol.
+    Uses Ollama model backend for conversational AI.
     """
     
     def __init__(self, 
                  model_type: str = "ollama",
                  ollama_model: str = "llama3.2",
                  ollama_host: str = "http://localhost:11434",
-                 llamol_model: str = "osunlp/LlaSMol-Mistral-7B",
                  memory_type: str = "buffer_window",
                  memory_dir: str = "chat_memory"):
         """
         Initialize the Insulin AI Chatbot with model selection and persistent memory.
         
         Args:
-            model_type (str): Type of model to use ('ollama' or 'llamol')
-            ollama_model (str): Ollama model name (if model_type='ollama')
-            ollama_host (str): Ollama server host (if model_type='ollama')
-            llamol_model (str): LlaSMol model name (if model_type='llamol')
+            model_type (str): Type of model to use ('ollama' only)
+            ollama_model (str): Ollama model name
+            ollama_host (str): Ollama server host
             memory_type (str): Type of memory to use ('buffer', 'summary', 'buffer_window')
             memory_dir (str): Directory to store memory files
         """
@@ -67,35 +59,15 @@ class InsulinAIChatbot:
         if not os.path.exists(memory_dir):
             os.makedirs(memory_dir)
         
-        # Initialize the appropriate LLM
-        if self.model_type == "llamol":
-            if not LLAMOL_AVAILABLE:
-                print("❌ LlaSMol not available, falling back to Ollama")
-                self.model_type = "ollama"
-            else:
-                print(f"🔬 Initializing LlaSMol model: {llamol_model}")
-                try:
-                    self.llm_wrapper = llamol_manager.get_model(llamol_model)
-                    if self.llm_wrapper:
-                        self.llm = self.llm_wrapper  # Use wrapper directly
-                        self.model_name = llamol_model
-                        print(f"✅ LlaSMol chatbot initialized with {llamol_model}")
-                    else:
-                        print("❌ Failed to load LlaSMol model, falling back to Ollama")
-                        self.model_type = "ollama"
-                except Exception as e:
-                    print(f"❌ LlaSMol initialization failed: {e}, falling back to Ollama")
-                    self.model_type = "ollama"
-        
-        if self.model_type == "ollama":
-            self.model_name = ollama_model
-            self.host = ollama_host
-            try:
-                self.llm = OllamaLLM(model=ollama_model, base_url=ollama_host)
-                print(f"✅ Ollama chatbot initialized with {ollama_model}")
-            except Exception as e:
-                print(f"❌ Failed to initialize Ollama chatbot: {e}")
-                raise
+        # Initialize Ollama LLM (LlaSMol integration removed)
+        self.model_name = ollama_model
+        self.host = ollama_host
+        try:
+            self.llm = OllamaLLM(model=ollama_model, base_url=ollama_host)
+            print(f"✅ Ollama chatbot initialized with {ollama_model}")
+        except Exception as e:
+            print(f"❌ Failed to initialize Ollama chatbot: {e}")
+            raise
         
         # Initialize memory storage for different sessions
         self.memories = {}  # session_id -> memory object
@@ -108,37 +80,17 @@ class InsulinAIChatbot:
                     model_type: str, 
                     model_name: Optional[str] = None) -> bool:
         """
-        Switch between different model types.
+        Switch between different Ollama models.
         
         Args:
-            model_type (str): 'ollama' or 'llamol'
-            model_name (str): Specific model name (optional)
+            model_type (str): 'ollama' only (LlaSMol support removed)
+            model_name (str): Specific Ollama model name (optional)
             
         Returns:
             bool: Success status
         """
         try:
-            old_type = self.model_type
-            old_name = self.model_name
-            
-            if model_type.lower() == "llamol":
-                if not LLAMOL_AVAILABLE:
-                    print("❌ LlaSMol not available")
-                    return False
-                
-                target_model = model_name or "osunlp/LlaSMol-Mistral-7B"
-                wrapper = llamol_manager.get_model(target_model)
-                if wrapper:
-                    self.model_type = "llamol"
-                    self.model_name = target_model
-                    self.llm = wrapper
-                    print(f"✅ Switched to LlaSMol: {target_model}")
-                    return True
-                else:
-                    print(f"❌ Failed to load LlaSMol model: {target_model}")
-                    return False
-            
-            elif model_type.lower() == "ollama":
+            if model_type.lower() == "ollama":
                 target_model = model_name or "llama3.2"
                 host = getattr(self, 'host', 'http://localhost:11434')
                 
@@ -389,16 +341,9 @@ Previous conversations:
             # Format history for the prompt
             history = self._format_history_for_prompt(memory)
             
-            # Generate response using the selected model
-            if self.model_type == "llamol":
-                # For LlaSMol, we might want to add chemistry-specific context
-                chemistry_context = self._add_chemistry_context(message, mode)
-                formatted_message = chemistry_context if chemistry_context else message
-                response_text = self.llm.invoke(formatted_message)
-            else:
-                # For Ollama, use the standard prompt template
-                formatted_prompt = prompt_template.format(input=message, history=history)
-                response_text = self.llm.invoke(formatted_prompt)
+            # Generate response using Ollama
+            formatted_prompt = prompt_template.format(input=message, history=history)
+            response_text = self.llm.invoke(formatted_prompt)
             
             # Add to memory
             memory.chat_memory.add_user_message(message)
@@ -407,10 +352,8 @@ Previous conversations:
             # Save memory to file
             self._save_memory(session_id, mode)
             
-            # Extract chemistry-specific information if using LlaSMol
+            # Chemistry parsing removed (LlaSMol integration removed)
             parsed_chemistry = {}
-            if self.model_type == "llamol" and hasattr(self.llm, '_parse_chemistry_response'):
-                parsed_chemistry = self.llm._parse_chemistry_response(response_text)
             
             return {
                 'success': True,
@@ -435,44 +378,7 @@ Previous conversations:
                 'timestamp': datetime.now().isoformat()
             }
     
-    def _add_chemistry_context(self, message: str, mode: str) -> Optional[str]:
-        """
-        Add chemistry-specific context for LlaSMol model.
-        
-        Args:
-            message (str): User message
-            mode (str): Conversation mode
-            
-        Returns:
-            Optional[str]: Enhanced message with chemistry context, or None to use original
-        """
-        if self.model_type != "llamol":
-            return None
-        
-        # Detect chemistry-related keywords and add appropriate context
-        chemistry_keywords = {
-            'smiles': ['smiles', 'molecular structure', 'chemical structure'],
-            'iupac': ['iupac', 'chemical name', 'compound name'],
-            'property': ['solubility', 'toxicity', 'permeability', 'stability', 'logd', 'logp'],
-            'synthesis': ['synthesis', 'reaction', 'reagent', 'product', 'reactant'],
-            'molecular_formula': ['molecular formula', 'chemical formula'],
-        }
-        
-        message_lower = message.lower()
-        detected_tasks = []
-        
-        for task, keywords in chemistry_keywords.items():
-            if any(keyword in message_lower for keyword in keywords):
-                detected_tasks.append(task)
-        
-        # Add insulin and patch-specific context
-        if mode == 'research' or any(term in message_lower for term in ['insulin', 'patch', 'polymer', 'delivery']):
-            context_prefix = """As a chemistry expert working on insulin delivery patch materials, please provide detailed technical information. """
-            if detected_tasks:
-                context_prefix += f"Focus on aspects related to: {', '.join(detected_tasks)}. "
-            return context_prefix + message
-        
-        return None
+    # _add_chemistry_context function removed (LlaSMol integration removed)
     
     def get_model_info(self) -> Dict:
         """
@@ -491,16 +397,7 @@ Previous conversations:
         # Add Ollama info
         info['available_models']['ollama'] = ['llama3.2', 'llama2', 'codellama', 'mistral', 'mixtral']
         
-        # Add LlaSMol info if available
-        if LLAMOL_AVAILABLE:
-            try:
-                info['available_models']['llamol'] = LlaSMolChatWrapper.get_available_models()
-                info['llamol_loaded_models'] = llamol_manager.list_loaded_models()
-            except:
-                info['available_models']['llamol'] = []
-                info['llamol_loaded_models'] = []
-        else:
-            info['llamol_available'] = False
+        # LlaSMol integration removed
         
         return info
     
@@ -511,31 +408,11 @@ Previous conversations:
         Returns:
             Dict: Chemistry capabilities information
         """
-        if self.model_type == "llamol":
-            return {
-                'chemistry_model': True,
-                'supported_tasks': [
-                    'name_conversion',
-                    'property_prediction', 
-                    'molecule_captioning',
-                    'molecule_generation',
-                    'forward_synthesis',
-                    'retrosynthesis'
-                ],
-                'supported_formats': [
-                    'SMILES',
-                    'IUPAC',
-                    'Molecular Formula',
-                    'Chemical Properties'
-                ],
-                'specialized_for': 'Chemistry and molecular analysis'
-            }
-        else:
-            return {
-                'chemistry_model': False,
-                'specialized_for': 'General conversation and research assistance',
-                'note': 'Switch to LlaSMol model for specialized chemistry capabilities'
-            }
+        return {
+            'chemistry_model': False,
+            'specialized_for': 'General conversation and research assistance',
+            'note': 'LlaSMol integration removed - using Ollama for general chemistry assistance'
+        }
     
     def clear_history(self, session_id: str, mode: str = None):
         """Clear conversation history for a session."""
