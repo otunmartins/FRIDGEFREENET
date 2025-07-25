@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Interactive Literature Mining System
-Allows users to ask questions in natural language and see intelligent responses.
+Interactive literature mining demo for insulin delivery materials.
+Demonstrates the AI-guided literature search workflow.
 """
 
 import json
 import sys
-from literature_mining_system import MaterialsLiteratureMiner
+from .literature_mining_system import MaterialsLiteratureMiner
 
 def print_header():
     """Print the system header."""

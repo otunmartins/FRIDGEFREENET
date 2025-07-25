@@ -4,9 +4,10 @@ import logging
 import json
 import os
 from datetime import datetime
+
+from .semantic_scholar_search import initialize_client, search_papers, get_paper_details, get_author_details, get_citations_and_references
+from .ollama_client import OllamaClient
 from mcp.server.fastmcp import FastMCP
-from semantic_scholar_search import initialize_client, search_papers, get_paper_details, get_author_details, get_citations_and_references
-from ollama_client import OllamaClient
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

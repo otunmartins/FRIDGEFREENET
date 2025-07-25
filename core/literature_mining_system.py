@@ -3,8 +3,8 @@ import os
 from typing import List, Dict, Optional
 from datetime import datetime
 
-from semantic_scholar_client import SemanticScholarClient
-from ollama_client import OllamaClient
+from .semantic_scholar_client import SemanticScholarClient
+from .ollama_client import OllamaClient
 
 
 class MaterialsLiteratureMiner:

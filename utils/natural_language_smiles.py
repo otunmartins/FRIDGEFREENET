@@ -20,13 +20,21 @@ from datetime import datetime
 
 # LangChain imports
 try:
+    # Try new langchain-ollama package first
     from langchain_ollama import OllamaLLM
     from langchain_core.prompts import ChatPromptTemplate
     from langchain.tools import tool
     LANGCHAIN_AVAILABLE = True
-except ImportError as e:
-    print(f"⚠️ LangChain not available: {e}")
-    LANGCHAIN_AVAILABLE = False
+except ImportError:
+    try:
+        # Fallback to old imports
+        from langchain_community.llms import Ollama as OllamaLLM
+        from langchain_core.prompts import ChatPromptTemplate
+        from langchain.tools import tool
+        LANGCHAIN_AVAILABLE = True
+    except ImportError as e:
+        print(f"⚠️ LangChain not available: {e}")
+        LANGCHAIN_AVAILABLE = False
 
 # RDKit imports for chemical validation
 try:
@@ -613,8 +621,38 @@ class NaturalLanguageToSMILES:
         
         return True, f"Valid polymer monomer with {carbon_count} carbons"
     
-    def generate_smiles(self, description: str, debug: bool = False) -> Dict[str, Any]:
-        """Generate SMILES from description with optional debugging."""
+    def _validate_atomic_requirements(self, smiles: str, required_atoms: List[str]) -> Tuple[bool, str]:
+        """
+        Validate that SMILES contains all required atoms.
+        
+        Args:
+            smiles (str): SMILES string to validate
+            required_atoms (List[str]): List of required chemical symbols (e.g., ['S', 'B', 'N'])
+            
+        Returns:
+            Tuple[bool, str]: (is_valid, explanation)
+        """
+        if not required_atoms:
+            return True, "No specific atomic requirements"
+        
+        if not smiles:
+            return False, "Empty SMILES string"
+        
+        # Check for each required atom
+        missing_atoms = []
+        for atom in required_atoms:
+            # Check for explicit atom (e.g., 'S' in CSC, 'B' in [B])
+            # Also check in brackets for formal representations
+            if atom not in smiles and f'[{atom}]' not in smiles and f'[{atom}+' not in smiles and f'[{atom}-' not in smiles:
+                missing_atoms.append(atom)
+        
+        if missing_atoms:
+            return False, f"Missing required atoms: {', '.join(missing_atoms)}. Generated structure contains only: {set(re.findall(r'[A-Z][a-z]?', smiles))}"
+        
+        return True, f"Contains all required atoms: {', '.join(required_atoms)}"
+    
+    def generate_smiles(self, description: str, required_atoms: List[str] = None, debug: bool = False) -> Dict[str, Any]:
+        """Generate SMILES from description with optional atomic requirements and debugging."""
         def debug_log(message, data=None):
             if debug:
                 print(f"🔍 SMILES_GEN: {message}")
@@ -764,6 +802,14 @@ INVALID PATTERNS TO AVOID:
 
 Description: {description}
 
+ATOMIC REQUIREMENTS (CRITICAL - MUST BE SATISFIED):
+{f"REQUIRED ATOMS: {', '.join(required_atoms)} - The generated structure MUST contain ALL of these atoms!" if required_atoms else "No specific atomic requirements."}
+
+VALID ATOMIC PATTERNS FOR REQUIRED ATOMS:
+{f"Sulfur (S): CSC (bridge), c1csc(c1) (thiophene), CCS (thioether)" if required_atoms and 'S' in required_atoms else ""}
+{f"Boron (B): [B] (explicit), B(O)(O) (boronic acid), CB(O)" if required_atoms and 'B' in required_atoms else ""}
+{f"Nitrogen (N): CN (alkyl), c1ncccc1 (pyridine), NC(=O) (amide)" if required_atoms and 'N' in required_atoms else ""}
+
 RESPOND WITH ONLY A VALID, SYNTACTICALLY CORRECT SMILES STRING THAT CONTAINS AT LEAST 2 CARBONS."""
 
             debug_log("Sending prompt to LLM", {"prompt_length": len(prompt)})
@@ -786,6 +832,24 @@ RESPOND WITH ONLY A VALID, SYNTACTICALLY CORRECT SMILES STRING THAT CONTAINS AT 
                 debug_log(f"Polymer monomer validation: {validation_msg}")
                 
                 if is_valid:
+                    # 🔧 NEW: Validate atomic requirements
+                    if required_atoms:
+                        atomic_valid, atomic_msg = self._validate_atomic_requirements(smiles, required_atoms)
+                        debug_log(f"Atomic requirements validation: {atomic_msg}")
+                        
+                        if not atomic_valid:
+                            debug_log(f"SMILES failed atomic requirements: {atomic_msg}")
+                            return {
+                                'success': False,
+                                'error': f"Missing required atoms: {atomic_msg}",
+                                'smiles': smiles,
+                                'method': 'llm_generation_atomic_failure',
+                                'confidence': 0.0,
+                                'validation': validation_msg,
+                                'atomic_validation': atomic_msg,
+                                'raw_response': response
+                            }
+                    
                     # **ADDITIONAL CHEMICAL SAFETY CHECK** - Prevent common RDKit errors
                     chemical_safety, safety_msg = self._check_chemical_safety(smiles)
                     if chemical_safety:
@@ -936,7 +1000,7 @@ RESPOND WITH ONLY A VALID, SYNTACTICALLY CORRECT SMILES STRING THAT CONTAINS AT 
             return False
         
         # Extended valid chars to include common metals for organometallic chemistry
-        valid_chars = set('CNOSPFClBrIcnospf0123456789[]()=#+@/\\-')
+        valid_chars = set(r'CNOSPFClBrIcnospf0123456789[]()=#+@/\-')
         # Add common metal atoms
         metal_atoms = {'Fe', 'Ni', 'Cu', 'Zn', 'Mn', 'Co', 'Cr', 'Ti', 'V', 'Pd', 'Pt', 'Au', 'Ag', 'Ru', 'Rh', 'Ir', 'Os', 'Re', 'W', 'Mo', 'Tc', 'Nb', 'Ta', 'Hf', 'Zr', 'Y', 'Sc', 'La', 'Ce', 'Pr', 'Nd', 'Pm', 'Sm', 'Eu', 'Gd', 'Tb', 'Dy', 'Ho', 'Er', 'Tm', 'Yb', 'Lu', 'Ac', 'Th', 'Pa', 'U', 'Np', 'Pu', 'Am', 'Cm', 'Bk', 'Cf', 'Es', 'Fm', 'Md', 'No', 'Lr'}
         
@@ -962,11 +1026,12 @@ class NaturalLanguageToPSMILES:
         self.nl_to_smiles = NaturalLanguageToSMILES(ollama_model, ollama_host)
         self.validator = ChemicalValidator()
         
-    def convert_description_to_psmiles(self, description: str, debug: bool = False) -> Dict[str, Any]:
-        """Complete conversion pipeline with optional debugging."""
+    def convert_description_to_psmiles(self, description: str, required_atoms: List[str] = None, debug: bool = False) -> Dict[str, Any]:
+        """Complete conversion pipeline with optional atomic requirements and debugging."""
         result = {
             'success': False,
             'description': description,
+            'required_atoms': required_atoms,
             'timestamp': datetime.now().isoformat(),
             'debug_steps': [] if debug else None
         }
@@ -986,11 +1051,11 @@ class NaturalLanguageToPSMILES:
                     print(f"   Data: {data}")
         
         try:
-            debug_log("INIT", f"Starting conversion for: '{description}'")
+            debug_log("INIT", f"Starting conversion for: '{description}'" + (f" with required atoms: {required_atoms}" if required_atoms else ""))
             
             # Step 1: Generate SMILES
             debug_log("STEP1", "Generating SMILES from natural language...")
-            smiles_result = self.nl_to_smiles.generate_smiles(description, debug=debug)
+            smiles_result = self.nl_to_smiles.generate_smiles(description, required_atoms=required_atoms, debug=debug)
             result['smiles_generation'] = smiles_result
             
             debug_log("STEP1_RESULT", "SMILES generation result", smiles_result)
@@ -1137,6 +1202,12 @@ class NaturalLanguageToPSMILES:
         
         return validation
 
+
+# Define a dummy decorator when LangChain is not available
+if not LANGCHAIN_AVAILABLE:
+    def tool(func):
+        """Dummy tool decorator when LangChain is not available"""
+        return func
 
 @tool
 def validate_smiles_tool(smiles: str) -> Dict[str, Any]:

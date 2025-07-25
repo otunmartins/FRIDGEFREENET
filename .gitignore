@@ -1,4 +1,6 @@
 # Python
+.cursor/
+test*
 *.xyz
 *.inp
 *csv

@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
-Simplified MCP Client for Insulin AI
-Direct integration of enhanced literature mining without subprocess complexity.
+MCP (Model Context Protocol) Client for Insulin AI
 """
 
 import asyncio
@@ -13,9 +12,9 @@ from dataclasses import dataclass
 from datetime import datetime
 import os
 
-# Use the same efficient search approach as the original system
-from semantic_scholar_client import SemanticScholarClient
-from ollama_client import OllamaClient
+# Import our local modules
+from .semantic_scholar_client import SemanticScholarClient
+from .ollama_client import OllamaClient
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

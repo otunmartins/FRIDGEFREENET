@@ -7,10 +7,25 @@ using Large Language Models with conversation memory and rule reinforcement.
 Uses Ollama models for molecular understanding.
 """
 
-from langchain_ollama import OllamaLLM
+try:
+    from langchain_ollama import OllamaLLM
+except ImportError:
+    # Fallback to old import for compatibility
+    from langchain_community.llms import Ollama as OllamaLLM
+    
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
-from langchain.memory import ConversationBufferWindowMemory
+
+try:
+    from langchain.memory import ConversationBufferWindowMemory
+except ImportError:
+    # Handle potential deprecation - try new location
+    try:
+        from langchain_core.memory import ConversationBufferWindowMemory
+    except ImportError:
+        # Ultimate fallback
+        from langchain_community.memory import ConversationBufferWindowMemory
+    
 import json
 import re
 from datetime import datetime
@@ -19,11 +34,12 @@ import numpy as np
 
 # Import natural language to SMILES functionality
 try:
-    from natural_language_smiles import NaturalLanguageToPSMILES, ChemicalValidator
+    from utils.natural_language_smiles import NaturalLanguageToPSMILES, ChemicalValidator
     NATURAL_LANGUAGE_AVAILABLE = True
-except ImportError:
+    print("✅ Natural language SMILES converter available")
+except ImportError as e:
     NATURAL_LANGUAGE_AVAILABLE = False
-    print("⚠️ Natural language SMILES converter not available")
+    print(f"⚠️ Natural language SMILES converter not available: {e}")
 
 
 class PSMILESGenerator:
@@ -80,7 +96,7 @@ class PSMILESGenerator:
         if NATURAL_LANGUAGE_AVAILABLE:
             try:
                 print("🔍 DEBUG: Attempting to import natural_language_smiles...")
-                from natural_language_smiles import NaturalLanguageToPSMILES, ChemicalValidator
+                from utils.natural_language_smiles import NaturalLanguageToPSMILES, ChemicalValidator
                 print("🔍 DEBUG: Import successful, initializing NaturalLanguageToPSMILES...")
                 
                 self.nl_to_psmiles = NaturalLanguageToPSMILES(
@@ -946,7 +962,7 @@ Your choice: """
         Returns:
             Dict: Validation results and PSMILES conversion
         """
-        if not self.validator:
+        if not self.chemical_validator: # Changed from self.validator to self.chemical_validator
             return {
                 'success': False,
                 'error': 'RDKit validator not available',
@@ -955,7 +971,7 @@ Your choice: """
         
         try:
             # Validate with RDKit
-            is_valid, mol, message = self.validator.validate_smiles(smiles)
+            is_valid, mol, message = self.chemical_validator.validate_smiles(smiles, debug=False) # Changed from self.validator to self.chemical_validator
             
             result = {
                 'success': is_valid,
@@ -966,7 +982,7 @@ Your choice: """
             
             if is_valid and mol:
                 # Canonicalize SMILES
-                canonical_smiles = self.validator.canonicalize_smiles(smiles)
+                canonical_smiles = self.chemical_validator.canonicalize_smiles(smiles) # Changed from self.validator to self.chemical_validator
                 result['canonical_smiles'] = canonical_smiles
                 
                 # Convert to PSMILES

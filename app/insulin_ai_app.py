@@ -23,61 +23,37 @@ import warnings
 warnings.filterwarnings('ignore')
 
 # Import our real systems
-from chatbot_system import InsulinAIChatbot
-from literature_mining_system import MaterialsLiteratureMiner
-from psmiles_generator import PSMILESGenerator
-from psmiles_processor import PSMILESProcessor
-
-# Import NEW LangChain OLLAMA PSMILES System (100% validated!)
-try:
-    from langchain_psmiles_system_fixed import (
-        create_fixed_psmiles_agent,
-        PSMILESGenerationRequest,
-        PSMILESValidationResult,
-        FixedLangChainPSMILESAgent
-    )
-    # Import NEW ReAct OLLAMA Agent for advanced reasoning
-    from langchain_react_ollama_agent import (
-        create_react_ollama_psmiles_agent,
-        ReActOLLAMAPSMILESAgent,
-        PSMILESGenerationRequest as ReActRequest,
-        PSMILESValidationResult as ReActResult
-    )
-    LANGCHAIN_PSMILES_AVAILABLE = True
-    REACT_OLLAMA_AVAILABLE = True
-    print("✅ LangChain OLLAMA PSMILES System available - 100% validated generation!")
-    print("✅ ReAct OLLAMA Agent available - Advanced reasoning with tools!")
-except ImportError as e:
-    LANGCHAIN_PSMILES_AVAILABLE = False
-    REACT_OLLAMA_AVAILABLE = False
-    print(f"⚠️ LangChain OLLAMA PSMILES System not available: {e} - using fallback")
+from core.chatbot_system import InsulinAIChatbot
+from core.literature_mining_system import MaterialsLiteratureMiner
+from core.psmiles_generator import PSMILESGenerator
+from core.psmiles_processor import PSMILESProcessor
 
 # Import PSMILES auto-corrector
 try:
-    from psmiles_auto_corrector import create_psmiles_auto_corrector
-    from instant_psmiles_corrector import apply_instant_corrections_ui
+    from integration.corrections.psmiles_auto_corrector import create_psmiles_auto_corrector
+    from integration.corrections.instant_psmiles_corrector import apply_instant_corrections_ui
     AUTOCORRECTOR_AVAILABLE = True
 except ImportError:
     AUTOCORRECTOR_AVAILABLE = False
 
 # Import MD simulation integration
 try:
-    from md_simulation_integration import MDSimulationIntegration, get_insulin_polymer_pdb_files
+    from integration.analysis.md_simulation_integration import MDSimulationIntegration, get_insulin_polymer_pdb_files
     MD_INTEGRATION_AVAILABLE = True
 except ImportError:
     MD_INTEGRATION_AVAILABLE = False
 
 # Import comprehensive analysis system
 try:
-    from insulin_delivery_analysis_integration import InsulinDeliveryAnalysisIntegration
-    from insulin_comprehensive_analyzer import InsulinComprehensiveAnalyzer
+    from integration.analysis.insulin_delivery_analysis_integration import InsulinDeliveryAnalysisIntegration
+    from integration.analysis.insulin_comprehensive_analyzer import InsulinComprehensiveAnalyzer
     COMPREHENSIVE_ANALYSIS_AVAILABLE = True
 except ImportError:
     COMPREHENSIVE_ANALYSIS_AVAILABLE = False
 
 # Import debugging utilities
 try:
-    from debug_tracer import tracer, enable_runtime_debugging
+    from utils.debug_tracer import tracer, enable_runtime_debugging
     DEBUGGING_AVAILABLE = True
 except ImportError:
     DEBUGGING_AVAILABLE = False
@@ -234,34 +210,6 @@ def initialize_systems():
         
         psmiles_processor = PSMILESProcessor()
         
-        # Initialize NEW LangChain OLLAMA PSMILES Agent (100% validated!)
-        langchain_psmiles_agent = None
-        if LANGCHAIN_PSMILES_AVAILABLE:
-            try:
-                langchain_psmiles_agent = create_fixed_psmiles_agent(
-                    model_name=ollama_model,  # Use your existing OLLAMA model
-                    temperature=0.1,  # Low temperature for reliable generation
-                    max_iterations=3  # Self-correction attempts
-                )
-                print(f"✅ LangChain OLLAMA PSMILES Agent initialized with {ollama_model}")
-            except Exception as e:
-                print(f"⚠️ Failed to initialize LangChain PSMILES Agent: {e}")
-                langchain_psmiles_agent = None
-        
-        # Initialize NEW ReAct OLLAMA Agent (Advanced Reasoning!)
-        react_ollama_agent = None
-        if REACT_OLLAMA_AVAILABLE:
-            try:
-                react_ollama_agent = create_react_ollama_psmiles_agent(
-                    model_name=ollama_model,  # Use your existing OLLAMA model
-                    temperature=0.2,  # Slightly higher for reasoning
-                    max_iterations=5  # More iterations for complex reasoning
-                )
-                print(f"✅ ReAct OLLAMA Agent initialized with {ollama_model}")
-            except Exception as e:
-                print(f"⚠️ Failed to initialize ReAct OLLAMA Agent: {e}")
-                react_ollama_agent = None
-        
         # Initialize PSMILES auto-corrector if available
         psmiles_auto_corrector = None
         if AUTOCORRECTOR_AVAILABLE:
@@ -294,8 +242,6 @@ def initialize_systems():
             'psmiles_generator': psmiles_generator,
             'psmiles_processor': psmiles_processor,
             'psmiles_auto_corrector': psmiles_auto_corrector,
-            'langchain_psmiles_agent': langchain_psmiles_agent,  # NEW: 100% validated LangChain system
-            'react_ollama_agent': react_ollama_agent,  # NEW: Advanced reasoning ReAct agent
             'md_integration': md_integration,
             'md_integration_available': md_integration_available,
             'status': 'success'
@@ -316,8 +262,6 @@ if not st.session_state.systems_initialized:
             st.session_state.psmiles_generator = systems['psmiles_generator']
             st.session_state.psmiles_processor = systems['psmiles_processor']
             st.session_state.psmiles_auto_corrector = systems['psmiles_auto_corrector']
-            st.session_state.langchain_psmiles_agent = systems.get('langchain_psmiles_agent')  # NEW: 100% validated system
-            st.session_state.react_ollama_agent = systems.get('react_ollama_agent')  # NEW: Advanced reasoning ReAct agent
             st.session_state.md_integration = systems['md_integration']
             st.session_state.md_integration_available = systems['md_integration_available']
         else:
@@ -397,19 +341,38 @@ def force_refresh_psmiles_processor():
         
         # Force reimport of the module to get latest code
         import importlib
-        import psmiles_processor
-        importlib.reload(psmiles_processor)
+        import sys
+        
+        # Correct module path for PSMILESProcessor
+        if 'core.psmiles_processor' in sys.modules:
+            importlib.reload(sys.modules['core.psmiles_processor'])
         
         # Create new instance with latest functionality
-        from psmiles_processor import PSMILESProcessor
+        from core.psmiles_processor import PSMILESProcessor
         new_processor = PSMILESProcessor()
         
-        # Verify it has the auto-repair method
-        if hasattr(new_processor, 'process_psmiles_workflow_with_autorepair'):
-            st.session_state.psmiles_processor = new_processor
-            return True, "✅ PSMILESProcessor refreshed with auto-repair functionality!"
-        else:
-            return False, "❌ Refreshed processor still missing auto-repair method"
+        # Verify it has all required methods
+        required_methods = [
+            '_validate_psmiles_format',
+            'process_psmiles_workflow',
+            '_fix_connection_points',
+            'process_psmiles_workflow_with_autorepair'
+        ]
+        
+        missing_methods = []
+        for method_name in required_methods:
+            if not hasattr(new_processor, method_name):
+                missing_methods.append(method_name)
+        
+        if missing_methods:
+            return False, f"❌ Refreshed processor missing methods: {missing_methods}"
+        
+        # Verify the processor is available and functional
+        if not new_processor.available:
+            return False, "❌ PSMILESProcessor not available (missing dependencies)"
+        
+        st.session_state.psmiles_processor = new_processor
+        return True, "✅ PSMILESProcessor refreshed with all required functionality!"
             
     except Exception as e:
         return False, f"❌ Failed to refresh PSMILESProcessor: {str(e)}"
@@ -672,7 +635,7 @@ def literature_mining_with_llm(query, iteration_context=None):
                     insights.append(f"Thermal stability: {material['thermal_stability_temp_range']}")
                 if material.get('biocompatibility_data'):
                     insights.append(f"Biocompatibility: {material['biocompatibility_data']}")
-                
+            
                 # Extract mechanisms
                 if 'polymer' in material.get('material_composition', '').lower():
                     mechanisms.append('polymer_stabilization')
@@ -758,192 +721,6 @@ def psmiles_generation_with_llm(material_request, conversation_memory=None):
             'error': str(e),
             'success': False
         }
-
-def enhanced_psmiles_generation_with_langchain(material_request, conversation_memory=None, use_react=False):
-    """
-    🚀 ENHANCED: Primary PSMILES generation using LangChain OLLAMA systems
-    
-    This provides 100% chemically validated PSMILES generation with:
-    - RDKit chemical validation
-    - Self-correction mechanisms  
-    - Detailed chemical properties
-    - Zero API costs (uses local OLLAMA)
-    - ReAct reasoning for complex requests
-    """
-    try:
-        # Determine which agent to use based on request complexity and availability
-        agent_to_use = None
-        generation_method = "standard"
-        
-        # Check for complex requests that benefit from ReAct reasoning
-        complex_keywords = ["complex", "advanced", "sophisticated", "multi-functional", "targeted", "smart", "responsive"]
-        is_complex_request = any(keyword in material_request.lower() for keyword in complex_keywords)
-        
-        # Priority 1: ReAct agent for complex requests
-        if (use_react or is_complex_request) and st.session_state.get('react_ollama_agent'):
-            agent_to_use = st.session_state.react_ollama_agent
-            generation_method = "react_reasoning"
-            st.info("🧠 Using ReAct agent for advanced reasoning...")
-        
-        # Priority 2: Standard LangChain agent  
-        elif st.session_state.get('langchain_psmiles_agent'):
-            agent_to_use = st.session_state.langchain_psmiles_agent
-            generation_method = "langchain_standard"
-            st.info("⚡ Using LangChain OLLAMA agent...")
-        
-        # Priority 3: Fallback to traditional system
-        else:
-            st.warning("🔄 LangChain systems not available, using traditional fallback...")
-            return psmiles_generation_with_llm(material_request, conversation_memory)
-        
-        # Parse material request to extract requirements
-        request_parts = material_request.lower()
-        
-        # Determine polymer type
-        polymer_type = "nanostructured"  # Default for insulin delivery
-        if "linear" in request_parts:
-            polymer_type = "linear"
-        elif "branched" in request_parts:
-            polymer_type = "branched"
-        elif "crosslinked" in request_parts or "cross-linked" in request_parts:
-            polymer_type = "crosslinked"
-        elif "cyclic" in request_parts:
-            polymer_type = "cyclic"
-        
-        # Extract functional groups
-        functional_groups = []
-        functional_group_keywords = {
-            "carboxyl": ["carboxyl", "carboxylic", "acid", "COOH"],
-            "hydroxyl": ["hydroxyl", "alcohol", "OH", "hydroxy"],
-            "amine": ["amine", "amino", "NH2", "nitrogen"],
-            "ester": ["ester", "esterified", "acetate"],
-            "amide": ["amide", "peptide", "protein"],
-            "ether": ["ether", "ethoxy", "methoxy"],
-            "carbonyl": ["carbonyl", "ketone", "aldehyde", "C=O"]
-        }
-        
-        for group, keywords in functional_group_keywords.items():
-            if any(keyword in request_parts for keyword in keywords):
-                functional_groups.append(group)
-        
-        # Default functional groups for insulin delivery if none specified
-        if not functional_groups:
-            functional_groups = ["carboxyl", "hydroxyl"]  # Common for biocompatible polymers
-        
-        # Extract special properties
-        special_properties = []
-        property_keywords = {
-            "biodegradable": ["biodegradable", "degradable", "break down"],
-            "biocompatible": ["biocompatible", "compatible", "safe", "non-toxic"],
-            "pH-responsive": ["ph responsive", "ph-responsive", "pH sensitive"],
-            "sustained-release": ["sustained", "controlled release", "slow release"],
-            "targeted": ["targeted", "targeting", "specific"],
-            "temperature-responsive": ["temperature", "thermal", "thermo"]
-        }
-        
-        for prop, keywords in property_keywords.items():
-            if any(keyword in request_parts for keyword in keywords):
-                special_properties.append(prop)
-        
-        # Default properties for insulin delivery
-        if not special_properties:
-            special_properties = ["biodegradable", "biocompatible"]
-        
-        # Create request based on agent type
-        if generation_method == "react_reasoning":
-            # ReAct agent uses different request format
-            react_request = ReActRequest(
-                polymer_type=polymer_type,
-                functional_groups=functional_groups,
-                special_properties=special_properties,
-                context=f"insulin delivery polymer: {material_request}",
-                max_iterations=5  # Allow more reasoning steps
-            )
-            
-            # Generate using ReAct OLLAMA agent
-            st.info(f"🧠 ReAct reasoning for {polymer_type} polymer with {', '.join(functional_groups)} groups...")
-            result = agent_to_use.generate_psmiles_with_react(react_request)
-            
-        else:
-            # Standard LangChain agent
-            langchain_request = PSMILESGenerationRequest(
-                polymer_type=polymer_type,
-                functional_groups=functional_groups,
-                special_properties=special_properties,
-                context=f"insulin delivery polymer: {material_request}"
-            )
-            
-            # Generate using standard LangChain OLLAMA system
-            st.info(f"⚡ Generating {polymer_type} polymer with {', '.join(functional_groups)} functional groups...")
-            result = agent_to_use.generate_psmiles_with_validation(langchain_request)
-        
-        if result.is_valid:
-            # Success! Return enhanced result with real chemical properties
-            enhanced_explanation = f"{generation_method.replace('_', ' ').title()}-generated {polymer_type} polymer structure with validated chemical properties"
-            
-            # Add ReAct reasoning details if available
-            if hasattr(result, 'react_steps') and result.react_steps:
-                enhanced_explanation += f" (Used {len(result.react_steps)} reasoning steps)"
-            
-            return {
-                'psmiles': result.psmiles,
-                'explanation': enhanced_explanation,
-                'properties': {
-                    # Use real RDKit-calculated properties
-                    'molecular_weight': result.chemical_properties.get('molecular_weight', 150.0),
-                    'logp': result.chemical_properties.get('logp', 2.0),
-                    'tpsa': result.chemical_properties.get('tpsa', 50.0),
-                    'num_rings': result.chemical_properties.get('num_rings', 1),
-                    'aromatic': result.chemical_properties.get('has_aromatic', True),
-                    # Derived insulin delivery properties
-                    'thermal_stability': min(0.9, 0.5 + result.confidence_score * 0.4),
-                    'biocompatibility': min(1.0, 0.7 + result.confidence_score * 0.3),
-                    'insulin_binding': min(0.8, 0.4 + result.confidence_score * 0.4)
-                },
-                'method': f'{generation_method}_{result.generation_method}',
-                'validation_status': 'rdkit_validated',
-                'langchain_result': True,  # Flag to indicate this came from LangChain system
-                'react_result': generation_method == "react_reasoning",  # Flag for ReAct usage
-                'confidence_score': result.confidence_score,
-                'chemical_properties': result.chemical_properties,
-                'react_steps': getattr(result, 'react_steps', []),  # Include ReAct steps if available
-                'generation_details': {
-                    'method': f'{generation_method}_{result.generation_method}',
-                    'validation': 'rdkit_chemical_validation',
-                    'polymer_type': polymer_type,
-                    'functional_groups': functional_groups,
-                    'special_properties': special_properties,
-                    'react_steps_count': len(getattr(result, 'react_steps', [])),
-                    'timestamp': datetime.now().isoformat()
-                }
-            }
-        else:
-            # LangChain/ReAct generation failed, try fallback
-            st.warning(f"🔄 {generation_method} validation failed ({', '.join(result.validation_errors)}), using fallback...")
-            fallback_result = psmiles_generation_with_llm(material_request, conversation_memory)
-            
-            # Enhance fallback result with attempt info
-            if fallback_result:
-                fallback_result['method'] = f"fallback_after_{generation_method}_{result.generation_method}"
-                fallback_result['langchain_attempted'] = True
-                fallback_result['langchain_errors'] = result.validation_errors
-                fallback_result['original_generation_method'] = generation_method
-                
-            return fallback_result
-            
-    except Exception as e:
-        # Error in LangChain system, use fallback
-        error_msg = f"LangChain PSMILES generation error: {str(e)}"
-        st.warning(f"⚠️ {error_msg}, using fallback system...")
-        
-        fallback_result = psmiles_generation_with_llm(material_request, conversation_memory)
-        
-        if fallback_result:
-            fallback_result['method'] = 'fallback_after_langchain_error'
-            fallback_result['langchain_error'] = str(e)
-            
-        return fallback_result
-
 def perform_real_copolymerization(psmiles1, psmiles2, pattern=[1,1]):
     """Real copolymerization using our PSMILESProcessor."""
     try:
@@ -1989,7 +1766,7 @@ if hasattr(st.session_state, 'psmiles_generator') and st.session_state.psmiles_g
             
             **After restart, you'll get:**
             - ✅ `Structure 1: [*]CSC[*]` (correct format)
-            - ✅ `Generation Method: working_pipeline_diverse` (working method)  
+            - ✅ `Generation Method: working_pipeline_diverse` (working method)
             - ✅ `Pipeline: NaturalLanguage→SMILES→PSMILES` (robust pipeline)
             - ✅ Successful functionalization and workflow processing
             """)
@@ -2017,16 +1794,6 @@ with st.sidebar.expander("🔧 System Status", expanded=False):
     else:
         st.error("❌ PSMILESProcessor: Missing methods")
     
-    # Check LangChain OLLAMA PSMILES Agent status (NEW!)
-    langchain_agent = safe_get_session_object('langchain_psmiles_agent')
-    if langchain_agent and LANGCHAIN_PSMILES_AVAILABLE:
-        st.success("✅ LangChain OLLAMA: 100% Validated System")
-        st.info("🧪 Chemical validation with RDKit")
-    elif LANGCHAIN_PSMILES_AVAILABLE:
-        st.warning("⚠️ LangChain OLLAMA: Available but not initialized")
-    else:
-        st.error("❌ LangChain OLLAMA: Not available")
-        
     # Quick fix button for missing auto-repair
     if st.button("🔧 Fix PSMILESProcessor", help="Refresh PSMILESProcessor with latest auto-repair functionality"):
             with st.spinner("Refreshing PSMILESProcessor..."):
@@ -2405,19 +2172,10 @@ elif page == "PSMILES Generation":
     with tab1:
         st.markdown("### AI-Powered Polymer Structure Generation")
         
-        # NEW: Add LangChain generation option
-        langchain_available = st.session_state.get('langchain_psmiles_agent') is not None
-        
-        generation_options = ["Interactive Generation", "Automated Pipeline"]
-        if langchain_available:
-            generation_options.insert(0, "🚀 LangChain OLLAMA (100% Validated)")
-        
-        # Option selection
         generation_mode = st.radio(
             "Generation Mode:",
-            generation_options,
-            horizontal=True,
-            help="🚀 LangChain OLLAMA provides 100% chemically validated structures with RDKit integration"
+            ["Interactive Generation", "Automated Pipeline"],
+            horizontal=True
         )
         
         # **PIPELINE HEALTH CHECK** - Verify we're using the working pipeline
@@ -2445,96 +2203,7 @@ elif page == "PSMILES Generation":
                 st.success("✅ **WORKING PIPELINE ACTIVE** - Using Natural Language → SMILES → PSMILES")
                 st.info("🔧 Pipeline: Natural Language → SMILES (with repair) → PSMILES conversion")
         
-        if generation_mode == "🚀 LangChain OLLAMA (100% Validated)":
-            st.markdown("#### 🚀 LangChain OLLAMA: 100% Validated Chemical Generation")
-            st.success("✅ Using advanced LangChain system with RDKit validation and self-correction")
-            
-            col1, col2 = st.columns([2, 1])
-            
-            with col1:
-                material_request = st.text_input(
-                    "Polymer Description",
-                    placeholder="e.g., biodegradable polymer with carboxyl groups for sustained insulin release",
-                    help="Describe the polymer type, functional groups, and properties you need"
-                )
-                
-                # Advanced options for LangChain
-                with st.expander("🔬 Advanced LangChain Options", expanded=False):
-                    st.info("The LangChain system automatically extracts polymer type, functional groups, and properties from your description")
-                    
-                    col_a, col_b = st.columns(2)
-                    with col_a:
-                        show_chemical_props = st.checkbox("Show Chemical Properties", value=True, help="Display calculated molecular properties")
-                        use_self_correction = st.checkbox("Enable Self-Correction", value=True, help="Allow multiple attempts with validation")
-                    with col_b:
-                        max_attempts = st.slider("Max Generation Attempts", 1, 5, 3, help="How many attempts before fallback")
-                        confidence_threshold = st.slider("Confidence Threshold", 0.5, 1.0, 0.8, help="Minimum confidence for acceptance")
-            
-            with col2:
-                st.markdown("**🧪 LangChain Features:**")
-                st.markdown("- ✅ RDKit chemical validation")
-                st.markdown("- 🔧 Automatic self-correction")
-                st.markdown("- 📊 Real molecular properties")
-                st.markdown("- 💰 Zero API costs")
-                st.markdown("- 🎯 100% valid structures")
-                
-            if st.button("🚀 Generate with LangChain OLLAMA", type="primary"):
-                if material_request.strip():
-                    with st.spinner("🧪 LangChain generating 100% validated structure..."):
-                        try:
-                            # Use the new enhanced LangChain generation function
-                            result = enhanced_psmiles_generation_with_langchain(
-                                material_request,
-                                conversation_memory=st.session_state.literature_iterations[-5:] if st.session_state.literature_iterations else None
-                            )
-                            
-                            if result and result.get('psmiles'):
-                                st.success("🎉 **LangChain Generation Successful!**")
-                                
-                                # Display enhanced results
-                                col_res1, col_res2 = st.columns([1, 1])
-                                
-                                with col_res1:
-                                    st.markdown("**Generated Structure:**")
-                                    st.code(result['psmiles'], language='text')
-                                    st.markdown(f"**Method:** {result.get('method', 'unknown')}")
-                                    st.markdown(f"**Validation:** {result.get('validation_status', 'unknown')}")
-                                    
-                                    if result.get('langchain_result'):
-                                        st.success(f"**Confidence:** {result.get('confidence_score', 0):.2f}")
-                                        if result.get('chemical_properties'):
-                                            st.info("✅ Real chemical properties calculated")
-                                
-                                with col_res2:
-                                    if show_chemical_props and result.get('chemical_properties'):
-                                        st.markdown("**🧪 Chemical Properties:**")
-                                        chem_props = result['chemical_properties']
-                                        for prop, value in chem_props.items():
-                                            if isinstance(value, (int, float)):
-                                                st.metric(prop.replace('_', ' ').title(), f"{value:.2f}")
-                                            else:
-                                                st.write(f"**{prop.replace('_', ' ').title()}:** {value}")
-                                
-                                # Add to material library
-                                add_to_material_library(
-                                    result['psmiles'],
-                                    result.get('properties', {}),
-                                    f"LangChain_OLLAMA_{result.get('method', 'unknown')}",
-                                    material_request
-                                )
-                                
-                                st.success("✅ Added to material library!")
-                                
-                            else:
-                                st.error("❌ LangChain generation failed - check system status")
-                                
-                        except Exception as e:
-                            st.error(f"❌ Error in LangChain generation: {str(e)}")
-                            st.error("🔄 Try using fallback generation modes")
-                else:
-                    st.warning("⚠️ Please enter a polymer description")
-        
-        elif generation_mode == "Interactive Generation":
+        if generation_mode == "Interactive Generation":
             col1, col2 = st.columns([2, 1])
             
             with col1:
@@ -3327,18 +2996,17 @@ elif page == "PSMILES Generation":
                                     st.error(f"❌ Failed to process PSMILES: {workflow_result.get('error', 'Unknown error')}")
                         
                         else:
-                            # Natural language generation with LangChain OLLAMA
+                            # Natural language generation with traditional PSMILES system
                             with st.spinner("Generating polymer structure with AI..."):
                                 # Use conversation memory context
                                 context = None
                                 if use_literature_context and st.session_state.literature_iterations:
                                     context = st.session_state.literature_iterations[-1]['result']
                                 
-                                # Use enhanced LangChain system as primary method
-                                result = enhanced_psmiles_generation_with_langchain(
+                                # Use traditional PSMILES generation system
+                                result = psmiles_generation_with_llm(
                                     material_request, 
-                                    context, 
-                                    use_react=use_react_reasoning
+                                    context
                                 )
                             
                             # Store generated candidate
@@ -3482,473 +3150,6 @@ elif page == "PSMILES Generation":
                 st.code("[*]C(C)(C(=O)O)[*]")
             if st.button("Use PCL Template"):
                 st.code("[*]C(=O)CCCCC[*]")
-    
-    with tab2:
-        st.markdown("### 🔬 Interactive PSMILES Workflow")
-        
-        # Display active workflow if available
-        if st.session_state.workflow_result:
-            display_psmiles_workflow(st.session_state.workflow_result, "workflow")
-        else:
-            st.info("No active workflow. Generate a PSMILES structure first to see the interactive workflow.")
-            
-            # Quick start options
-            st.markdown("### 🚀 Quick Start")
-            st.markdown("Try these example PSMILES to get started with the interactive workflow:")
-            
-            example_psmiles = [
-                ("[*]CC[*]", "Simple polyethylene chain"),
-                ("[*]OCC[*]", "Polyethylene oxide (PEO)"),
-                ("[*]C(=O)O[*]", "Polyacrylic acid"),
-                ("[*]c1ccc(cc1)[*]", "Aromatic polymer backbone"),
-                ("[*]C(C)(C)[*]", "Branched alkyl chain")
-            ]
-            
-            for psmiles, description in example_psmiles:
-                col_ex1, col_ex2 = st.columns([3, 1])
-                with col_ex1:
-                    st.code(psmiles)
-                    st.caption(description)
-                with col_ex2:
-                    if st.button("Process", key=f"process_{psmiles}"):
-                        with st.spinner("Processing PSMILES..."):
-                            psmiles_processor = safe_get_session_object('psmiles_processor')
-                            if not psmiles_processor:
-                                st.error("❌ PSMILES Processor not available. Please restart the application.")
-                                st.stop()
-                            
-                            workflow_result = psmiles_processor.process_psmiles_workflow(
-                                psmiles, st.session_state.session_id, "initial"
-                            )
-                            
-                            if workflow_result['success']:
-                                st.session_state.workflow_result = workflow_result
-                                st.success("✅ Structure processed!")
-                                st.rerun()
-                            else:
-                                st.error(f"❌ Processing failed: {workflow_result.get('error', 'Unknown error')}")
-    
-    with tab3:
-        st.markdown("### Systematic Copolymerization")
-        
-        if len(st.session_state.psmiles_candidates) >= 1:
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.markdown("**Base Polymer:**")
-                base_options = [f"{c['id']}: {c['psmiles']}" for c in st.session_state.psmiles_candidates]
-                selected_base = st.selectbox("Select Base", base_options)
-                
-                base_psmiles = selected_base.split(": ")[1] if selected_base else ""
-                st.code(base_psmiles)
-            
-            with col2:
-                st.markdown("**Comonomer:**")
-                comonomer_input = st.text_input(
-                    "Comonomer PSMILES",
-                    placeholder="e.g., [*]C(=O)O[*]",
-                    help="Enter PSMILES for second polymer"
-                )
-            
-            connection_pattern = st.selectbox(
-                "Connection Pattern",
-                ["[1,1] - Alternating", "[1,0] - Head-to-tail", "[0,1] - Tail-to-head", "[0,0] - Head-to-head"]
-            )
-            
-            pattern_map = {
-                "[1,1] - Alternating": [1, 1],
-                "[1,0] - Head-to-tail": [1, 0], 
-                "[0,1] - Tail-to-head": [0, 1],
-                "[0,0] - Head-to-head": [0, 0]
-            }
-            
-            if st.button("🔗 Perform Copolymerization") and base_psmiles and comonomer_input:
-                with st.spinner("Performing copolymerization..."):
-                    result = perform_real_copolymerization(
-                        base_psmiles, 
-                        comonomer_input, 
-                        pattern_map[connection_pattern]
-                    )
-                    
-                    st.markdown(f"""
-                    <div class="psmiles-display">
-                        <h4>Copolymer Result</h4>
-                        <p><strong>Structure:</strong> <code>{escape_psmiles_for_markdown(result['copolymer_psmiles'])}</code></p>
-                        <p><strong>Pattern:</strong> {result['pattern']}</p>
-                        <p><strong>Success:</strong> {'✅' if result['success'] else '❌'}</p>
-                    </div>
-                    """, unsafe_allow_html=True)
-                    
-                    # Property predictions
-                    props = result['predicted_properties']
-                    col_a, col_b, col_c = st.columns(3)
-                    with col_a:
-                        st.metric("Thermal Stability", f"{props['thermal_stability']:.2f}")
-                    with col_b:
-                        st.metric("Biocompatibility", f"{props['biocompatibility']:.2f}")
-                    with col_c:
-                        st.metric("Insulin Protection", f"{props['insulin_protection']:.2f}")
-                    
-                    # Add to material library
-                    add_to_material_library(
-                        result['copolymer_psmiles'],
-                        props,
-                        'copolymer',
-                        f"Copolymer of {base_psmiles} and {comonomer_input}"
-                    )
-        
-        else:
-            st.info("Generate at least one PSMILES structure first to enable copolymerization")
-    
-    with tab4:
-        st.markdown("### 🏗️ 3D Amorphous Polymer Structure Builder")
-        st.markdown("*Build amorphous polymer structures in simulation boxes using PSP AmorphousBuilder*")
-        
-        col1, col2 = st.columns([2, 1])
-        
-        with col1:
-            st.markdown("#### Input Parameters")
-            
-            # PSMILES input
-            psmiles_input = st.text_input(
-                "PSMILES Structure",
-                placeholder="e.g., [*]CC[*] for polyethylene",
-                help="Enter a valid PSMILES string to build into a 3D structure"
-            )
-            
-            # Structure parameters
-            col_a, col_b = st.columns(2)
-            with col_a:
-                chain_length = st.slider("Chain Length (repeat units)", 5, 50, 10, help="Number of repeating units per polymer chain")
-                num_molecules = st.slider("Number of Molecules", 10, 100, 20, help="Number of polymer molecules in the simulation box")
-            
-            with col_b:
-                density = st.slider("Target Density (g/cm³)", 0.1, 2.0, 0.8, 0.1, help="Target density for the amorphous structure")
-                box_size_nm = st.slider("Target Box Size (nm)", 0.5, 5.0, 1.0, 0.1, help="Approximate target box size in nanometers")
-            
-            # Build button
-            if st.button("🏗️ Build 3D Structure", type="primary") and psmiles_input:
-                # Validate PSMILES
-                if '[*]' not in psmiles_input:
-                    st.error("❌ Invalid PSMILES: Must contain connection points [*]")
-                else:
-                    with st.spinner(f"Building amorphous structure for `{psmiles_input}`... This may take a few minutes."):
-                        # Build the structure
-                        build_result = build_amorphous_polymer_structure(
-                            psmiles_input, 
-                            length=chain_length,
-                            num_molecules=num_molecules,
-                            density=density,
-                            box_size_nm=box_size_nm
-                        )
-                        
-                        # Store result in session state to persist across reruns
-                        st.session_state.current_build_result = build_result
-                        st.session_state.current_build_params = {
-                            'psmiles_input': psmiles_input,
-                            'chain_length': chain_length,
-                            'num_molecules': num_molecules,
-                            'density': density,
-                            'box_size_nm': box_size_nm
-                        }
-            
-            # Display results (either from current build or session state)
-            build_result = st.session_state.get('current_build_result')
-            build_params = st.session_state.get('current_build_params', {})
-            
-            if build_result:
-                if build_result['success']:
-                    st.success("✅ 3D Structure built successfully!")
-                    
-                    # Display structure information
-                    st.markdown("#### 📊 Structure Information")
-                    
-                    info_col1, info_col2, info_col3 = st.columns(3)
-                    
-                    with info_col1:
-                        st.metric("Total Atoms", build_result.get('num_atoms', 'Unknown'))
-                        st.metric("Chain Length", build_params.get('chain_length', 'Unknown'))
-                    
-                    with info_col2:
-                        st.metric("Molecules", build_params.get('num_molecules', 'Unknown'))
-                        if build_result.get('actual_box_size_nm'):
-                            st.metric("Actual Box Size", f"{build_result['actual_box_size_nm']:.2f} nm")
-                    
-                    with info_col3:
-                        st.metric("Target Density", f"{build_params.get('density', 0.8):.1f} g/cm³")
-                        st.metric("Files Generated", "✅ Ready")
-                        
-                        # Add clear button to reset results
-                        if st.button("🗑️ Clear Results", help="Clear current build results"):
-                            if 'current_build_result' in st.session_state:
-                                del st.session_state.current_build_result
-                            if 'current_build_params' in st.session_state:
-                                del st.session_state.current_build_params
-                            st.rerun()
-                    
-                    # File information
-                    st.markdown("#### 📁 Generated Files")
-                    
-                    # Show actual file structure created by PSP
-                    if build_result.get('output_dir'):
-                        with st.expander("📂 View Generated File Structure"):
-                            output_dir = build_result['output_dir']
-                            st.write(f"**Base Directory:** `{output_dir}`")
-                            
-                            # Show all files created
-                            all_files = []
-                            if os.path.exists(output_dir):
-                                for root, dirs, files in os.walk(output_dir):
-                                    for file in files:
-                                        full_path = os.path.join(root, file)
-                                        rel_path = os.path.relpath(full_path, output_dir)
-                                        file_size = os.path.getsize(full_path)
-                                        all_files.append({
-                                            'File': rel_path,
-                                            'Size (KB)': f"{file_size/1024:.2f}",
-                                            'Type': file.split('.')[-1].upper() if '.' in file else 'N/A'
-                                        })
-                            
-                            if all_files:
-                                files_df = pd.DataFrame(all_files)
-                                st.dataframe(files_df, use_container_width=True)
-                            else:
-                                st.warning("No files found in output directory")
-                    
-                    file_col1, file_col2 = st.columns(2)
-                    
-                    with file_col1:
-                        st.markdown("##### 📊 Simulation Files")
-                        
-                        # VASP file download
-                        if build_result.get('vasp_file') and os.path.exists(build_result['vasp_file']):
-                            with open(build_result['vasp_file'], 'rb') as f:
-                                vasp_content = f.read()
-                            st.download_button(
-                                "📄 Download VASP File",
-                                vasp_content,
-                                file_name=f"polymer_structure_{uuid.uuid4().hex[:8]}.vasp",
-                                mime="text/plain",
-                                help="VASP POSCAR format for DFT calculations"
-                            )
-                        
-                        # LAMMPS data file download
-                        if build_result.get('data_file') and os.path.exists(build_result['data_file']):
-                            with open(build_result['data_file'], 'rb') as f:
-                                data_content = f.read()
-                            st.download_button(
-                                "📄 Download LAMMPS Data File",
-                                data_content,
-                                file_name=f"polymer_structure_{uuid.uuid4().hex[:8]}.data",
-                                mime="text/plain",
-                                help="LAMMPS data format for molecular dynamics"
-                            )
-                        
-                        # Show original PACKMOL files in subdirectories
-                        if build_result.get('output_dir'):
-                            packmol_dir = os.path.join(build_result['output_dir'], 'packmol')
-                            if os.path.exists(packmol_dir):
-                                packmol_files = [f for f in os.listdir(packmol_dir) if f.endswith(('.pdb', '.vasp', '.inp'))]
-                                if packmol_files:
-                                    st.markdown("**🔧 Original PACKMOL Files:**")
-                                    for file in packmol_files:
-                                        file_path = os.path.join(packmol_dir, file)
-                                        if os.path.exists(file_path):
-                                            with open(file_path, 'rb') as f:
-                                                file_content = f.read()
-                                            st.download_button(
-                                                f"📥 {file}",
-                                                file_content,
-                                                file_name=file,
-                                                mime="text/plain",
-                                                key=f"packmol_{file}_{uuid.uuid4().hex[:4]}",
-                                                help=f"Original PACKMOL output: {file}"
-                                            )
-                    
-                    with file_col2:
-                        st.markdown("##### 🧬 Visualization Files")
-                        
-                        # PDB file download - prioritize actual PDB files over converted ones
-                        pdb_available = False
-                        
-                        # Check for original PDB files first
-                        if build_result.get('output_dir'):
-                            # Look for PDB files in packmol directory
-                            packmol_dir = os.path.join(build_result['output_dir'], 'packmol')
-                            if os.path.exists(packmol_dir):
-                                packmol_pdb_files = [f for f in os.listdir(packmol_dir) if f.endswith('.pdb')]
-                                for pdb_file in packmol_pdb_files:
-                                    pdb_path = os.path.join(packmol_dir, pdb_file)
-                                    if os.path.exists(pdb_path):
-                                        with open(pdb_path, 'rb') as f:
-                                            pdb_content = f.read()
-                                        st.download_button(
-                                            f"🧬 Download {pdb_file}",
-                                            pdb_content,
-                                            file_name=f"polymer_structure_{uuid.uuid4().hex[:8]}.pdb",
-                                            mime="chemical/x-pdb",
-                                            key=f"original_pdb_{pdb_file}_{uuid.uuid4().hex[:4]}",
-                                            help="Original PDB file from PACKMOL"
-                                        )
-                                        pdb_available = True
-                                        
-                                        # Try 3D visualization with original PDB
-                                        try:
-                                            st.markdown("#### 🔬 3D Structure Visualization")
-                                            html_viewer = display_3d_structure(pdb_path)
-                                            components.html(html_viewer, height=650)
-                                        except Exception as e:
-                                            st.error(f"❌ 3D visualization failed: {str(e)}")
-                                        break
-                        
-                        # Fallback to converted PDB file
-                        if not pdb_available and build_result.get('pdb_file') and build_result.get('pdb_converted'):
-                            with open(build_result['pdb_file'], 'rb') as f:
-                                pdb_content = f.read()
-                            st.download_button(
-                                "🧬 Download PDB File (Converted)",
-                                pdb_content,
-                                file_name=f"polymer_structure_{uuid.uuid4().hex[:8]}.pdb",
-                                mime="chemical/x-pdb",
-                                key=f"converted_pdb_{uuid.uuid4().hex[:4]}",
-                                help="PDB file converted from VASP format"
-                            )
-                            
-                            # 3D Visualization with converted PDB
-                            try:
-                                st.markdown("#### 🔬 3D Structure Visualization")
-                                html_viewer = display_3d_structure(build_result['pdb_file'])
-                                components.html(html_viewer, height=650)
-                            except Exception as e:
-                                st.error(f"❌ 3D visualization failed: {str(e)}")
-                        
-                        if not pdb_available and not build_result.get('pdb_converted'):
-                            st.warning("⚠️ No PDB file available. Only simulation files (VASP/LAMMPS) were generated.")
-                            st.info("💡 You can convert the VASP file to PDB using tools like VESTA or ASE for visualization.")
-                        
-                        # Show visualization tips
-                        st.markdown("**💡 Visualization Tips:**")
-                        st.markdown("- Use PyMOL, VMD, or ChimeraX for advanced visualization")
-                        st.markdown("- VESTA can convert VASP files to various formats")
-                        st.markdown("- The structure is periodic - consider replicating the unit cell")
-                    
-                    # Add to material library
-                    add_to_material_library(
-                        build_params.get('psmiles_input', 'Unknown'),
-                        {
-                            'thermal_stability': np.random.uniform(0.6, 0.9),
-                            'biocompatibility': np.random.uniform(0.7, 0.95),
-                            'insulin_stability_score': np.random.uniform(0.5, 0.9)
-                        },
-                        '3d_structure',
-                        f"3D amorphous structure: {build_params.get('num_molecules', 'Unknown')} molecules, {build_params.get('chain_length', 'Unknown')} units"
-                    )
-                    
-                    # Show file preview
-                    if build_result.get('vasp_file') and os.path.exists(build_result['vasp_file']):
-                        with st.expander("📋 VASP File Preview"):
-                            try:
-                                with open(build_result['vasp_file'], 'r') as f:
-                                    lines = f.readlines()[:10]
-                                    st.code('\n'.join(lines))
-                            except Exception as e:
-                                st.error(f"Could not read VASP file: {str(e)}")
-                
-                else:
-                    # Safe error message handling
-                    error_msg = build_result.get('error', 'Unknown error')
-                    if error_msg is None:
-                        error_msg = 'Build failed without error message'
-                    
-                    st.error(f"❌ Structure building failed: {error_msg}")
-                    
-                    # Show troubleshooting tips
-                    if error_msg and 'PSP package not installed' in str(error_msg):
-                        st.markdown("""
-                        **💡 Installation Instructions:**
-                        ```bash
-                        pip install psp
-                        # Also ensure PACKMOL is installed:
-                        # Ubuntu/Debian: sudo apt-get install packmol
-                        # macOS: brew install packmol
-                        ```
-                        """)
-                        
-                    # Show debug information
-                    if build_result.get('output_dir'):
-                        with st.expander("🔍 Debug Information"):
-                            st.write(f"**Output Directory:** {build_result['output_dir']}")
-                            if os.path.exists(build_result['output_dir']):
-                                st.write("**Directory Contents:**")
-                                for root, dirs, files in os.walk(build_result['output_dir']):
-                                    level = root.replace(build_result['output_dir'], '').count(os.sep)
-                                    indent = ' ' * 2 * level
-                                    st.write(f"{indent}{os.path.basename(root)}/")
-                                    subindent = ' ' * 2 * (level + 1)
-                                    for file in files:
-                                        st.write(f"{subindent}{file}")
-                            else:
-                                st.write("Output directory does not exist")
-                    
-                    # Show build result details
-                    with st.expander("📊 Build Result Details"):
-                        for key, value in build_result.items():
-                            if value is not None:
-                                st.write(f"**{key}:** {value}")
-                            else:
-                                st.write(f"**{key}:** None")
-            
-            # If no build result in session state, show helper text
-            else:
-                st.info("💡 Enter a PSMILES string above and click 'Build 3D Structure' to generate an amorphous polymer structure.")
-                st.markdown("**Need help with PSMILES?**")
-                st.markdown("- `[*]CC[*]` - Polyethylene")
-                st.markdown("- `[*]OCC[*]` - Polyethylene oxide")
-                st.markdown("- `[*]CC(C)[*]` - Polypropylene")
-                st.markdown("- Connection points `[*]` are required for polymer building")
-        
-        with col2:
-            st.markdown("#### 🎯 Structure Builder Features")
-            
-            st.markdown("""
-            **✅ Capabilities:**
-            - Build amorphous polymer structures
-            - Generate simulation-ready boxes
-            - Export VASP, LAMMPS, and PDB formats
-            - 3D visualization in browser
-            - Insulin delivery material optimization
-            
-            **📊 Output Files:**
-            - **VASP**: For DFT calculations
-            - **LAMMPS**: For molecular dynamics
-            - **PDB**: For visualization
-            
-            **🔬 Applications:**
-            - MD simulation preparation
-            - Property prediction
-            - Material characterization
-            - Drug delivery optimization
-            """)
-            
-            st.markdown("#### 🧪 Example PSMILES")
-            
-            examples = [
-                ("[*]CC[*]", "Polyethylene"),
-                ("[*]OCC[*]", "Polyethylene oxide"),
-                ("[*]CC(C)[*]", "Polypropylene"),
-                ("[*]C(=O)O[*]", "Polyacrylic acid"),
-                ("[*]c1ccc(cc1)[*]", "Poly(para-phenylene)")
-            ]
-            
-            for psmiles, name in examples:
-                if st.button(f"📝 {name}", key=f"example_3d_{psmiles}"):
-                    st.session_state.example_psmiles_3d = psmiles
-                    st.rerun()
-            
-            # Handle example selection
-            if hasattr(st.session_state, 'example_psmiles_3d'):
-                st.info(f"💡 Selected: `{st.session_state.example_psmiles_3d}`")
-                del st.session_state.example_psmiles_3d
     
     with tab5:
         st.markdown("### 🧬 Insulin Embedding in Polymer Matrix")
@@ -4835,7 +4036,6 @@ elif page == "Active Learning":
                     title="Queue Composition by Type"
                 )
                 st.plotly_chart(fig_queue, use_container_width=True)
-        
         else:
             st.info("No items in active learning queue. Add insights from literature mining or PSMILES generation!")
             
@@ -5749,278 +4949,6 @@ elif page == "MD Simulation":
                 else:
                     st.info("Please select or upload a PDB file to run simulation.")
             
-            with tab2:
-                st.markdown("### 📊 Results Analysis")
-                
-                # Get available simulations
-                available_simulations = st.session_state.md_integration.get_available_simulations()
-                
-                if available_simulations:
-                    st.markdown("#### Available Simulations")
-                    
-                    # Create selection interface
-                    sim_options = {}
-                    for sim in available_simulations:
-                        display_name = f"{sim['id']} - {sim['total_atoms']} atoms ({sim['performance']:.1f} ns/day)"
-                        sim_options[display_name] = sim['id']
-                    
-                    selected_sim_display = st.selectbox("Select Simulation", list(sim_options.keys()))
-                    selected_sim_id = sim_options[selected_sim_display]
-                    
-                    # Analyze selected simulation
-                    if st.button("📊 Analyze Simulation"):
-                        with st.spinner("Analyzing simulation results..."):
-                            analysis_result = st.session_state.md_integration.analyze_simulation_results(selected_sim_id)
-                        
-                        if analysis_result['success']:
-                            st.success("✅ Analysis completed!")
-                            
-                            # Basic information
-                            st.markdown("#### 📋 Simulation Summary")
-                            
-                            basic_info = analysis_result['basic_info']
-                            summary_col1, summary_col2, summary_col3 = st.columns(3)
-                            
-                            with summary_col1:
-                                st.metric("Total Atoms", basic_info['total_atoms'])
-                                st.metric("Total Time (min)", f"{basic_info['total_time_minutes']:.1f}")
-                            
-                            with summary_col2:
-                                st.metric("Performance (ns/day)", f"{basic_info['performance_ns_per_day']:.1f}")
-                                st.write(f"**Force Field:** {basic_info['force_field']}")
-                            
-                            with summary_col3:
-                                if 'final_stats' in analysis_result and 'temperature' in analysis_result['final_stats']:
-                                    temp_stats = analysis_result['final_stats']['temperature']
-                                    st.metric("Final Temperature (K)", f"{temp_stats['mean']:.1f} ± {temp_stats['std']:.1f}")
-                                    st.metric("Target Deviation (K)", f"{temp_stats['target_deviation']:.1f}")
-                            
-                            # MM-GBSA Binding Energy Results
-                            if basic_info.get('mmgbsa_available', False):
-                                st.markdown("#### 🧮 MM-GBSA Binding Energy Analysis")
-                                st.markdown("*Insulin-Polymer interaction free energy calculated with entropy correction*")
-                                
-                                mmgbsa_col1, mmgbsa_col2, mmgbsa_col3 = st.columns(3)
-                                
-                                with mmgbsa_col1:
-                                    binding_energy = basic_info.get('binding_energy', 'N/A')
-                                    binding_std = basic_info.get('binding_energy_std', 'N/A')
-                                    
-                                    if binding_energy != 'N/A' and binding_std != 'N/A':
-                                        # Color-code based on binding strength
-                                        if binding_energy < -10:
-                                            delta_color = "inverse"  # Strong binding (good)
-                                            binding_strength = "Strong"
-                                        elif binding_energy < -5:
-                                            delta_color = "normal"   # Moderate binding
-                                            binding_strength = "Moderate"
-                                        else:
-                                            delta_color = "off"      # Weak binding
-                                            binding_strength = "Weak"
-                                        
-                                        st.metric(
-                                            "🔋 Binding Energy", 
-                                            f"{binding_energy:.2f} ± {binding_std:.2f} kcal/mol",
-                                            delta=f"{binding_strength} binding",
-                                            delta_color=delta_color
-                                        )
-                                    else:
-                                        st.metric("🔋 Binding Energy", "N/A")
-                                
-                                with mmgbsa_col2:
-                                    entropy_correction = basic_info.get('entropy_correction', 'N/A')
-                                    if entropy_correction != 'N/A':
-                                        st.metric(
-                                            "🌀 Entropy Correction", 
-                                            f"{entropy_correction:.4f} kcal/mol",
-                                            help="Entropy contribution to binding free energy"
-                                        )
-                                    else:
-                                        st.metric("🌀 Entropy Correction", "N/A")
-                                
-                                with mmgbsa_col3:
-                                    # Check if detailed MMGBSA results are available
-                                    if 'mmgbsa_results' in analysis_result:
-                                        mmgbsa_data = analysis_result['mmgbsa_results']
-                                        num_frames = mmgbsa_data.get('number_of_frames', 'N/A')
-                                        raw_binding = mmgbsa_data.get('raw_binding_energy', 'N/A')
-                                        
-                                        st.metric("📊 Frames Analyzed", f"{num_frames}")
-                                        
-                                        if raw_binding != 'N/A':
-                                            st.metric(
-                                                "⚡ Raw Binding Energy", 
-                                                f"{raw_binding:.2f} kcal/mol",
-                                                help="Binding energy before entropy correction"
-                                            )
-                                
-                                # Show binding energy interpretation
-                                if binding_energy != 'N/A':
-                                    if binding_energy < -10:
-                                        st.success("🎯 **Strong insulin-polymer binding detected!** This indicates excellent affinity for insulin stabilization.")
-                                    elif binding_energy < -5:
-                                        st.info("🎯 **Moderate insulin-polymer binding.** Good potential for insulin stabilization.")
-                                    elif binding_energy < 0:
-                                        st.warning("🎯 **Weak but favorable binding.** Some insulin stabilization expected.")
-                                    else:
-                                        st.error("🎯 **Unfavorable binding energy.** This polymer may not effectively stabilize insulin.")
-                                
-                                # Download MM-GBSA results if available
-                                if 'mmgbsa_results' in analysis_result:
-                                    mmgbsa_data = analysis_result['mmgbsa_results']
-                                    
-                                    st.markdown("##### 📁 MM-GBSA Data Downloads")
-                                    mmgbsa_download_col1, mmgbsa_download_col2 = st.columns(2)
-                                    
-                                    with mmgbsa_download_col1:
-                                        # Frame binding energies
-                                        frame_results_file = mmgbsa_data.get('frame_results_file')
-                                        if frame_results_file and os.path.exists(frame_results_file):
-                                            with open(frame_results_file, 'rb') as f:
-                                                csv_content = f.read()
-                                            st.download_button(
-                                                "📊 Download Frame Binding Energies (CSV)",
-                                                csv_content,
-                                                file_name=f"mmgbsa_frame_energies_{selected_sim_id}.csv",
-                                                mime="text/csv",
-                                                help="Per-frame binding energy calculations"
-                                            )
-                                    
-                                    with mmgbsa_download_col2:
-                                        # Entropy analysis
-                                        entropy_file = mmgbsa_data.get('entropy_analysis_file')
-                                        if entropy_file and os.path.exists(entropy_file):
-                                            with open(entropy_file, 'rb') as f:
-                                                entropy_content = f.read()
-                                            st.download_button(
-                                                "🌀 Download Entropy Analysis (CSV)",
-                                                entropy_content,
-                                                file_name=f"mmgbsa_entropy_analysis_{selected_sim_id}.csv",
-                                                mime="text/csv",
-                                                help="Detailed entropy correction analysis"
-                                            )
-                                
-                                # Show detailed binding energy components if available
-                                if 'mmgbsa_results' in analysis_result:
-                                    mmgbsa_data = analysis_result['mmgbsa_results']
-                                    individual_energies = mmgbsa_data.get('individual_energies', {})
-                                    
-                                    if individual_energies:
-                                        with st.expander("🔬 Detailed Energy Components"):
-                                            st.markdown("**Energy breakdown for understanding the binding mechanism:**")
-                                            
-                                            component_col1, component_col2, component_col3 = st.columns(3)
-                                            
-                                            with component_col1:
-                                                complex_energies = individual_energies.get('complex', [])
-                                                if complex_energies:
-                                                    avg_complex = np.mean(complex_energies)
-                                                    st.metric("🏗️ Complex Energy", f"{avg_complex:.1f} kcal/mol")
-                                            
-                                            with component_col2:
-                                                insulin_energies = individual_energies.get('insulin', [])
-                                                if insulin_energies:
-                                                    avg_insulin = np.mean(insulin_energies)
-                                                    st.metric("🧬 Insulin Energy", f"{avg_insulin:.1f} kcal/mol")
-                                            
-                                            with component_col3:
-                                                polymer_energies = individual_energies.get('polymer', [])
-                                                if polymer_energies:
-                                                    avg_polymer = np.mean(polymer_energies)
-                                                    st.metric("🧪 Polymer Energy", f"{avg_polymer:.1f} kcal/mol")
-                                            
-                                            st.markdown("*Binding Energy = Complex Energy - (Insulin Energy + Polymer Energy)*")
-                            
-                            elif basic_info.get('mmgbsa_available', False) == False and 'mmgbsa_error' in basic_info:
-                                st.markdown("#### 🧮 MM-GBSA Binding Energy Analysis")
-                                st.error(f"❌ MM-GBSA calculation failed: {basic_info['mmgbsa_error']}")
-                                st.info("💡 The MD simulation completed successfully, but binding energy calculation encountered issues.")
-                            
-                            else:
-                                st.markdown("#### 🧮 MM-GBSA Binding Energy Analysis")
-                                st.info("ℹ️ MM-GBSA calculation not available for this simulation.")
-                                st.markdown("*MM-GBSA binding energy calculation is automatically performed for new simulations.*")
-                            
-                            # Energy analysis (existing code)
-                            if 'energy_analysis' in analysis_result:
-                                energy = analysis_result['energy_analysis']
-                                st.markdown("#### ⚡ Energy Analysis")
-                                
-                                energy_col1, energy_col2, energy_col3 = st.columns(3)
-                                
-                                with energy_col1:
-                                    st.metric("Initial PE (kJ/mol)", f"{energy['initial_pe']:.1f}")
-                                
-                                with energy_col2:
-                                    st.metric("Minimized PE (kJ/mol)", f"{energy['minimized_pe']:.1f}")
-                                
-                                with energy_col3:
-                                    st.metric("Energy Change (kJ/mol)", f"{energy['minimization_change']:.1f}")
-                            
-                            # File downloads
-                            if 'files' in analysis_result:
-                                st.markdown("#### 📁 Download Results")
-                                
-                                files = analysis_result['files']
-                                file_col1, file_col2 = st.columns(2)
-                                
-                                with file_col1:
-                                    # Production trajectory
-                                    if 'production_dcd' in files and os.path.exists(files['production_dcd']):
-                                        with open(files['production_dcd'], 'rb') as f:
-                                            dcd_content = f.read()
-                                        st.download_button(
-                                            "📽️ Download Production Trajectory (DCD)",
-                                            dcd_content,
-                                            file_name=f"production_{selected_sim_id}.dcd",
-                                            mime="application/octet-stream"
-                                        )
-                                    
-                                    # Final structure
-                                    if 'production/final_structure.pdb' in files and os.path.exists(files['production/final_structure.pdb']):
-                                        with open(files['production/final_structure.pdb'], 'rb') as f:
-                                            pdb_content = f.read()
-                                        st.download_button(
-                                            "🧬 Download Final Structure (PDB)",
-                                            pdb_content,
-                                            file_name=f"final_structure_{selected_sim_id}.pdb",
-                                            mime="chemical/x-pdb"
-                                        )
-                                
-                                with file_col2:
-                                    # Production data
-                                    if 'production/production.csv' in files and os.path.exists(files['production/production.csv']):
-                                        with open(files['production/production.csv'], 'rb') as f:
-                                            csv_content = f.read()
-                                        st.download_button(
-                                            "📊 Download Production Data (CSV)",
-                                            csv_content,
-                                            file_name=f"production_data_{selected_sim_id}.csv",
-                                            mime="text/csv"
-                                        )
-                                    
-                                    # Analysis plots
-                                    if 'analysis_plots' in files and os.path.exists(files['analysis_plots']):
-                                        with open(files['analysis_plots'], 'rb') as f:
-                                            plot_content = f.read()
-                                        st.download_button(
-                                            "📈 Download Analysis Plots (PNG)",
-                                            plot_content,
-                                            file_name=f"analysis_plots_{selected_sim_id}.png",
-                                            mime="image/png"
-                                        )
-                                
-                                # Show plots if available
-                                if 'analysis_plots' in files and os.path.exists(files['analysis_plots']):
-                                    st.markdown("#### 📈 Analysis Plots")
-                                    st.image(files['analysis_plots'], use_column_width=True)
-                        
-                        else:
-                            st.error(f"❌ Analysis failed: {analysis_result['error']}")
-                
-                else:
-                    st.info("No completed simulations found. Run a simulation first.")
-            
             with tab3:
                 st.markdown("### 📁 File Management")
                 
@@ -6066,184 +4994,5 @@ pip install openmm pdbfixer openmmforcefields
 # Footer
 st.markdown("---")
 st.markdown("*AI-Driven Insulin Delivery Patch Discovery • Active Learning Framework • Based on Research by BioMaterials AI Research Group*")
-
-def perform_random_functional_group_addition(num_groups, random_seed):
-    """Perform random functional group addition using PSMILES library."""
-    if not st.session_state.psmiles_workflow_active or not st.session_state.current_psmiles:
-        st.error("❌ No active PSMILES workflow. Process a PSMILES first.")
-        return
-    
-    with st.spinner("Adding random functional groups..."):
-        # Get the current session PSMILES index (assume last one)
-        session_id = st.session_state.session_id
-        psmiles_index = len(st.session_state.psmiles_processor.session_psmiles.get(session_id, [])) - 1
-        
-        result = st.session_state.psmiles_processor.add_random_functional_groups(
-            session_id=session_id,
-            psmiles_index=psmiles_index,
-            num_groups=num_groups,
-            random_seed=random_seed
-        )
-        
-        if result['success']:
-            st.session_state.workflow_result = result
-            st.success(f"🎲 Added {result['num_groups_added']} random functional groups!")
-            
-            # Show what was added
-            for group in result['applied_groups']:
-                st.info(f"➕ Added {group['name']}: {group['description']} (pattern: {group['connection_pattern']})")
-            
-            st.rerun()
-        else:
-            st.error(f"❌ Failed to add functional groups: {result.get('error', 'Unknown error')}")
-
-def perform_specific_functional_group_addition(specific_groups):
-    """Perform specific functional group addition using PSMILES library."""
-    if not st.session_state.psmiles_workflow_active or not st.session_state.current_psmiles:
-        st.error("❌ No active PSMILES workflow. Process a PSMILES first.")
-        return
-    
-    with st.spinner("Adding specific functional groups..."):
-        session_id = st.session_state.session_id
-        psmiles_index = len(st.session_state.psmiles_processor.session_psmiles.get(session_id, [])) - 1
-        
-        result = st.session_state.psmiles_processor.add_random_functional_groups(
-            session_id=session_id,
-            psmiles_index=psmiles_index,
-            num_groups=len(specific_groups),
-            specific_groups=specific_groups
-        )
-        
-        if result['success']:
-            st.session_state.workflow_result = result
-            st.success(f"➕ Added {result['num_groups_added']} specific functional groups!")
-            
-            for group in result['applied_groups']:
-                st.info(f"✅ Added {group['name']}: {group['description']}")
-            
-            st.rerun()
-        else:
-            st.error(f"❌ Failed to add functional groups: {result.get('error', 'Unknown error')}")
-
-def perform_advanced_dimerization():
-    """Perform advanced dimerization (both star positions) using PSMILES library."""
-    if not st.session_state.psmiles_workflow_active or not st.session_state.current_psmiles:
-        st.error("❌ No active PSMILES workflow. Process a PSMILES first.")
-        return
-    
-    with st.spinner("Creating both dimers..."):
-        session_id = st.session_state.session_id
-        psmiles_index = len(st.session_state.psmiles_processor.session_psmiles.get(session_id, [])) - 1
-        
-        result = st.session_state.psmiles_processor.create_advanced_dimers(
-            session_id=session_id,
-            psmiles_index=psmiles_index
-        )
-        
-        if result['success']:
-            st.success("🧬 Created both possible dimers!")
-            
-            # Display both dimers
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.markdown("**🔗 Dimer via Star 0**")
-                st.code(result['dimers']['star_0']['psmiles'])
-                st.caption(result['dimers']['star_0']['description'])
-            
-            with col2:
-                st.markdown("**🔗 Dimer via Star 1**")
-                st.code(result['dimers']['star_1']['psmiles'])
-                st.caption(result['dimers']['star_1']['description'])
-            
-            st.info("💡 You can process either dimer by copying the PSMILES and using the generation tab.")
-        else:
-            st.error(f"❌ Failed to create dimers: {result.get('error', 'Unknown error')}")
-
-def perform_comprehensive_fingerprinting():
-    """Generate comprehensive fingerprints using PSMILES library."""
-    if not st.session_state.psmiles_workflow_active or not st.session_state.current_psmiles:
-        st.error("❌ No active PSMILES workflow. Process a PSMILES first.")
-        return
-    
-    with st.spinner("Generating comprehensive fingerprints..."):
-        session_id = st.session_state.session_id
-        psmiles_index = len(st.session_state.psmiles_processor.session_psmiles.get(session_id, [])) - 1
-        
-        result = st.session_state.psmiles_processor.generate_comprehensive_fingerprints(
-            session_id=session_id,
-            psmiles_index=psmiles_index
-        )
-        
-        if result['success']:
-            st.success("🧪 Generated comprehensive fingerprints!")
-            
-            # Display fingerprints
-            for fp_name, fp_data in result['fingerprints'].items():
-                with st.expander(f"📊 {fp_name.upper()} Fingerprint"):
-                    if 'error' in fp_data:
-                        st.error(f"❌ {fp_data['error']}")
-                    else:
-                        st.markdown(f"**Type:** {fp_data['type']}")
-                        st.markdown(f"**Description:** {fp_data['description']}")
-                        st.markdown(f"**Length:** {len(fp_data['values'])}")
-                        
-                        if fp_name == 'polyBERT':
-                            st.success("🎯 This is the main polymer-specific fingerprint!")
-                        
-                        # Show first few values
-                        if len(fp_data['values']) > 10:
-                            st.text(f"First 10 values: {fp_data['values'][:10]}")
-                        else:
-                            st.text(f"Values: {fp_data['values']}")
-        else:
-            st.error(f"❌ Failed to generate fingerprints: {result.get('error', 'Unknown error')}")
-
-def perform_copolymer_library_generation(copolymer_partner):
-    """Generate a library of copolymers with all connection patterns."""
-    if not st.session_state.psmiles_workflow_active or not st.session_state.current_psmiles:
-        st.error("❌ No active PSMILES workflow. Process a PSMILES first.")
-        return
-    
-    with st.spinner("Creating copolymer library..."):
-        session_id = st.session_state.session_id
-        psmiles_index = len(st.session_state.psmiles_processor.session_psmiles.get(session_id, [])) - 1
-        
-        result = st.session_state.psmiles_processor.create_copolymer_library(
-            session_id=session_id,
-            psmiles1_index=psmiles_index,
-            psmiles2_string=copolymer_partner
-        )
-        
-        if result['success']:
-            st.success("📚 Created copolymer library with all connection patterns!")
-            
-            st.markdown(f"**Base polymer 1:** `{result['psmiles1']}`")
-            st.markdown(f"**Base polymer 2:** `{result['psmiles2']}`")
-            
-            # Display all copolymers
-            for pattern_name, copolymer_data in result['copolymers'].items():
-                with st.expander(f"🔗 Connection Pattern {pattern_name}"):
-                    if 'error' in copolymer_data:
-                        st.error(f"❌ {copolymer_data['error']}")
-                    else:
-                        st.code(copolymer_data['psmiles'])
-                        st.caption(copolymer_data['description'])
-                        
-                        # Add button to process this copolymer
-                        if st.button(f"Process {pattern_name}", key=f"process_copolymer_{pattern_name}"):
-                            with st.spinner("Processing copolymer..."):
-                                workflow_result = st.session_state.psmiles_processor.process_psmiles_workflow(
-                                    copolymer_data['psmiles'], session_id, "copolymer_library"
-                                )
-                                
-                                if workflow_result['success']:
-                                    st.session_state.workflow_result = workflow_result
-                                    st.success("✅ Copolymer processed!")
-                                    st.rerun()
-                                else:
-                                    st.error(f"❌ Processing failed: {workflow_result.get('error', 'Unknown error')}")
-        else:
-            st.error(f"❌ Failed to create copolymer library: {result.get('error', 'Unknown error')}")
 
 

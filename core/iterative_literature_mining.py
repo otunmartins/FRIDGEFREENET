@@ -7,7 +7,7 @@ import os
 from typing import List, Dict, Optional, Any
 from datetime import datetime
 
-from literature_mining_system import MaterialsLiteratureMiner
+from .literature_mining_system import MaterialsLiteratureMiner
 
 
 class IterativeLiteratureMiner(MaterialsLiteratureMiner):
