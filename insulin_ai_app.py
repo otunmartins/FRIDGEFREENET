@@ -2547,7 +2547,9 @@ elif page == "PSMILES Generation":
                 
                 # Show REAL results with SVG visualization
                 for i, candidate in enumerate(functionalized_candidates):
-                    with st.expander(f"Structure {i+1}: {candidate['functionalized']}", expanded=True):
+                    # **FIX STRUCTURE TITLE DISPLAY** - Ensure [*] format in title
+                    structure_title = candidate['functionalized'].replace('[]', '[*]') if candidate['functionalized'] else 'Unknown'
+                    with st.expander(f"Structure {i+1}: {structure_title}", expanded=True):
                         
                         # Process through PSMILES workflow to get SVG visualization
                         psmiles_to_visualize = candidate['functionalized']
