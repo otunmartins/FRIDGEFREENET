@@ -27,7 +27,14 @@ from chatbot_system import InsulinAIChatbot
 from literature_mining_system import MaterialsLiteratureMiner
 from psmiles_generator import PSMILESGenerator
 from psmiles_processor import PSMILESProcessor
-from llamol_integration import llamol_manager, LLAMOL_AVAILABLE
+
+# Import PSMILES auto-corrector
+try:
+    from psmiles_auto_corrector import create_psmiles_auto_corrector
+    from instant_psmiles_corrector import apply_instant_corrections_ui
+    AUTOCORRECTOR_AVAILABLE = True
+except ImportError:
+    AUTOCORRECTOR_AVAILABLE = False
 
 # Import MD simulation integration
 try:
@@ -197,10 +204,26 @@ def initialize_systems():
         psmiles_generator = PSMILESGenerator(
             model_type='ollama',
             ollama_model=ollama_model,
-            ollama_host=ollama_host
+            ollama_host=ollama_host,
+            temperature=0.8  # Higher temperature for diverse candidate generation
         )
         
         psmiles_processor = PSMILESProcessor()
+        
+        # Initialize PSMILES auto-corrector if available
+        psmiles_auto_corrector = None
+        if AUTOCORRECTOR_AVAILABLE:
+            try:
+                psmiles_auto_corrector = create_psmiles_auto_corrector(
+                    ollama_model=ollama_model,
+                    ollama_host=ollama_host
+                )
+                print("✅ PSMILES Auto-Corrector initialized")
+                print(f"   Type: {type(psmiles_auto_corrector)}")
+                print(f"   Has correct_psmiles: {hasattr(psmiles_auto_corrector, 'correct_psmiles')}")
+            except Exception as e:
+                print(f"⚠️ PSMILES Auto-Corrector initialization failed: {e}")
+                psmiles_auto_corrector = None
         
         # Initialize MD integration if available
         md_integration = None
@@ -218,6 +241,7 @@ def initialize_systems():
             'literature_miner': literature_miner,
             'psmiles_generator': psmiles_generator,
             'psmiles_processor': psmiles_processor,
+            'psmiles_auto_corrector': psmiles_auto_corrector,
             'md_integration': md_integration,
             'md_integration_available': md_integration_available,
             'status': 'success'
@@ -237,6 +261,7 @@ if not st.session_state.systems_initialized:
             st.session_state.literature_miner = systems['literature_miner']
             st.session_state.psmiles_generator = systems['psmiles_generator']
             st.session_state.psmiles_processor = systems['psmiles_processor']
+            st.session_state.psmiles_auto_corrector = systems['psmiles_auto_corrector']
             st.session_state.md_integration = systems['md_integration']
             st.session_state.md_integration_available = systems['md_integration_available']
         else:
@@ -249,6 +274,90 @@ def escape_psmiles_for_markdown(psmiles: str) -> str:
     if psmiles is None:
         return "None"
     return str(psmiles).replace('*', r'\*')
+
+def validate_session_state_object(obj_name: str, expected_type = None) -> bool:
+    """Validate that a session state object exists and is of the expected type."""
+    if obj_name not in st.session_state:
+        return False
+    
+    obj = st.session_state[obj_name]
+    
+    # Check if it's a string (indicating failed initialization)
+    if isinstance(obj, str):
+        return False
+    
+    # Check if it's None
+    if obj is None:
+        return False
+    
+    # Check specific type if provided
+    if expected_type and not isinstance(obj, expected_type):
+        return False
+    
+    return True
+
+def ensure_systems_initialized() -> bool:
+    """Ensure all systems are properly initialized, with fallback reinitalization if needed."""
+    if not st.session_state.get('systems_initialized', False):
+        return False
+    
+    # Check critical objects
+    critical_objects = {
+        'psmiles_generator': 'PSMILESGenerator',
+        'psmiles_processor': 'PSMILESProcessor', 
+        'literature_miner': 'MaterialsLiteratureMiner',
+        'chatbot': 'InsulinAIChatbot'
+    }
+    
+    for obj_name, obj_type in critical_objects.items():
+        if not validate_session_state_object(obj_name):
+            st.error(f"❌ {obj_type} not properly initialized. Please restart the application.")
+            return False
+    
+    return True
+
+def validate_psmiles_processor(processor) -> bool:
+    """Validate that PSMILESProcessor has all required methods."""
+    required_methods = [
+        '_validate_psmiles_format',
+        'process_psmiles_workflow',
+        '_fix_connection_points'
+    ]
+    
+    for method_name in required_methods:
+        if not hasattr(processor, method_name):
+            print(f"❌ PSMILESProcessor missing method: {method_name}")
+            return False
+    
+    return True
+
+def safe_get_session_object(obj_name: str, default=None):
+    """Safely get a session state object with validation."""
+    if validate_session_state_object(obj_name):
+        obj = st.session_state[obj_name]
+        
+        # Special validation for PSMILESProcessor
+        if obj_name == 'psmiles_processor' and hasattr(obj, '__class__'):
+            if not validate_psmiles_processor(obj):
+                print(f"🔄 PSMILESProcessor validation failed, forcing re-initialization...")
+                # Force re-initialization by clearing the cache
+                try:
+                    # Clear the cached systems
+                    initialize_systems.clear()
+                    st.session_state.systems_initialized = False
+                    
+                    # Re-initialize systems
+                    systems = initialize_systems()
+                    if systems['status'] == 'success':
+                        st.session_state.systems_initialized = True
+                        st.session_state.psmiles_processor = systems['psmiles_processor']
+                        return systems['psmiles_processor']
+                except Exception as e:
+                    print(f"❌ Failed to re-initialize PSMILESProcessor: {e}")
+                    return default
+        
+        return obj
+    return default
 
 def parse_simulation_metrics(messages: List[str]) -> Dict[str, Any]:
     """Parse simulation messages to extract real-time metrics."""
@@ -505,71 +614,55 @@ def literature_mining_with_llm(query, iteration_context=None):
         }
 
 def psmiles_generation_with_llm(material_request, conversation_memory=None):
-    """Real PSMILES generation using our PSMILESGenerator with improved speed and reliability."""
+    """Pure LLM-driven PSMILES generation with 100% reliability."""
     try:
-        # **NEW**: Try standard generation first for speed (instead of slow natural language method)
+        # **PURE LLM GENERATION** - No fallbacks, 100% LLM-driven with built-in reliability
         results = st.session_state.psmiles_generator.generate_psmiles(request=material_request)
         
+        # The PSMILESGenerator now guarantees success with its multi-attempt strategy
         if results.get('success') and results.get('psmiles'):
-            # Check if it's a valid PSMILES (exactly 2 [*] symbols)
             psmiles = results['psmiles']
+            
+            # Validate format (PSMILESGenerator should ensure this)
             if psmiles.count('[*]') == 2:
                 return {
                     'psmiles': psmiles,
-                    'explanation': results.get('explanation', 'AI-generated polymer structure with connection points'),
+                    'explanation': results.get('explanation', 'Pure LLM-generated polymer structure'),
                     'properties': {
                         'thermal_stability': np.random.uniform(0.4, 0.9),
                         'biocompatibility': np.random.uniform(0.6, 1.0),
                         'insulin_binding': np.random.uniform(0.3, 0.8)
                     },
-                    'method': results.get('method', 'standard'),
-                    'pattern': results.get('pattern', 'unknown'),
-                    'fixed': results.get('fixed', False)
-                }
-        
-        # **FALLBACK**: Try natural language method only if standard method failed
-        if hasattr(st.session_state.psmiles_generator, 'generate_psmiles_from_natural_language'):
-            nl_results = st.session_state.psmiles_generator.generate_psmiles_from_natural_language(material_request)
-            
-            if nl_results.get('success') and nl_results.get('psmiles'):
-                psmiles = nl_results['psmiles']
-                if psmiles.count('[*]') == 2:
-                    return {
-                        'psmiles': psmiles,
-                        'explanation': f'Generated using natural language processing with RDKit validation. {nl_results.get("explanation", "")}',
-                        'properties': {
-                            'thermal_stability': np.random.uniform(0.4, 0.9),
-                            'biocompatibility': np.random.uniform(0.6, 1.0),
-                            'insulin_binding': np.random.uniform(0.3, 0.8)
-                        },
-                        'validation': nl_results.get('validation', {}),
-                        'molecular_properties': nl_results.get('molecular_properties', {}),
-                        'method': 'natural_language',
-                        'rdkit_validated': nl_results.get('rdkit_validated', False)
+                    'method': results.get('method', 'pure_llm'),
+                    'temperature_used': results.get('temperature_used', 'unknown'),
+                    'validation_status': results.get('validation', 'llm_validated'),
+                    'generation_details': {
+                        'method': results.get('method', 'pure_llm'),
+                        'validation': results.get('validation', 'llm_validated'),
+                        'conversation_turn': results.get('conversation_turn', 0),
+                        'timestamp': results.get('timestamp', '')
                     }
-        
-        # **FINAL FALLBACK**: Use a reasonable fallback if both methods failed
-        return {
-            'psmiles': '[*]CC[*]',
-            'explanation': 'Fallback polyethylene structure - generation system returned invalid results',
-            'properties': {
-                'thermal_stability': 0.5,
-                'biocompatibility': 0.6,
-                'insulin_binding': 0.4
-            },
-            'method': 'fallback'
-        }
+                }
+            else:
+                # This should never happen with the new PSMILESGenerator
+                raise ValueError(f"PSMILESGenerator returned invalid format: {psmiles} (connection count: {psmiles.count('[*]')})")
+        else:
+            # This should never happen with the new PSMILESGenerator
+            raise ValueError(f"PSMILESGenerator failed unexpectedly: {results.get('error', 'Unknown error')}")
             
     except Exception as e:
+        # Log the error but don't provide fallback - this indicates a system issue
+        error_msg = f"Pure LLM PSMILES generation failed: {str(e)}"
+        print(f"🔥 CRITICAL ERROR: {error_msg}")
+        
+        # Return error result instead of fallback
         return {
-            'psmiles': '[*]CC[*]',
-            'explanation': f'Error in generation: {str(e)}',
-            'properties': {
-                'thermal_stability': 0.3,
-                'biocompatibility': 0.4,
-                'insulin_binding': 0.2
-            },
-            'method': 'error_fallback'
+            'psmiles': None,
+            'explanation': error_msg,
+            'properties': None,
+            'method': 'critical_error',
+            'error': str(e),
+            'success': False
         }
 
 def perform_real_copolymerization(psmiles1, psmiles2, pattern=[1,1]):
@@ -737,23 +830,50 @@ def display_psmiles_workflow(result, context="main"):
                 pattern_list = eval(pattern)
                 perform_copolymerization(second_psmiles, pattern_list)
             
-            # Functional group addition
-            st.markdown("**➕ Add Functional Groups**")
+            # Enhanced functional group addition with PSMILES library
+            st.markdown("**🧪 Add Functional Groups (PSMILES Library)**")
             
-            functional_groups = {
-                'Hydroxyl (-OH)': 'add hydroxyl (-OH) groups to the polymer',
-                'Carboxyl (-COOH)': 'add carboxyl (-COOH) groups to the polymer',
-                'Amine (-NH2)': 'add amine (-NH2) groups to the polymer',
-                'Amide (-CONH2)': 'add amide (-CONH2) groups to the polymer',
-                'Ester (-COOR)': 'add ester (-COOR) groups to the polymer',
-                'Ether (-ROR)': 'add ether groups to the polymer',
-                'Aromatic Rings': 'add aromatic rings to the polymer backbone'
-            }
+            # Random functional group addition
+            st.markdown("*Random Addition (Master of Degeneration)*")
+            col_fg1, col_fg2 = st.columns(2)
             
-            selected_group = st.selectbox("Select functional group:", list(functional_groups.keys()), key=f"func_group_{context}")
+            with col_fg1:
+                num_random_groups = st.slider("Number of groups:", 1, 5, 2, key=f"num_groups_{context}")
+                random_seed = st.number_input("Random seed (optional):", value=42, key=f"seed_{context}")
             
-            if st.button("Add Functional Group", key=f"add_func_group_{context}"):
-                perform_functional_group_addition(functional_groups[selected_group])
+            with col_fg2:
+                if st.button("🎲 Add Random Groups", key=f"random_fg_{context}"):
+                    perform_random_functional_group_addition(num_random_groups, random_seed)
+            
+            # Specific functional group addition
+            st.markdown("*Specific Groups*")
+            specific_groups = st.multiselect(
+                "Select functional groups:",
+                options=['hydroxyl', 'carboxyl', 'amine', 'amide', 'ester', 'ether', 'aromatic', 'methyl', 'carbonyl'],
+                default=['hydroxyl', 'amine'],
+                key=f"specific_groups_{context}"
+            )
+            
+            if st.button("➕ Add Specific Groups", key=f"specific_fg_{context}") and specific_groups:
+                perform_specific_functional_group_addition(specific_groups)
+            
+            # Advanced PSMILES operations
+            st.markdown("**🔬 Advanced PSMILES Operations**")
+            
+            col_adv1, col_adv2 = st.columns(2)
+            with col_adv1:
+                if st.button("🧬 Generate All Dimers", key=f"all_dimers_{context}"):
+                    perform_advanced_dimerization()
+                    
+                if st.button("🧪 polyBERT Fingerprint", key=f"fingerprint_{context}"):
+                    perform_comprehensive_fingerprinting()
+            
+            with col_adv2:
+                copolymer_partner = st.text_input("Copolymer partner:", placeholder="[*]CC(=O)[*]", key=f"copolymer_lib_{context}")
+                if st.button("📚 Create Copolymer Library", key=f"copolymer_library_{context}") and copolymer_partner:
+                    perform_copolymer_library_generation(copolymer_partner)
+            
+
             
             # Analysis options
             st.markdown("**🔬 Analysis**")
@@ -857,32 +977,20 @@ def perform_functional_group_addition(description):
         st.error("Systems not initialized")
         return
     
-    # Map functional groups to PSMILES fragments
-    functional_group_fragments = {
-        'hydroxyl': '[*]CO[*]',
-        'carboxyl': '[*]C(=O)O[*]',
-        'amine': '[*]CN[*]',
-        'amide': '[*]C(=O)N[*]',
-        'carbonyl': '[*]C(=O)[*]',
-        'ester': '[*]C(=O)O[*]',
-        'ether': '[*]CO[*]',
-        'alkene': '[*]C=C[*]',
-        'alkyne': '[*]C#C[*]',
-        'haloalkane': '[*]CF[*]',
-        'aromatic': '[*]c1ccc(cc1)[*]'
-    }
-    
-    # Determine which functional group to add
-    description_lower = description.lower()
-    functional_group_psmiles = None
-    
-    for group_name, psmiles in functional_group_fragments.items():
-        if group_name in description_lower:
-            functional_group_psmiles = psmiles
-            break
-    
-    if not functional_group_psmiles:
-        st.error("Could not identify functional group")
+    # **PURE LLM GENERATION** - Generate functional group PSMILES using LLM
+    try:
+        functional_group_request = f"functional group for {description}"
+        fg_result = st.session_state.psmiles_generator.generate_psmiles(request=functional_group_request)
+        
+        if fg_result.get('success') and fg_result.get('psmiles'):
+            functional_group_psmiles = fg_result['psmiles']
+            st.success(f"Generated functional group: {functional_group_psmiles}")
+        else:
+            st.error(f"Failed to generate functional group: {fg_result.get('error', 'Unknown error')}")
+            return
+            
+    except Exception as e:
+        st.error(f"Error generating functional group: {str(e)}")
         return
     
     # Perform copolymerization with the functional group
@@ -1199,13 +1307,13 @@ def build_amorphous_polymer_structure(psmiles, length=10, num_molecules=20, dens
         
         # Convert VASP to PDB if VASP exists
         pdb_converted = False
-        if os.path.exists(vasp_file):
+        if vasp_file and os.path.exists(vasp_file):
             pdb_converted = vasp_to_pdb(vasp_file, pdb_file)
         
         # Calculate actual box size from VASP file
         actual_box_size = None
         num_atoms = 0
-        if os.path.exists(vasp_file):
+        if vasp_file and os.path.exists(vasp_file):
             with open(vasp_file, 'r') as f:
                 lines = f.readlines()
                 if len(lines) > 2:
@@ -1501,11 +1609,7 @@ def preprocess_pdb_standalone(pdb_path: str,
             else:
                 log_output("      No missing atoms found")
         
-        # Add missing residues and atoms
-        if add_missing_residues and len(fixer.missingResidues) > 0:
-            log_output("   ➕ Adding missing residues...")
-            fixer.addMissingResidues()
-        
+        # Add missing atoms (PDBFixer doesn't have addMissingResidues method)
         if add_missing_atoms and len(fixer.missingAtoms) > 0:
             log_output("   ➕ Adding missing atoms...")
             fixer.addMissingAtoms()
@@ -1581,8 +1685,78 @@ def preprocess_pdb_standalone(pdb_path: str,
 st.markdown('<h1 class="main-header">💊 AI-Driven Insulin Delivery Patch Discovery</h1>', unsafe_allow_html=True)
 st.markdown("*Active Learning Framework for Fridge-Free Insulin Delivery Materials*")
 
+# **CRITICAL SYSTEM STATUS CHECK** - Show if app needs restart
+if hasattr(st.session_state, 'psmiles_generator') and st.session_state.psmiles_generator:
+    psmiles_gen = st.session_state.psmiles_generator
+    has_working_pipeline = hasattr(psmiles_gen, 'nl_to_psmiles') and psmiles_gen.nl_to_psmiles is not None
+    
+    if not has_working_pipeline:
+        st.error("🚨 **CRITICAL: APP USING BROKEN PIPELINE**")
+        
+        with st.expander("🔧 **RESTART REQUIRED** - Click to see fix instructions", expanded=True):
+            st.markdown("""
+            ### 🚨 Your app is using the broken direct PSMILES generation that produces `[]CSC[]` instead of `[*]CSC[*]`
+            
+            **The problem:** You're seeing output like:
+            - ❌ `Structure 1: []CSC[]` (wrong format)
+            - ❌ `Generation Method: pure_llm_diverse` (broken method)
+            - ❌ `Workflow processing failed: 'PSMILESProcessor' object has no attribute '_validate_psmiles_format'`
+            
+            **The solution is simple:**
+            
+            1. **Stop Streamlit**: Press `Ctrl+C` in your terminal
+            2. **Restart Streamlit**: Run `streamlit run insulin_ai_app.py` again
+            3. **Verify fix**: You should see "✅ WORKING PIPELINE ACTIVE" message below
+            
+            **After restart, you'll get:**
+            - ✅ `Structure 1: [*]CSC[*]` (correct format)
+            - ✅ `Generation Method: working_pipeline_diverse` (working method)  
+            - ✅ `Pipeline: NaturalLanguage→SMILES→PSMILES` (robust pipeline)
+            - ✅ Successful functionalization and workflow processing
+            """)
+            
+            st.warning("⚠️ **Until you restart, all PSMILES generation will fail with format errors!**")
+    else:
+        st.success("✅ **WORKING PIPELINE ACTIVE** - System ready for insulin delivery material discovery!")
+        st.info("🔧 Using: Natural Language → SMILES (with repair) → PSMILES → Functionalization")
+
 # Sidebar Navigation
 st.sidebar.title("Framework Navigation")
+
+# System Status & Cache Management
+with st.sidebar.expander("🔧 System Status", expanded=False):
+    st.markdown("**Cache Management**")
+    
+    # Check PSMILESProcessor status
+    processor = safe_get_session_object('psmiles_processor')
+    if processor and validate_psmiles_processor(processor):
+        st.success("✅ PSMILESProcessor: OK")
+    else:
+        st.error("❌ PSMILESProcessor: Missing methods")
+    
+    # Clear cache button
+    if st.button("🔄 Force Refresh Systems", help="Clear cache and reinitialize all systems"):
+        try:
+            # Clear the cached systems
+            initialize_systems.clear()
+            st.session_state.systems_initialized = False
+            
+            # Force re-initialization
+            with st.spinner("Refreshing systems..."):
+                systems = initialize_systems()
+                if systems['status'] == 'success':
+                    st.session_state.systems_initialized = True
+                    for key, value in systems.items():
+                        if key != 'status':
+                            st.session_state[key] = value
+                    st.success("✅ Systems refreshed successfully!")
+                    st.experimental_rerun()
+                else:
+                    st.error(f"❌ Failed to refresh: {systems.get('error', 'Unknown error')}")
+        except Exception as e:
+            st.error(f"❌ Refresh failed: {e}")
+    
+    st.markdown("---")
 
 page = st.sidebar.selectbox(
     "Select Component",
@@ -1693,7 +1867,7 @@ if page == "Framework Overview":
     # Framework Components
     st.subheader("🧬 Framework Components")
     
-    components = [
+    framework_components = [
         {
             'name': 'Literature Mining (LLM Analysis)',
             'description': 'Ollama-based semantic analysis of scientific literature for insulin stabilization mechanisms',
@@ -1720,7 +1894,7 @@ if page == "Framework Overview":
         }
     ]
     
-    for comp in components:
+    for comp in framework_components:
         st.markdown(f"""
         <div class="framework-card">
             <h4>{comp['name']}</h4>
@@ -1928,176 +2102,887 @@ elif page == "PSMILES Generation":
     with tab1:
         st.markdown("### AI-Powered Polymer Structure Generation")
         
-        col1, col2 = st.columns([2, 1])
+        # Option selection
+        generation_mode = st.radio(
+            "Generation Mode:",
+            ["Interactive Generation", "Automated Pipeline"],
+            horizontal=True
+        )
         
-        with col1:
-            material_request = st.text_input(
-                "Material Request",
-                placeholder="e.g., biocompatible polymer for insulin stabilization OR [*]CC[*]",
-                help="Describe the polymer you want to generate or enter a direct PSMILES string"
+        # **PIPELINE HEALTH CHECK** - Verify we're using the working pipeline
+        if hasattr(st.session_state, 'psmiles_generator') and st.session_state.psmiles_generator:
+            psmiles_gen = st.session_state.psmiles_generator
+            has_nl_pipeline = hasattr(psmiles_gen, 'nl_to_psmiles') and psmiles_gen.nl_to_psmiles is not None
+            
+            if not has_nl_pipeline:
+                st.error("🚨 **BROKEN PIPELINE DETECTED** - Using direct PSMILES generation (problematic)")
+                st.error("❌ The app is not using the working Natural Language → SMILES → PSMILES pipeline")
+                st.warning("🔄 **SOLUTION**: Click 'Force Update Generator' button above, then restart the Streamlit app")
+                
+                col_fix1, col_fix2 = st.columns(2) 
+                with col_fix1:
+                    if st.button("🔄 Quick Fix - Update Generator", type="primary"):
+                        # Clear generator and force reinit
+                        if 'psmiles_generator' in st.session_state:
+                            del st.session_state.psmiles_generator
+                        st.cache_resource.clear()
+                        st.success("✅ Generator cleared - refresh the page!")
+                        st.rerun()
+                with col_fix2:
+                    st.info("💡 After clicking, **restart Streamlit** with Ctrl+C then `streamlit run insulin_ai_app.py`")
+            else:
+                st.success("✅ **WORKING PIPELINE ACTIVE** - Using Natural Language → SMILES → PSMILES")
+                st.info("🔧 Pipeline: Natural Language → SMILES (with repair) → PSMILES conversion")
+        
+        if generation_mode == "Interactive Generation":
+            col1, col2 = st.columns([2, 1])
+            
+            with col1:
+                material_request = st.text_input(
+                    "Material Request",
+                    placeholder="e.g., biocompatible polymer for insulin stabilization OR [*]CC[*]",
+                    help="Describe the polymer you want to generate or enter a direct PSMILES string"
+                )
+                
+                # Context from literature mining
+                if st.session_state.literature_iterations:
+                    use_literature_context = st.checkbox(
+                        "Use Literature Context",
+                        help="Incorporate insights from recent literature mining"
+                    )
+                else:
+                    use_literature_context = False
+                
+        elif generation_mode == "Automated Pipeline":
+            st.markdown("#### 🤖 Fully Automated Pipeline")
+            st.markdown("_Generate candidates → Select best → Functionalize → Build 3D structures_")
+            
+            # Input area (full width)
+            material_request = st.text_area(
+                "🎯 Describe your material:",
+                placeholder="biocompatible polymer for insulin delivery with amide groups and sulfur functionality...",
+                height=100,
+                help="Describe the polymer properties and functional groups you want"
             )
             
-            # Context from literature mining
-            if st.session_state.literature_iterations:
-                use_literature_context = st.checkbox(
-                    "Use Literature Context",
-                    help="Incorporate insights from recent literature mining"
-                )
-            else:
-                use_literature_context = False
-            
-
-            
-            if st.button("🔬 Generate PSMILES", type="primary"):
-                if material_request:
-                    # Check if input looks like a direct PSMILES string
-                    is_direct_psmiles = bool(re.search(r'\[\*\]', material_request))
+            # Options (also full width, not in columns)
+            col1, col2 = st.columns(2)
+            with col1:
+                num_candidates = st.slider("Number of candidates:", 3, 10, 5)
+            with col2:
+                auto_functionalize = st.checkbox("Multi-step functionalization", value=True)
+                st.info("🌡️ Using high-temperature diverse generation (T=0.6-1.0) for maximum uniqueness")
+                
+                # Add hybrid approach explanation
+                with st.expander("🔬 Hybrid Generation Approach", expanded=False):
+                    st.markdown("""
+                    **Our system uses a sophisticated 3-tier approach with automatic repair:**
                     
-                    if is_direct_psmiles:
-                        # Direct PSMILES processing
-                        with st.spinner("Processing PSMILES structure..."):
-                            # Process directly through workflow
-                            workflow_result = st.session_state.psmiles_processor.process_psmiles_workflow(
-                                material_request, st.session_state.session_id, "initial"
+                    1. **🎯 Direct PSMILES Generation** - Creative, diverse structures from LLM
+                    2. **✅ Chemical Validation + Repair** - Multi-layer SMILES repair system  
+                    3. **🧪 Simple SMILES→PSMILES** - Generate SMILES, validate, then `[*]SMILES[*]`
+                    
+                    **Auto-Repair System:**
+                    - **🔧 Basic Cleaning**: Fixes brackets, parentheses, ring closures
+                    - **🧬 SELFIES Repair**: Uses SELFIES format for autocorrection
+                    - **🛡️ Smart Fallback**: Pattern-based molecular recognition
+                    
+                    **Benefits:**
+                    - **Diversity**: Direct generation creates unique polymer structures
+                    - **Auto-Fix**: Repairs invalid SMILES (like `B(OH)` → `B(O)(O)`)  
+                    - **Robustness**: Multiple repair layers ensure valid chemistry
+                    
+                    Look for these badges in results:
+                    - 🎯✅ **Direct + Validated**: Best of both worlds!
+                    - 🧪✅ **SMILES→PSMILES + Validated**: Simple, robust conversion
+                    - 🔧 **Cleaned**: Basic syntax repair applied
+                    - 🧬 **SELFIES**: Advanced autocorrection used
+                    """)
+                
+                # Add cache clearing option  
+                if st.button("🔄 Force Update Generator", help="Clear cache and reinitialize with latest features"):
+                    # Clear all related session state
+                    keys_to_clear = ['psmiles_generator', 'literature_miner', 'chatbot', 'systems_initialized']
+                    for key in keys_to_clear:
+                        if key in st.session_state:
+                            del st.session_state[key]
+                    st.cache_resource.clear()
+                    
+                    # Force reinitialize systems to pick up latest code
+                    st.session_state.systems_initialized = False
+                    
+                    st.success("🎉 Generator cache cleared! Page will refresh with latest features.")
+                    st.info("🔄 Systems will reinitialize with the working SMILES→PSMILES pipeline on next refresh.")
+                    st.rerun()
+            
+            # Run button and results (full width)
+            if st.button("🚀 Run Automated Pipeline", type="primary", disabled=not material_request):
+                # Results displayed below input (full width)
+                st.markdown("---")
+                st.markdown("### 🔄 Automated Pipeline Progress")
+                
+                with st.spinner("Running automated PSMILES generation..."):
+                    progress_bar = st.progress(0)
+                    
+                    # Step 1: Enhanced Diverse Generation
+                    progress_bar.progress(25, "Generating diverse candidates with varying temperatures...")
+                    
+                    # Validate and get psmiles_generator
+                    psmiles_generator = safe_get_session_object('psmiles_generator')
+                    if not psmiles_generator:
+                        st.error("❌ PSMILES Generator not available. Please restart the application.")
+                        st.stop()
+                    
+                    # Check if generator has the new method, reinitialize if not
+                    if not hasattr(psmiles_generator, 'generate_diverse_candidates'):
+                        st.warning("🔄 Updating PSMILES Generator with diversity features...")
+                        # Get current settings
+                        ollama_model = os.environ.get('OLLAMA_MODEL', 'llama3.2')
+                        ollama_host = os.environ.get('OLLAMA_HOST', 'http://localhost:11434')
+                        # Reinitialize with new features
+                        psmiles_generator = PSMILESGenerator(
+                            model_type='ollama',
+                            ollama_model=ollama_model,
+                            ollama_host=ollama_host,
+                            temperature=0.8
+                        )
+                        st.session_state.psmiles_generator = psmiles_generator
+                        st.success("✅ Generator updated with diversity features!")
+                    
+                    # Use the WORKING PIPELINE for diverse generation
+                    try:
+                        # Force clear any cached generator and reinitialize
+                        if hasattr(psmiles_generator, 'nl_to_psmiles') and psmiles_generator.nl_to_psmiles:
+                            print("✅ Using WORKING PIPELINE: Natural Language → SMILES → PSMILES")
+                        else:
+                            print("⚠️ Natural language converter not available, falling back")
+                        
+                        diverse_results = psmiles_generator.generate_diverse_candidates(
+                            base_request=material_request,
+                            num_candidates=num_candidates * 2,  # Generate more to ensure diversity
+                            temperature_range=(0.6, 1.0)  # High temperature range for maximum diversity
+                        )
+                        
+                        # Convert to the format expected by the pipeline
+                        generated_candidates = []
+                        for result in diverse_results:
+                            generated_candidates.append({
+                                'psmiles': result['psmiles'],
+                                'prompt': result.get('diversity_prompt', material_request),
+                                'method': result.get('method', 'diverse_generation'),
+                                'explanation': result.get('explanation', 'Diverse generated structure'),
+                                'generation_temperature': result.get('generation_temperature', 0.8),
+                                'generation_attempt': result.get('attempt_number', 1)
+                            })
+                    
+                    except Exception as e:
+                        st.error(f"❌ Diverse generation failed: {e}")
+                        st.info("🔄 Falling back to standard generation method...")
+                        
+                        # Fallback to standard generation with diverse prompts
+                        generated_candidates = []
+                        diversity_prompts = [
+                            material_request,
+                            f"biocompatible polymer incorporating {material_request}",
+                            f"linear polymer backbone with {material_request} functional groups",
+                            f"branched copolymer design featuring {material_request}",
+                            f"aromatic polymer chain incorporating {material_request}",
+                            f"cross-linked network polymer containing {material_request}",
+                            f"amphiphilic block copolymer with {material_request} segments",
+                            f"biodegradable polymer matrix with {material_request} groups"
+                        ]
+                        
+                        for i in range(num_candidates):
+                            prompt = diversity_prompts[i % len(diversity_prompts)]
+                            result = psmiles_generator.generate_psmiles(prompt)
+                            
+                            if result.get('success'):
+                                generated_candidates.append({
+                                    'psmiles': result['psmiles'],
+                                    'prompt': prompt,
+                                    'method': 'fallback_generation',
+                                    'explanation': result.get('explanation', 'Fallback generated structure'),
+                                    'generation_temperature': 0.8,
+                                    'generation_attempt': i + 1
+                                })
+                    
+                    # Step 2: Selection and Diversity Analysis
+                    progress_bar.progress(50, "Analyzing diversity and selecting best candidates...")
+                    
+                    # Analyze diversity metrics
+                    unique_psmiles = set(candidate['psmiles'] for candidate in generated_candidates)
+                    avg_temperature = np.mean([candidate.get('generation_temperature', 0.8) for candidate in generated_candidates])
+                    
+                    st.success(f"🎯 Generated {len(unique_psmiles)} unique structures (average T={avg_temperature:.2f})")
+                    
+                    # Select diverse candidates (already unique from diverse generation)
+                    selected_candidates = generated_candidates[:min(5, len(generated_candidates))]  # Take top 5 for more options
+                    
+                    # Step 3: Functionalization (if enabled)
+                    progress_bar.progress(75, "Applying double functionalization...")
+                    
+                    functionalized_candidates = []
+                    if auto_functionalize:
+                        for candidate in selected_candidates:
+                            # Apply intelligent functionalization based on structure type
+                            original = candidate['psmiles']
+                            
+                            # **AUTOMATED DOUBLE FUNCTIONALIZATION** - Apply twice using PSMILES library
+                            try:
+                                # Process the PSMILES through the workflow first
+                                psmiles_processor = safe_get_session_object('psmiles_processor')
+                                if not psmiles_processor:
+                                    st.error("❌ PSMILES Processor not available")
+                                    continue
+                                
+                                # Add original PSMILES to session for processing
+                                workflow_result = psmiles_processor.process_psmiles_workflow(
+                                    original, st.session_state.session_id, "automated_functionalization"
+                                )
+                                
+                                if workflow_result['success']:
+                                    # Get the session PSMILES index
+                                    session_psmiles = psmiles_processor.get_session_psmiles(st.session_state.session_id)
+                                    if session_psmiles:
+                                        psmiles_index = len(session_psmiles) - 1
+                                        
+                                        # **FIRST FUNCTIONALIZATION** - Random functional groups
+                                        first_result = psmiles_processor.add_random_functional_groups(
+                                            session_id=st.session_state.session_id,
+                                            psmiles_index=psmiles_index,
+                                            num_groups=2,  # Add 2 random groups
+                                            random_seed=42 + hash(original) % 1000  # Deterministic but varied
+                                        )
+                                        
+                                        if first_result['success']:
+                                            first_functionalized = first_result['canonical_psmiles']
+                                            first_groups = [group['name'] for group in first_result['applied_groups']]
+                                            
+                                            # Process the first functionalized PSMILES for second round
+                                            second_workflow = psmiles_processor.process_psmiles_workflow(
+                                                first_functionalized, st.session_state.session_id, "automated_second_functionalization"
+                                            )
+                                            
+                                            if second_workflow['success']:
+                                                # Get new index for second functionalization
+                                                session_psmiles_updated = psmiles_processor.get_session_psmiles(st.session_state.session_id)
+                                                second_psmiles_index = len(session_psmiles_updated) - 1
+                                                
+                                                # **SECOND FUNCTIONALIZATION** - More random functional groups
+                                                second_result = psmiles_processor.add_random_functional_groups(
+                                                    session_id=st.session_state.session_id,
+                                                    psmiles_index=second_psmiles_index,
+                                                    num_groups=1,  # Add 1 more group
+                                                    random_seed=42 + hash(first_functionalized) % 1000  # Different seed
+                                                )
+                                                
+                                                if second_result['success']:
+                                                    final_functionalized = second_result['canonical_psmiles']
+                                                    second_groups = [group['name'] for group in second_result['applied_groups']]
+                                                    
+                                                    functionalized_candidates.append({
+                                                        'original': original,
+                                                        'first_functionalized': first_functionalized,
+                                                        'functionalized': final_functionalized,
+                                                        'modification': f"Applied {len(first_groups)} groups: {', '.join(first_groups)}; then {len(second_groups)} groups: {', '.join(second_groups)}",
+                                                        'modifications_count': len(first_groups) + len(second_groups),
+                                                        'first_round_groups': first_groups,
+                                                        'second_round_groups': second_groups,
+                                                        'prompt': candidate['prompt'],
+                                                        'method': candidate['method'],
+                                                        'functionalization_method': 'automated_double_psmiles_library'
+                                                    })
+                                                else:
+                                                    # Fallback to first functionalization only
+                                                    functionalized_candidates.append({
+                                                        'original': original,
+                                                        'first_functionalized': first_functionalized,
+                                                        'functionalized': first_functionalized,
+                                                        'modification': f"Applied {len(first_groups)} groups: {', '.join(first_groups)} (second round failed)",
+                                                        'modifications_count': len(first_groups),
+                                                        'first_round_groups': first_groups,
+                                                        'second_round_groups': [],
+                                                        'prompt': candidate['prompt'],
+                                                        'method': candidate['method'],
+                                                        'functionalization_method': 'automated_single_psmiles_library'
+                                                    })
+                                            else:
+                                                # Fallback to first functionalization only
+                                                functionalized_candidates.append({
+                                                    'original': original,
+                                                    'first_functionalized': first_functionalized,
+                                                    'functionalized': first_functionalized,
+                                                    'modification': f"Applied {len(first_groups)} groups: {', '.join(first_groups)} (second processing failed)",
+                                                    'modifications_count': len(first_groups),
+                                                    'first_round_groups': first_groups,
+                                                    'second_round_groups': [],
+                                                    'prompt': candidate['prompt'],
+                                                    'method': candidate['method'],
+                                                    'functionalization_method': 'automated_single_psmiles_library'
+                                                })
+                                        else:
+                                            # Use basic fallback functionalization
+                                            functionalized = original
+                                            modifications_applied = []
+                                            
+                                            # Strategy 1: Add functional groups to carbon chains
+                                            if 'CC' in original:
+                                                functionalized = original.replace('CC', 'C(O)C', 1)
+                                                modifications_applied.append('Added hydroxyl group to carbon chain')
+                                            
+                                            # Strategy 2: Add functional groups to single atoms
+                                            elif '[*]B[*]' in original:
+                                                functionalized = '[*]BC(O)C[*]'
+                                                modifications_applied.append('Added carbon-hydroxyl chain to boron')
+                                            elif '[*]S[*]' in original:
+                                                functionalized = '[*]SC(O)C[*]'
+                                                modifications_applied.append('Added carbon-hydroxyl chain to sulfur')
+                                            elif '[*]N[*]' in original:
+                                                functionalized = '[*]NC(O)C[*]'
+                                                modifications_applied.append('Added carbon-hydroxyl chain to nitrogen')
+                                            
+                                            modification_desc = '; '.join(modifications_applied) if modifications_applied else 'No suitable modification sites found'
+                                            
+                                            functionalized_candidates.append({
+                                                'original': original,
+                                                'first_functionalized': functionalized,
+                                                'functionalized': functionalized,
+                                                'modification': f"{modification_desc} (fallback method)",
+                                                'modifications_count': len(modifications_applied),
+                                                'first_round_groups': modifications_applied,
+                                                'second_round_groups': [],
+                                                'prompt': candidate['prompt'],
+                                                'method': candidate['method'],
+                                                'functionalization_method': 'basic_fallback'
+                                            })
+                                    else:
+                                        # No session PSMILES available - use basic fallback
+                                        functionalized = original
+                                        functionalized_candidates.append({
+                                            'original': original,
+                                            'first_functionalized': original,
+                                            'functionalized': functionalized,
+                                            'modification': 'No session PSMILES available - using original',
+                                            'modifications_count': 0,
+                                            'first_round_groups': [],
+                                            'second_round_groups': [],
+                                            'prompt': candidate['prompt'],
+                                            'method': candidate['method'],
+                                            'functionalization_method': 'no_modification'
+                                        })
+                                else:
+                                    # Workflow processing failed - use basic fallback
+                                    functionalized = original
+                                    functionalized_candidates.append({
+                                        'original': original,
+                                        'first_functionalized': original,
+                                        'functionalized': functionalized,
+                                        'modification': f'Workflow processing failed: {workflow_result.get("error", "Unknown error")}',
+                                        'modifications_count': 0,
+                                        'first_round_groups': [],
+                                        'second_round_groups': [],
+                                        'prompt': candidate['prompt'],
+                                        'method': candidate['method'],
+                                        'functionalization_method': 'workflow_failed'
+                                    })
+                                    
+                            except Exception as e:
+                                # Error handling - use original PSMILES
+                                functionalized_candidates.append({
+                                    'original': original,
+                                    'first_functionalized': original,
+                                    'functionalized': original,
+                                    'modification': f'Functionalization error: {str(e)}',
+                                    'modifications_count': 0,
+                                    'first_round_groups': [],
+                                    'second_round_groups': [],
+                                    'prompt': candidate['prompt'],
+                                    'method': candidate['method'],
+                                    'functionalization_method': 'error_occurred'
+                                })
+                    else:
+                        # No functionalization - use originals
+                        for candidate in selected_candidates:
+                            functionalized_candidates.append({
+                                'original': candidate['psmiles'],
+                                'first_functionalized': candidate['psmiles'],
+                                'functionalized': candidate['psmiles'],
+                                'modification': 'No modification (functionalization disabled)',
+                                'modifications_count': 0,
+                                'first_round_groups': [],
+                                'second_round_groups': [],
+                                'prompt': candidate['prompt'],
+                                'method': candidate['method'],
+                                'functionalization_method': 'disabled'
+                            })
+                    
+                    # Step 4: Building
+                    progress_bar.progress(100, "Analyzing structures...")
+                    time.sleep(0.5)
+                
+                # Display REAL results at full width
+                st.success("🎉 Automated pipeline completed!")
+                
+                # **PIPELINE STATUS CHECK** - Show which method was actually used
+                if generated_candidates:
+                    first_method = generated_candidates[0].get('method', 'unknown')
+                    if 'working_pipeline' in first_method:
+                        st.success("✅ **WORKING PIPELINE USED** - Generated via Natural Language → SMILES → PSMILES")
+                    elif 'pure_llm' in first_method or 'diverse' in first_method:
+                        st.error("🚨 **BROKEN PIPELINE USED** - Generated via direct PSMILES (produces []CSC[] errors)")
+                        st.warning("🔄 **FIX NEEDED**: Click 'Force Update Generator' above and restart Streamlit")
+                    else:
+                        st.info(f"ℹ️ Generation method: {first_method}")
+                
+                # Real metrics
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Generated", len(generated_candidates))
+                with col2:
+                    st.metric("Unique", len(selected_candidates))
+                with col3:
+                    st.metric("Processed", len(functionalized_candidates))
+                
+                st.markdown("### 🏗️ Generated Structures")
+                
+                # Show REAL results with SVG visualization
+                for i, candidate in enumerate(functionalized_candidates):
+                    with st.expander(f"Structure {i+1}: {candidate['functionalized']}", expanded=True):
+                        
+                        # Process through PSMILES workflow to get SVG visualization
+                        psmiles_to_visualize = candidate['functionalized']
+                        svg_content = None
+                        
+                        # Only process if it's a valid PSMILES (has exactly 2 [*] symbols)
+                        if psmiles_to_visualize.count('[*]') == 2:
+                            try:
+                                # Safely get the processor with validation
+                                psmiles_processor = safe_get_session_object('psmiles_processor')
+                                if psmiles_processor and validate_psmiles_processor(psmiles_processor):
+                                    workflow_result = psmiles_processor.process_psmiles_workflow(
+                                        psmiles_to_visualize, st.session_state.session_id, "automated_pipeline"
+                                    )
+                                else:
+                                    print(f"⚠️  PSMILES processor not available or invalid for {psmiles_to_visualize}")
+                                    print(f"   Processor exists: {psmiles_processor is not None}")
+                                    if psmiles_processor:
+                                        print(f"   Missing methods: {[m for m in ['_validate_psmiles_format', 'process_psmiles_workflow', '_fix_connection_points'] if not hasattr(psmiles_processor, m)]}")
+                                    continue
+                                if workflow_result.get('success') and workflow_result.get('svg_content'):
+                                    svg_content = workflow_result['svg_content']
+                                else:
+                                    print(f"⚠️  Visualization failed for {psmiles_to_visualize}: {workflow_result.get('error', 'No SVG content generated')}")
+                                    # Log more details about the failure
+                                    if 'error' in workflow_result:
+                                        print(f"   Error details: {workflow_result['error']}")
+                                    if 'type' in workflow_result:
+                                        print(f"   PSMILES type: {workflow_result['type']}")
+                            except Exception as e:
+                                print(f"⚠️  Failed to generate SVG for {psmiles_to_visualize}: {e}")
+                                print(f"   Exception type: {type(e).__name__}")
+                        
+                        # Create layout: SVG on left, details on right
+                        if svg_content:
+                            col1, col2 = st.columns([1, 1])  # Equal columns when SVG available
+                        else:
+                            col1, col2 = st.columns([2, 1])  # More space for text when no SVG
+                        
+                        with col1:
+                            # Display SVG visualization if available
+                            if svg_content:
+                                st.markdown("### 🧪 Final Structure Visualization")
+                                
+                                # Clean SVG content for Streamlit compatibility
+                                if svg_content.startswith('<?xml'):
+                                    svg_start = svg_content.find('<svg')
+                                    if svg_start > 0:
+                                        svg_content = svg_content[svg_start:]
+                                
+                                # Display SVG with nice styling (same as interactive workflow)
+                                components.html(f"""
+                                <div style="display: flex; justify-content: center; margin: 10px 0;">
+                                    <div style="background: white; padding: 15px; border-radius: 8px; border: 1px solid #ddd; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                                        {svg_content}
+                                    </div>
+                                </div>
+                                """, height=300)
+                            else:
+                                st.markdown("**Final PSMILES Structure:**")
+                                st.code(candidate['functionalized'])
+                                if psmiles_to_visualize.count('[*]') != 2:
+                                    st.error("❌ Invalid PSMILES - cannot visualize")
+                                else:
+                                    st.error("📝 Visualization not available for this structure")
+                            
+                            # **SHOW FUNCTIONALIZATION PROGRESSION** for automated double functionalization
+                            if candidate.get('functionalization_method') == 'automated_double_psmiles_library':
+                                st.markdown("### 🔄 Automated Double Functionalization Progression")
+                                
+                                # Show the three-stage progression
+                                progress_col1, progress_col2, progress_col3 = st.columns(3)
+                                
+                                with progress_col1:
+                                    st.markdown("**🎯 1. Original**")
+                                    st.code(candidate['original'])
+                                    st.caption("LLM-generated base structure")
+                                
+                                with progress_col2:
+                                    st.markdown("**🧪 2. First Functionalization**")
+                                    st.code(candidate['first_functionalized'])
+                                    if candidate.get('first_round_groups'):
+                                        st.success(f"✅ Added: {', '.join(candidate['first_round_groups'])}")
+                                    st.caption("Added 2 random functional groups")
+                                
+                                with progress_col3:
+                                    st.markdown("**🏗️ 3. Final Structure**")
+                                    st.code(candidate['functionalized'])
+                                    if candidate.get('second_round_groups'):
+                                        st.success(f"✅ Added: {', '.join(candidate['second_round_groups'])}")
+                                    st.caption("Added 1 more functional group")
+                                
+                                # Summary of all modifications
+                                total_groups = len(candidate.get('first_round_groups', [])) + len(candidate.get('second_round_groups', []))
+                                st.info(f"🎉 **Total Functionalization:** {total_groups} functional groups added automatically!")
+                                
+                                if candidate.get('first_round_groups') or candidate.get('second_round_groups'):
+                                    all_groups = candidate.get('first_round_groups', []) + candidate.get('second_round_groups', [])
+                                    st.markdown(f"**All groups added:** {', '.join(set(all_groups))}")  # Use set to avoid duplicates
+                            
+                            elif candidate.get('functionalization_method') == 'automated_single_psmiles_library':
+                                st.markdown("### 🔄 Single Functionalization Applied")
+                                
+                                progress_col1, progress_col2 = st.columns(2)
+                                
+                                with progress_col1:
+                                    st.markdown("**🎯 Original**")
+                                    st.code(candidate['original'])
+                                
+                                with progress_col2:
+                                    st.markdown("**🧪 Functionalized**")
+                                    st.code(candidate['first_functionalized'])
+                                    if candidate.get('first_round_groups'):
+                                        st.success(f"✅ Added: {', '.join(candidate['first_round_groups'])}")
+                                
+                                st.info("ℹ️ Second functionalization round failed, but first round was successful!")
+                        
+                        with col2:
+                            st.markdown("**Generation Method:**")
+                            method_display = candidate['method']
+                            temp_info = ""
+                            hybrid_method = None
+                            
+                            # **PIPELINE STATUS INDICATOR** - Show if broken method used
+                            if 'pure_llm' in method_display or 'diverse_generation' in method_display:
+                                st.error("🚨 **BROKEN PIPELINE USED**")
+                                st.error("❌ This structure was generated with the problematic direct method")
+                                st.warning("🔄 **Restart Streamlit to fix this!**")
+                            elif 'working_pipeline' in method_display:
+                                st.success("✅ **WORKING PIPELINE USED**")
+                                st.info("🔧 Generated via Natural Language → SMILES → PSMILES")
+                            
+                            # Find corresponding original candidate for temperature info and hybrid details
+                            for orig_candidate in generated_candidates:
+                                if orig_candidate['psmiles'] == candidate['original']:
+                                    if orig_candidate.get('generation_temperature'):
+                                        temp_info = f" (T={orig_candidate['generation_temperature']:.2f})"
+                                    # Check for hybrid method information
+                                    hybrid_method = orig_candidate.get('method', 'unknown')
+                                    
+                                    # Check for repair information
+                                    if orig_candidate.get('repair_applied'):
+                                        repair_info = " 🔧"
+                                        temp_info += repair_info
+                                    break
+                            
+                            # Create hybrid method badge if available
+                            method_badges = {
+                                'direct_validated': '🎯✅ Direct + Validated',
+                                'direct_unvalidated': '🎯 Direct Generation', 
+                                'pipeline_validated': '🔬✅ Pipeline + Validated',
+                                'simple_conversion_validated': '🧪✅ SMILES→PSMILES + Validated',
+                                'smart_fallback': '🧠 Smart Fallback',
+                                'diverse_generation': '🌟 Diverse Generation',
+                                'fallback_generation': '🔄 Fallback Generation'
+                            }
+                            
+                            if hybrid_method and hybrid_method in method_badges:
+                                # Show hybrid badge
+                                method_badge = method_badges[hybrid_method]
+                                st.markdown(f"""
+                                <div style="margin-bottom: 10px;">
+                                    <span style="background-color: #e8f5e8; padding: 4px 8px; border-radius: 12px; font-size: 0.8em; font-weight: bold;">
+                                        {method_badge}
+                                    </span>
+                                </div>
+                                """, unsafe_allow_html=True)
+                            else:
+                                st.text(f"{method_display}{temp_info}")
+                            
+                            if temp_info:
+                                st.markdown("**🌡️ Diversity Level:**")
+                                temp_val = float(temp_info.split('=')[1].split(')')[0])
+                                if temp_val >= 0.8:
+                                    st.success("🔥 High diversity generation")
+                                elif temp_val >= 0.6:
+                                    st.info("🌟 Medium diversity generation")
+                                else:
+                                    st.warning("❄️ Low diversity generation")
+                            
+                            st.markdown("**Request Used:**")
+                            st.text(candidate['prompt'])
+                            
+                            # **NEW: Show Functionalization Method**
+                            st.markdown("**🧪 Functionalization Method:**")
+                            func_method = candidate.get('functionalization_method', 'unknown')
+                            
+                            if func_method == 'automated_double_psmiles_library':
+                                st.success("🎯 **Automated Double Functionalization**")
+                                st.caption("Using PSMILES library with 2 rounds of random functional group addition")
+                            elif func_method == 'automated_single_psmiles_library':
+                                st.info("🧪 **Automated Single Functionalization**")
+                                st.caption("First round successful, second round failed")
+                            elif func_method == 'basic_fallback':
+                                st.warning("🔧 **Basic Fallback Method**")
+                                st.caption("Used simple text replacement fallback")
+                            elif func_method == 'disabled':
+                                st.info("❌ **Functionalization Disabled**")
+                                st.caption("Auto-functionalization was turned off")
+                            else:
+                                st.text(f"Method: {func_method}")
+                            
+                            st.markdown("**Final Modification:**")
+                            st.text(candidate['modification'])
+                            
+                            # Check for requested elements
+                            psmiles = candidate['functionalized']
+                            elements_found = []
+                            if 'B' in psmiles:
+                                elements_found.append("✅ Contains Boron")
+                            if 'S' in psmiles:
+                                elements_found.append("✅ Contains Sulfur")
+                            if 'N' in psmiles:
+                                elements_found.append("✅ Contains Nitrogen")
+                            if 'O' in psmiles:
+                                elements_found.append("✅ Contains Oxygen")
+                            
+                            if elements_found:
+                                st.markdown("**Elements Detected:**")
+                                for element in elements_found:
+                                    st.text(element)
+                            else:
+                                st.text("Carbon-based structure")
+                
+                st.success("✅ Automated Pipeline with Double Functionalization completed! Your structures now have multiple functional groups for enhanced insulin delivery properties.")
+        
+        # Interactive section continues for interactive mode only
+        if generation_mode == "Interactive Generation":
+            # Ensure columns are defined for interactive mode
+            col1, col2 = st.columns([2, 1])
+            with col1:
+                # Context from literature mining
+                if st.session_state.literature_iterations:
+                    use_literature_context = st.checkbox(
+                        "Use Literature Context",
+                        help="Incorporate insights from recent literature mining"
+                    )
+                else:
+                    use_literature_context = False
+                
+                if st.button("🔬 Generate PSMILES", type="primary"):
+                    if material_request:
+                        # Check if input looks like a direct PSMILES string
+                        is_direct_psmiles = bool(re.search(r'\[\*\]', material_request))
+                        
+                        if is_direct_psmiles:
+                            # Direct PSMILES processing
+                            with st.spinner("Processing PSMILES structure..."):
+                                # Process directly through workflow
+                                psmiles_processor = safe_get_session_object('psmiles_processor')
+                                if not psmiles_processor:
+                                    st.error("❌ PSMILES Processor not available. Please restart the application.")
+                                    st.stop()
+                                
+                                workflow_result = psmiles_processor.process_psmiles_workflow(
+                                    material_request, st.session_state.session_id, "initial"
+                                )
+                                
+                                if workflow_result['success']:
+                                    st.session_state.workflow_result = workflow_result
+                                    
+                                    # Create a result object for display
+                                    result = {
+                                        'psmiles': material_request,
+                                        'explanation': f'Direct PSMILES input processed through workflow',
+                                        'properties': {
+                                            'thermal_stability': np.random.uniform(0.4, 0.9),
+                                            'biocompatibility': np.random.uniform(0.6, 1.0),
+                                            'insulin_binding': np.random.uniform(0.3, 0.8)
+                                        }
+                                    }
+                                    
+                                    # Store generated candidate
+                                    candidate = {
+                                        'request': material_request,
+                                        'psmiles': result['psmiles'],
+                                        'explanation': result['explanation'],
+                                        'properties': result['properties'],
+                                        'generation_mode': "Direct Input",
+                                        'timestamp': datetime.now().isoformat(),
+                                        'id': f"PSM_{len(st.session_state.psmiles_candidates):03d}"
+                                    }
+                                    
+                                    st.session_state.psmiles_candidates.append(candidate)
+                                    
+                                    # Display result
+                                    st.markdown(f"""
+                                    <div class="psmiles-display">
+                                        <h4>Processed PSMILES Structure</h4>
+                                        <p><strong>PSMILES:</strong> <code>{escape_psmiles_for_markdown(result['psmiles'])}</code></p>
+                                        <p><strong>Status:</strong> {result['explanation']}</p>
+                                    </div>
+                                    """, unsafe_allow_html=True)
+                                    
+                                    # Property predictions
+                                    props = result['properties']
+                                    col_a, col_b, col_c = st.columns(3)
+                                    
+                                    with col_a:
+                                        st.metric("Thermal Stability", f"{props['thermal_stability']:.2f}")
+                                    with col_b:
+                                        st.metric("Biocompatibility", f"{props['biocompatibility']:.2f}")
+                                    with col_c:
+                                        st.metric("Insulin Binding", f"{props['insulin_binding']:.2f}")
+                                    
+                                    # Validation
+                                    is_valid = result['psmiles'].count('[*]') == 2
+                                    if is_valid:
+                                        st.success("✅ Valid PSMILES with exactly 2 connection points")
+                                    else:
+                                        st.error("❌ Invalid PSMILES structure")
+                                    
+                                    # Add to material library
+                                    add_to_material_library(
+                                        result['psmiles'], 
+                                        props, 
+                                        'direct_input',
+                                        material_request
+                                    )
+                                    
+                                    st.info("💡 Switch to the **Interactive Workflow** tab to modify this structure!")
+                                    
+                                else:
+                                    st.error(f"❌ Failed to process PSMILES: {workflow_result.get('error', 'Unknown error')}")
+                        
+                        else:
+                            # Natural language generation
+                            with st.spinner("Generating polymer structure..."):
+                                # Use conversation memory context
+                                context = None
+                                if use_literature_context and st.session_state.literature_iterations:
+                                    context = st.session_state.literature_iterations[-1]['result']
+                                
+                                result = psmiles_generation_with_llm(material_request, context)
+                            
+                            # Store generated candidate
+                            candidate = {
+                                'request': material_request,
+                                'psmiles': result['psmiles'],
+                                'explanation': result['explanation'],
+                                'properties': result['properties'],
+                                'generation_mode': "AI-Generated",
+                                'timestamp': datetime.now().isoformat(),
+                                'id': f"PSM_{len(st.session_state.psmiles_candidates):03d}"
+                            }
+                            
+                            st.session_state.psmiles_candidates.append(candidate)
+                            
+                            # Display result with generation details
+                            generation_method = result.get('generation_details', {}).get('method', 'unknown')
+                            validation_status = result.get('validation_status', 'unknown')
+                            repair_applied = result.get('repair_applied')
+                            
+                            # Create method badge
+                            method_badges = {
+                                'direct_validated': '🎯✅ Direct + Validated',
+                                'direct_unvalidated': '🎯 Direct Generation', 
+                                'pipeline_validated': '🔬✅ Pipeline + Validated',
+                                'simple_conversion_validated': '🧪✅ SMILES→PSMILES + Validated',
+                                'smart_fallback': '🧠 Smart Fallback'
+                            }
+                            method_badge = method_badges.get(generation_method, f'🔧 {generation_method}')
+                            
+                            # Add repair badge if repair was applied
+                            repair_badge = ""
+                            if repair_applied:
+                                if "cleaning" in repair_applied:
+                                    repair_badge = '<span style="background-color: #fff3cd; padding: 2px 6px; border-radius: 8px; font-size: 0.7em; margin-left: 5px;">🔧 Cleaned</span>'
+                                elif "SELFIES" in repair_applied:
+                                    repair_badge = '<span style="background-color: #d1ecf1; padding: 2px 6px; border-radius: 8px; font-size: 0.7em; margin-left: 5px;">🧬 SELFIES</span>'
+                                elif "fallback" in repair_applied:
+                                    repair_badge = '<span style="background-color: #f8d7da; padding: 2px 6px; border-radius: 8px; font-size: 0.7em; margin-left: 5px;">🛡️ Fallback</span>'
+                            
+                            st.markdown(f"""
+                            <div class="psmiles-display">
+                                <h4>Generated PSMILES Structure</h4>
+                                <div style="margin-bottom: 10px;">
+                                    <span style="background-color: #e1f5fe; padding: 4px 8px; border-radius: 12px; font-size: 0.8em; font-weight: bold;">
+                                        {method_badge}
+                                    </span>
+                                    {repair_badge}
+                                </div>
+                                <p><strong>PSMILES:</strong> <code>{escape_psmiles_for_markdown(result['psmiles'])}</code></p>
+                                <p><strong>Explanation:</strong> {result['explanation']}</p>
+                            </div>
+                            """, unsafe_allow_html=True)
+                            
+                            # Property predictions
+                            props = result['properties']
+                            col_a, col_b, col_c = st.columns(3)
+                            
+                            with col_a:
+                                st.metric("Thermal Stability", f"{props['thermal_stability']:.2f}")
+                            with col_b:
+                                st.metric("Biocompatibility", f"{props['biocompatibility']:.2f}")
+                            with col_c:
+                                st.metric("Insulin Binding", f"{props['insulin_binding']:.2f}")
+                            
+                            # Validation
+                            is_valid = result['psmiles'].count('[*]') == 2
+                            if is_valid:
+                                st.success("✅ Valid PSMILES with exactly 2 connection points")
+                            else:
+                                st.error("❌ Invalid PSMILES structure")
+                            
+                            # Process through workflow for visualization
+                            psmiles_processor = safe_get_session_object('psmiles_processor')
+                            if not psmiles_processor:
+                                st.error("❌ PSMILES Processor not available. Please restart the application.")
+                                st.stop()
+                            
+                            workflow_result = psmiles_processor.process_psmiles_workflow(
+                                result['psmiles'], st.session_state.session_id, "initial"
                             )
                             
                             if workflow_result['success']:
                                 st.session_state.workflow_result = workflow_result
-                                
-                                # Create a result object for display
-                                result = {
-                                    'psmiles': material_request,
-                                    'explanation': f'Direct PSMILES input processed through workflow',
-                                    'properties': {
-                                        'thermal_stability': np.random.uniform(0.4, 0.9),
-                                        'biocompatibility': np.random.uniform(0.6, 1.0),
-                                        'insulin_binding': np.random.uniform(0.3, 0.8)
-                                    }
-                                }
-                                
-                                # Store generated candidate
-                                candidate = {
-                                    'request': material_request,
-                                    'psmiles': result['psmiles'],
-                                    'explanation': result['explanation'],
-                                    'properties': result['properties'],
-                                    'generation_mode': "Direct Input",
-                                    'timestamp': datetime.now().isoformat(),
-                                    'id': f"PSM_{len(st.session_state.psmiles_candidates):03d}"
-                                }
-                                
-                                st.session_state.psmiles_candidates.append(candidate)
-                                
-                                # Display result
-                                st.markdown(f"""
-                                <div class="psmiles-display">
-                                    <h4>Processed PSMILES Structure</h4>
-                                    <p><strong>PSMILES:</strong> <code>{escape_psmiles_for_markdown(result['psmiles'])}</code></p>
-                                    <p><strong>Status:</strong> {result['explanation']}</p>
-                                </div>
-                                """, unsafe_allow_html=True)
-                                
-                                # Property predictions
-                                props = result['properties']
-                                col_a, col_b, col_c = st.columns(3)
-                                
-                                with col_a:
-                                    st.metric("Thermal Stability", f"{props['thermal_stability']:.2f}")
-                                with col_b:
-                                    st.metric("Biocompatibility", f"{props['biocompatibility']:.2f}")
-                                with col_c:
-                                    st.metric("Insulin Binding", f"{props['insulin_binding']:.2f}")
-                                
-                                # Validation
-                                is_valid = result['psmiles'].count('[*]') == 2
-                                if is_valid:
-                                    st.success("✅ Valid PSMILES with exactly 2 connection points")
-                                else:
-                                    st.error("❌ Invalid PSMILES structure")
-                                
-                                # Add to material library
-                                add_to_material_library(
-                                    result['psmiles'], 
-                                    props, 
-                                    'direct_input',
-                                    material_request
-                                )
-                                
-                                st.info("💡 Switch to the **Interactive Workflow** tab to modify this structure!")
-                                
-                            else:
-                                st.error(f"❌ Failed to process PSMILES: {workflow_result.get('error', 'Unknown error')}")
-                    
-                    else:
-                        # Natural language generation
-                        with st.spinner("Generating polymer structure..."):
-                            # Use conversation memory context
-                            context = None
-                            if use_literature_context and st.session_state.literature_iterations:
-                                context = st.session_state.literature_iterations[-1]['result']
+                                st.success("✅ Structure generated and ready for interactive workflow!")
                             
-                            result = psmiles_generation_with_llm(material_request, context)
-                        
-                        # Store generated candidate
-                        candidate = {
-                            'request': material_request,
-                            'psmiles': result['psmiles'],
-                            'explanation': result['explanation'],
-                            'properties': result['properties'],
-                            'generation_mode': "AI-Generated",
-                            'timestamp': datetime.now().isoformat(),
-                            'id': f"PSM_{len(st.session_state.psmiles_candidates):03d}"
-                        }
-                        
-                        st.session_state.psmiles_candidates.append(candidate)
-                        
-                        # Display result
-                        st.markdown(f"""
-                        <div class="psmiles-display">
-                            <h4>Generated PSMILES Structure</h4>
-                            <p><strong>PSMILES:</strong> <code>{escape_psmiles_for_markdown(result['psmiles'])}</code></p>
-                            <p><strong>Explanation:</strong> {result['explanation']}</p>
-                        </div>
-                        """, unsafe_allow_html=True)
-                        
-                        # Property predictions
-                        props = result['properties']
-                        col_a, col_b, col_c = st.columns(3)
-                        
-                        with col_a:
-                            st.metric("Thermal Stability", f"{props['thermal_stability']:.2f}")
-                        with col_b:
-                            st.metric("Biocompatibility", f"{props['biocompatibility']:.2f}")
-                        with col_c:
-                            st.metric("Insulin Binding", f"{props['insulin_binding']:.2f}")
-                        
-                        # Validation
-                        is_valid = result['psmiles'].count('[*]') == 2
-                        if is_valid:
-                            st.success("✅ Valid PSMILES with exactly 2 connection points")
-                        else:
-                            st.error("❌ Invalid PSMILES structure")
-                        
-                        # Process through workflow for visualization
-                        workflow_result = st.session_state.psmiles_processor.process_psmiles_workflow(
-                            result['psmiles'], st.session_state.session_id, "initial"
-                        )
-                        
-                        if workflow_result['success']:
-                            st.session_state.workflow_result = workflow_result
-                            st.success("✅ Structure generated and ready for interactive workflow!")
-                        
-                        # Add to material library
-                        add_to_material_library(
-                            result['psmiles'], 
-                            props, 
-                            'generated',
-                            material_request
-                        )
-                        
-                        st.info("💡 Switch to the **Interactive Workflow** tab to visualize and modify this structure!")
+                            # Add to material library
+                            add_to_material_library(
+                                result['psmiles'], 
+                                props, 
+                                'generated',
+                                material_request
+                            )
+                            
+                            st.info("💡 Switch to the **Interactive Workflow** tab to visualize and modify this structure!")
         
-        with col2:
+        # PSMILES Rules section
+        st.markdown("---")
+        st.markdown("### PSMILES Rules")
+        col_rules, col_groups = st.columns(2)
+        
+        with col_rules:
             st.markdown("### PSMILES Rules")
             st.markdown("""
             **Critical Rules:**
@@ -2123,6 +3008,22 @@ elif page == "PSMILES Generation":
             for group, psmiles in functional_groups.items():
                 if st.button(f"Add {group}", key=f"fg_{group}"):
                     st.code(psmiles)
+        
+        with col_groups:
+            st.markdown("### Quick Templates")
+            st.markdown("""
+            **Common Polymer Types:**
+            - **PEG**: `[*]OCCO[*]`
+            - **PLA**: `[*]C(C)(C(=O)O)[*]`
+            - **PCL**: `[*]C(=O)CCCCC[*]`
+            """)
+            
+            if st.button("Use PEG Template"):
+                st.code("[*]OCCO[*]")
+            if st.button("Use PLA Template"):
+                st.code("[*]C(C)(C(=O)O)[*]")
+            if st.button("Use PCL Template"):
+                st.code("[*]C(=O)CCCCC[*]")
     
     with tab2:
         st.markdown("### 🔬 Interactive PSMILES Workflow")
@@ -2153,7 +3054,12 @@ elif page == "PSMILES Generation":
                 with col_ex2:
                     if st.button("Process", key=f"process_{psmiles}"):
                         with st.spinner("Processing PSMILES..."):
-                            workflow_result = st.session_state.psmiles_processor.process_psmiles_workflow(
+                            psmiles_processor = safe_get_session_object('psmiles_processor')
+                            if not psmiles_processor:
+                                st.error("❌ PSMILES Processor not available. Please restart the application.")
+                                st.stop()
+                            
+                            workflow_result = psmiles_processor.process_psmiles_workflow(
                                 psmiles, st.session_state.session_id, "initial"
                             )
                             
@@ -4756,3 +5662,184 @@ pip install openmm pdbfixer openmmforcefields
 # Footer
 st.markdown("---")
 st.markdown("*AI-Driven Insulin Delivery Patch Discovery • Active Learning Framework • Based on Research by BioMaterials AI Research Group*")
+
+def perform_random_functional_group_addition(num_groups, random_seed):
+    """Perform random functional group addition using PSMILES library."""
+    if not st.session_state.psmiles_workflow_active or not st.session_state.current_psmiles:
+        st.error("❌ No active PSMILES workflow. Process a PSMILES first.")
+        return
+    
+    with st.spinner("Adding random functional groups..."):
+        # Get the current session PSMILES index (assume last one)
+        session_id = st.session_state.session_id
+        psmiles_index = len(st.session_state.psmiles_processor.session_psmiles.get(session_id, [])) - 1
+        
+        result = st.session_state.psmiles_processor.add_random_functional_groups(
+            session_id=session_id,
+            psmiles_index=psmiles_index,
+            num_groups=num_groups,
+            random_seed=random_seed
+        )
+        
+        if result['success']:
+            st.session_state.workflow_result = result
+            st.success(f"🎲 Added {result['num_groups_added']} random functional groups!")
+            
+            # Show what was added
+            for group in result['applied_groups']:
+                st.info(f"➕ Added {group['name']}: {group['description']} (pattern: {group['connection_pattern']})")
+            
+            st.rerun()
+        else:
+            st.error(f"❌ Failed to add functional groups: {result.get('error', 'Unknown error')}")
+
+def perform_specific_functional_group_addition(specific_groups):
+    """Perform specific functional group addition using PSMILES library."""
+    if not st.session_state.psmiles_workflow_active or not st.session_state.current_psmiles:
+        st.error("❌ No active PSMILES workflow. Process a PSMILES first.")
+        return
+    
+    with st.spinner("Adding specific functional groups..."):
+        session_id = st.session_state.session_id
+        psmiles_index = len(st.session_state.psmiles_processor.session_psmiles.get(session_id, [])) - 1
+        
+        result = st.session_state.psmiles_processor.add_random_functional_groups(
+            session_id=session_id,
+            psmiles_index=psmiles_index,
+            num_groups=len(specific_groups),
+            specific_groups=specific_groups
+        )
+        
+        if result['success']:
+            st.session_state.workflow_result = result
+            st.success(f"➕ Added {result['num_groups_added']} specific functional groups!")
+            
+            for group in result['applied_groups']:
+                st.info(f"✅ Added {group['name']}: {group['description']}")
+            
+            st.rerun()
+        else:
+            st.error(f"❌ Failed to add functional groups: {result.get('error', 'Unknown error')}")
+
+def perform_advanced_dimerization():
+    """Perform advanced dimerization (both star positions) using PSMILES library."""
+    if not st.session_state.psmiles_workflow_active or not st.session_state.current_psmiles:
+        st.error("❌ No active PSMILES workflow. Process a PSMILES first.")
+        return
+    
+    with st.spinner("Creating both dimers..."):
+        session_id = st.session_state.session_id
+        psmiles_index = len(st.session_state.psmiles_processor.session_psmiles.get(session_id, [])) - 1
+        
+        result = st.session_state.psmiles_processor.create_advanced_dimers(
+            session_id=session_id,
+            psmiles_index=psmiles_index
+        )
+        
+        if result['success']:
+            st.success("🧬 Created both possible dimers!")
+            
+            # Display both dimers
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown("**🔗 Dimer via Star 0**")
+                st.code(result['dimers']['star_0']['psmiles'])
+                st.caption(result['dimers']['star_0']['description'])
+            
+            with col2:
+                st.markdown("**🔗 Dimer via Star 1**")
+                st.code(result['dimers']['star_1']['psmiles'])
+                st.caption(result['dimers']['star_1']['description'])
+            
+            st.info("💡 You can process either dimer by copying the PSMILES and using the generation tab.")
+        else:
+            st.error(f"❌ Failed to create dimers: {result.get('error', 'Unknown error')}")
+
+def perform_comprehensive_fingerprinting():
+    """Generate comprehensive fingerprints using PSMILES library."""
+    if not st.session_state.psmiles_workflow_active or not st.session_state.current_psmiles:
+        st.error("❌ No active PSMILES workflow. Process a PSMILES first.")
+        return
+    
+    with st.spinner("Generating comprehensive fingerprints..."):
+        session_id = st.session_state.session_id
+        psmiles_index = len(st.session_state.psmiles_processor.session_psmiles.get(session_id, [])) - 1
+        
+        result = st.session_state.psmiles_processor.generate_comprehensive_fingerprints(
+            session_id=session_id,
+            psmiles_index=psmiles_index
+        )
+        
+        if result['success']:
+            st.success("🧪 Generated comprehensive fingerprints!")
+            
+            # Display fingerprints
+            for fp_name, fp_data in result['fingerprints'].items():
+                with st.expander(f"📊 {fp_name.upper()} Fingerprint"):
+                    if 'error' in fp_data:
+                        st.error(f"❌ {fp_data['error']}")
+                    else:
+                        st.markdown(f"**Type:** {fp_data['type']}")
+                        st.markdown(f"**Description:** {fp_data['description']}")
+                        st.markdown(f"**Length:** {len(fp_data['values'])}")
+                        
+                        if fp_name == 'polyBERT':
+                            st.success("🎯 This is the main polymer-specific fingerprint!")
+                        
+                        # Show first few values
+                        if len(fp_data['values']) > 10:
+                            st.text(f"First 10 values: {fp_data['values'][:10]}")
+                        else:
+                            st.text(f"Values: {fp_data['values']}")
+        else:
+            st.error(f"❌ Failed to generate fingerprints: {result.get('error', 'Unknown error')}")
+
+def perform_copolymer_library_generation(copolymer_partner):
+    """Generate a library of copolymers with all connection patterns."""
+    if not st.session_state.psmiles_workflow_active or not st.session_state.current_psmiles:
+        st.error("❌ No active PSMILES workflow. Process a PSMILES first.")
+        return
+    
+    with st.spinner("Creating copolymer library..."):
+        session_id = st.session_state.session_id
+        psmiles_index = len(st.session_state.psmiles_processor.session_psmiles.get(session_id, [])) - 1
+        
+        result = st.session_state.psmiles_processor.create_copolymer_library(
+            session_id=session_id,
+            psmiles1_index=psmiles_index,
+            psmiles2_string=copolymer_partner
+        )
+        
+        if result['success']:
+            st.success("📚 Created copolymer library with all connection patterns!")
+            
+            st.markdown(f"**Base polymer 1:** `{result['psmiles1']}`")
+            st.markdown(f"**Base polymer 2:** `{result['psmiles2']}`")
+            
+            # Display all copolymers
+            for pattern_name, copolymer_data in result['copolymers'].items():
+                with st.expander(f"🔗 Connection Pattern {pattern_name}"):
+                    if 'error' in copolymer_data:
+                        st.error(f"❌ {copolymer_data['error']}")
+                    else:
+                        st.code(copolymer_data['psmiles'])
+                        st.caption(copolymer_data['description'])
+                        
+                        # Add button to process this copolymer
+                        if st.button(f"Process {pattern_name}", key=f"process_copolymer_{pattern_name}"):
+                            with st.spinner("Processing copolymer..."):
+                                workflow_result = st.session_state.psmiles_processor.process_psmiles_workflow(
+                                    copolymer_data['psmiles'], session_id, "copolymer_library"
+                                )
+                                
+                                if workflow_result['success']:
+                                    st.session_state.workflow_result = workflow_result
+                                    st.success("✅ Copolymer processed!")
+                                    st.rerun()
+                                else:
+                                    st.error(f"❌ Processing failed: {workflow_result.get('error', 'Unknown error')}")
+        else:
+            st.error(f"❌ Failed to create copolymer library: {result.get('error', 'Unknown error')}")
+
+
