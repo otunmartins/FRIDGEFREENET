@@ -1,3 +1,19 @@
+#!/usr/bin/env python3
+"""
+Enhanced Insulin AI App with OpenAI Integration
+Comprehensive material discovery platform for insulin delivery patches
+"""
+
+# Add project root to Python path (needed when running from app/ directory)
+import sys
+from pathlib import Path
+project_root = Path(__file__).parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+
+import os
+import tempfile
+from typing import Dict, List, Optional, Any
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -8,16 +24,13 @@ import json
 from datetime import datetime
 import random
 import re
-import os
 import uuid
 import time
 import base64
-import tempfile
 import zipfile
 import shutil
 from pathlib import Path
 from io import BytesIO
-from typing import Dict, List, Optional, Callable, Any
 import streamlit.components.v1 as components
 import warnings
 warnings.filterwarnings('ignore')
@@ -60,8 +73,8 @@ except ImportError:
 
 # Page configuration
 st.set_page_config(
-    page_title="Insulin Delivery Patch AI Lab",
-    page_icon="💊",
+    page_title="🧬 Insulin-AI: AI-Powered Drug Delivery System",
+    page_icon="🧬",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -174,67 +187,142 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# System initialization
-@st.cache_resource
-def initialize_systems():
-    """Initialize all AI systems with caching for performance."""
-    try:
-        # Get environment variables with defaults
-        ollama_model = os.environ.get('OLLAMA_MODEL', 'llama3.2')
-        ollama_host = os.environ.get('OLLAMA_HOST', 'http://localhost:11434')
-        semantic_scholar_key = os.environ.get('SEMANTIC_SCHOLAR_API_KEY')
+# **NEW: OpenAI API Key Management**
+def setup_openai_api():
+    """Setup OpenAI API key from user input or environment."""
+    st.sidebar.header("🔑 OpenAI Configuration")
+    
+    # Check if API key exists in environment
+    env_api_key = os.environ.get('OPENAI_API_KEY', '')
+    
+    if env_api_key:
+        st.sidebar.success("✅ OpenAI API Key found in environment")
+        return env_api_key
+    else:
+        st.sidebar.warning("⚠️ No OpenAI API Key found in environment")
         
-        # Initialize chatbot
+        # Get API key from user input
+        api_key = st.sidebar.text_input(
+            "Enter your OpenAI API Key:",
+            type="password",
+            help="Get your API key from https://platform.openai.com/api-keys"
+        )
+        
+        if api_key:
+            # Set environment variable for this session
+            os.environ['OPENAI_API_KEY'] = api_key
+            st.sidebar.success("✅ OpenAI API Key configured")
+            return api_key
+        else:
+            st.sidebar.error("❌ OpenAI API Key required to proceed")
+            st.error("🔑 Please enter your OpenAI API Key in the sidebar to use the application.")
+            st.stop()
+            return None
+
+# **NEW: Model Selection**
+def setup_model_selection():
+    """Allow user to select OpenAI model."""
+    st.sidebar.header("🤖 Model Configuration")
+    
+    model_options = {
+        "gpt-4o": "GPT-4o (Recommended - Best performance)",
+        "gpt-4": "GPT-4 (High quality, slower)",
+        "gpt-3.5-turbo": "GPT-3.5 Turbo (Fast, cost-effective)",
+        "gpt-4-turbo": "GPT-4 Turbo (Balanced performance)"
+    }
+    
+    selected_model = st.sidebar.selectbox(
+        "Select OpenAI Model:",
+        options=list(model_options.keys()),
+        format_func=lambda x: model_options[x],
+        index=2  # Default to gpt-3.5-turbo instead of gpt-4o
+    )
+    
+    # Temperature setting
+    temperature = st.sidebar.slider(
+        "Model Temperature:",
+        min_value=0.0,
+        max_value=2.0,
+        value=0.7,
+        step=0.1,
+        help="Higher values make output more creative, lower values more focused"
+    )
+    
+    return selected_model, temperature
+
+# System initialization
+def initialize_systems():
+    """Initialize all AI systems with OpenAI models."""
+    try:
+        # **UPDATED: Use OpenAI instead of Ollama**
+        # Get OpenAI configuration
+        api_key = os.environ.get('OPENAI_API_KEY')
+        if not api_key:
+            st.error("OpenAI API Key not configured. Please set it in the sidebar.")
+            st.stop()
+            
+        # Get model selection from session state (set by sidebar)
+        openai_model = st.session_state.get('openai_model', 'gpt-3.5-turbo')  # Changed default to 3.5
+        temperature = st.session_state.get('temperature', 0.7)
+        
+        st.info(f"🚀 Initializing systems with OpenAI {openai_model}...")
+        
+        # Initialize chatbot with OpenAI
         chatbot = InsulinAIChatbot(
-            model_type="ollama",
-            ollama_model=ollama_model,
-            ollama_host=ollama_host,
+            model_type="openai",
+            openai_model=openai_model,
+            temperature=temperature,
             memory_type="buffer_window",
             memory_dir="chat_memory"
         )
         
-        # Initialize literature mining system
+        # Initialize literature mining system with OpenAI
         literature_miner = MaterialsLiteratureMiner(
-            semantic_scholar_api_key=semantic_scholar_key,
-            ollama_model=ollama_model,
-            ollama_host=ollama_host
+            semantic_scholar_api_key=os.environ.get('SEMANTIC_SCHOLAR_API_KEY'),
+            model_type="openai",
+            openai_model=openai_model,
+            temperature=temperature
         )
         
-        # Initialize PSMILES systems
+        # Initialize PSMILES systems with OpenAI
         psmiles_generator = PSMILESGenerator(
-            model_type='ollama',
-            ollama_model=ollama_model,
-            ollama_host=ollama_host,
-            temperature=0.8  # Higher temperature for diverse candidate generation
+            model_type='openai',
+            openai_model=openai_model,
+            temperature=temperature
         )
         
         psmiles_processor = PSMILESProcessor()
         
-        # Initialize PSMILES auto-corrector if available
+        # Initialize PSMILES auto-corrector with OpenAI if available
         psmiles_auto_corrector = None
-        if AUTOCORRECTOR_AVAILABLE:
-            try:
-                psmiles_auto_corrector = create_psmiles_auto_corrector(
-                    ollama_model=ollama_model,
-                    ollama_host=ollama_host
-                )
-                print("✅ PSMILES Auto-Corrector initialized")
-                print(f"   Type: {type(psmiles_auto_corrector)}")
-                print(f"   Has correct_psmiles: {hasattr(psmiles_auto_corrector, 'correct_psmiles')}")
-            except Exception as e:
-                print(f"⚠️ PSMILES Auto-Corrector initialization failed: {e}")
-                psmiles_auto_corrector = None
+        try:
+            from integration.corrections.psmiles_auto_corrector import create_psmiles_auto_corrector
+            psmiles_auto_corrector = create_psmiles_auto_corrector(
+                model_type="openai",
+                openai_model=openai_model,
+                temperature=temperature
+            )
+            print("✅ PSMILES Auto-Corrector initialized")
+            print(f"   Type: {type(psmiles_auto_corrector)}")
+            print(f"   Has correct_psmiles: {hasattr(psmiles_auto_corrector, 'correct_psmiles')}")
+        except Exception as e:
+            print(f"⚠️ PSMILES Auto-Corrector not available: {e}")
         
         # Initialize MD integration if available
         md_integration = None
-        md_integration_available = False
-        if MD_INTEGRATION_AVAILABLE:
-            try:
-                md_integration = MDSimulationIntegration()
-                md_integration_available = True
-            except Exception as e:
-                print(f"MD integration initialization failed: {e}")
-                md_integration_available = False
+        try:
+            from integration.md_integration import initialize_md_systems
+            md_integration = initialize_md_systems()
+            print("✅ MD integration initialized")
+        except ImportError as e:
+            missing_deps = []
+            if 'openmm' in str(e).lower():
+                missing_deps.append('openmm')
+            if 'mmgbsa' in str(e).lower():
+                missing_deps.append('mmgbsa')
+            print(f"MD integration initialization failed: Missing dependencies: {missing_deps}")
+        except Exception as e:
+            print(f"⚠️ MD integration not available: {e}")
         
         return {
             'chatbot': chatbot,
@@ -242,30 +330,61 @@ def initialize_systems():
             'psmiles_generator': psmiles_generator,
             'psmiles_processor': psmiles_processor,
             'psmiles_auto_corrector': psmiles_auto_corrector,
-            'md_integration': md_integration,
-            'md_integration_available': md_integration_available,
-            'status': 'success'
+            'md_integration': md_integration
         }
-        
+    
     except Exception as e:
-        return {'status': 'error', 'error': str(e)}
+        st.error(f"❌ Failed to initialize systems: {str(e)}")
+        st.error("Please check your OpenAI API key and model selection.")
+        st.stop()
 
 # Load systems
-if not st.session_state.systems_initialized:
+# **NEW: Setup OpenAI configuration in sidebar**
+api_key = setup_openai_api()
+if not api_key:
+    st.stop()  # Stop execution if no API key
+
+# **NEW: Model selection in sidebar**
+selected_model, temperature = setup_model_selection()
+
+# Store in session state for use in cached function
+st.session_state['openai_model'] = selected_model
+st.session_state['temperature'] = temperature
+
+# Initialize session state
+if 'systems_initialized' not in st.session_state:
+    st.session_state.systems_initialized = False
+
+# Check if model settings have changed
+current_model = st.session_state.get('current_initialized_model')
+current_temp = st.session_state.get('current_initialized_temp')
+
+model_changed = (current_model != selected_model or current_temp != temperature)
+
+if not st.session_state.systems_initialized or model_changed:
+    if model_changed:
+        st.info(f"🔄 Model changed from {current_model} to {selected_model}. Reinitializing systems...")
+    
     with st.spinner("🚀 Initializing AI systems..."):
-        systems = initialize_systems()
-        
-        if systems['status'] == 'success':
+        try:
+            systems = initialize_systems()
+            
             st.session_state.systems_initialized = True
+            st.session_state.current_initialized_model = selected_model
+            st.session_state.current_initialized_temp = temperature
             st.session_state.chatbot = systems['chatbot']
             st.session_state.literature_miner = systems['literature_miner']
             st.session_state.psmiles_generator = systems['psmiles_generator']
             st.session_state.psmiles_processor = systems['psmiles_processor']
             st.session_state.psmiles_auto_corrector = systems['psmiles_auto_corrector']
             st.session_state.md_integration = systems['md_integration']
-            st.session_state.md_integration_available = systems['md_integration_available']
-        else:
-            st.error(f"❌ Failed to initialize systems: {systems.get('error', 'Unknown error')}")
+            st.session_state.md_integration_available = systems.get('md_integration') is not None
+            
+            st.success(f"✅ All systems initialized successfully with {selected_model}!")
+            
+        except Exception as e:
+            st.error(f"❌ Failed to initialize systems: {str(e)}")
+            st.error("Please check your OpenAI API key and model selection.")
             st.stop()
 
 # Helper functions
@@ -674,7 +793,7 @@ def psmiles_generation_with_llm(material_request, conversation_memory=None):
     """Pure LLM-driven PSMILES generation with 100% reliability."""
     try:
         # **PURE LLM GENERATION** - No fallbacks, 100% LLM-driven with built-in reliability
-        results = st.session_state.psmiles_generator.generate_psmiles(request=material_request)
+        results = st.session_state.psmiles_generator.generate_psmiles(description=material_request)  # Fixed parameter name
         
         # The PSMILESGenerator now guarantees success with its multi-attempt strategy
         if results.get('success') and results.get('psmiles'):
@@ -712,15 +831,13 @@ def psmiles_generation_with_llm(material_request, conversation_memory=None):
         error_msg = f"Pure LLM PSMILES generation failed: {str(e)}"
         print(f"🔥 CRITICAL ERROR: {error_msg}")
         
-        # Return error result instead of fallback
+        # Return an error result instead of raising
         return {
-            'psmiles': None,
-            'explanation': error_msg,
-            'properties': None,
-            'method': 'critical_error',
-            'error': str(e),
-            'success': False
+            'error': True,
+            'message': error_msg,
+            'psmiles': None
         }
+
 def perform_real_copolymerization(psmiles1, psmiles2, pattern=[1,1]):
     """Real copolymerization using our PSMILESProcessor."""
     try:
@@ -2167,14 +2284,14 @@ elif page == "PSMILES Generation":
     if 'workflow_result' not in st.session_state:
         st.session_state.workflow_result = None
     
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["Material Generation", "Interactive Workflow", "Copolymerization", "3D Structure Builder", "Insulin Embedding", "Structure Library"])
+    tab1, tab2 = st.tabs(["Material Generation", "Insulin Embedding"])
     
     with tab1:
         st.markdown("### AI-Powered Polymer Structure Generation")
         
         generation_mode = st.radio(
             "Generation Mode:",
-            ["Interactive Generation", "Automated Pipeline"],
+            ["Automated Pipeline"],
             horizontal=True
         )
         
@@ -2203,26 +2320,7 @@ elif page == "PSMILES Generation":
                 st.success("✅ **WORKING PIPELINE ACTIVE** - Using Natural Language → SMILES → PSMILES")
                 st.info("🔧 Pipeline: Natural Language → SMILES (with repair) → PSMILES conversion")
         
-        if generation_mode == "Interactive Generation":
-            col1, col2 = st.columns([2, 1])
-            
-            with col1:
-                material_request = st.text_input(
-                    "Material Request",
-                    placeholder="e.g., biocompatible polymer for insulin stabilization OR [*]CC[*]",
-                    help="Describe the polymer you want to generate or enter a direct PSMILES string"
-                )
-                
-                # Context from literature mining
-                if st.session_state.literature_iterations:
-                    use_literature_context = st.checkbox(
-                        "Use Literature Context",
-                        help="Incorporate insights from recent literature mining"
-                    )
-                else:
-                    use_literature_context = False
-                
-        elif generation_mode == "Automated Pipeline":
+        if generation_mode == "Automated Pipeline":
             st.markdown("#### 🤖 Fully Automated Pipeline")
             st.markdown("_Generate candidates → Select best → Functionalize → Build 3D structures_")
             
@@ -2305,15 +2403,14 @@ elif page == "PSMILES Generation":
                     # Check if generator has the new method, reinitialize if not
                     if not hasattr(psmiles_generator, 'generate_diverse_candidates'):
                         st.warning("🔄 Updating PSMILES Generator with diversity features...")
-                        # Get current settings
-                        ollama_model = os.environ.get('OLLAMA_MODEL', 'llama3.2')
-                        ollama_host = os.environ.get('OLLAMA_HOST', 'http://localhost:11434')
-                        # Reinitialize with new features
+                        # Get current OpenAI settings from session state
+                        openai_model = st.session_state.get('openai_model', 'gpt-4o')
+                        temperature = st.session_state.get('temperature', 0.7)
+                        # Reinitialize with new features using OpenAI
                         psmiles_generator = PSMILESGenerator(
-                            model_type='ollama',
-                            ollama_model=ollama_model,
-                            ollama_host=ollama_host,
-                            temperature=0.8
+                            model_type='openai',
+                            openai_model=openai_model,
+                            temperature=temperature
                         )
                         st.session_state.psmiles_generator = psmiles_generator
                         st.success("✅ Generator updated with diversity features!")
@@ -2334,15 +2431,23 @@ elif page == "PSMILES Generation":
                         
                         # Convert to the format expected by the pipeline
                         generated_candidates = []
-                        for result in diverse_results:
-                            generated_candidates.append({
-                                'psmiles': result['psmiles'],
-                                'prompt': result.get('diversity_prompt', material_request),
-                                'method': result.get('method', 'diverse_generation'),
-                                'explanation': result.get('explanation', 'Diverse generated structure'),
-                                'generation_temperature': result.get('generation_temperature', 0.8),
-                                'generation_attempt': result.get('attempt_number', 1)
-                            })
+                        
+                        # Check if diverse generation was successful
+                        if diverse_results.get('success') and diverse_results.get('candidates'):
+                            candidates_list = diverse_results['candidates']
+                            for result in candidates_list:
+                                generated_candidates.append({
+                                    'psmiles': result['psmiles'],
+                                    'prompt': result.get('diversity_prompt', material_request),
+                                    'method': result.get('generation_method', 'working_pipeline_diverse'),  # Fixed: use generation_method
+                                    'explanation': result.get('explanation', 'Diverse generated structure'),
+                                    'generation_temperature': result.get('temperature_used', 0.8),
+                                    'generation_attempt': result.get('attempt_number', 1)
+                                })
+                        else:
+                            # If diverse generation failed, raise exception to trigger fallback
+                            error_msg = diverse_results.get('error', 'Unknown error in diverse generation')
+                            raise Exception(f"Diverse generation failed: {error_msg}")
                     
                     except Exception as e:
                         st.error(f"❌ Diverse generation failed: {e}")
@@ -2615,7 +2720,7 @@ elif page == "PSMILES Generation":
                     first_method = generated_candidates[0].get('method', 'unknown')
                     if 'working_pipeline' in first_method:
                         st.success("✅ **WORKING PIPELINE USED** - Generated via Natural Language → SMILES → PSMILES")
-                    elif 'pure_llm' in first_method or 'diverse' in first_method:
+                    elif 'pure_llm' in first_method or ('diverse' in first_method and 'working_pipeline' not in first_method):
                         st.error("🚨 **BROKEN PIPELINE USED** - Generated via direct PSMILES (produces []CSC[] errors)")
                         st.warning("🔄 **FIX NEEDED**: Click 'Force Update Generator' above and restart Streamlit")
                     else:
@@ -2643,7 +2748,7 @@ elif page == "PSMILES Generation":
                         svg_content = None
                         
                         # Only process if it's a valid PSMILES (has exactly 2 [*] symbols)
-                        if psmiles_to_visualize.count('[*]') == 2:
+                        if psmiles_to_visualize and psmiles_to_visualize.count('[*]') == 2:  # Added null check
                             try:
                                 # Safely get the processor with validation
                                 psmiles_processor = safe_get_session_object('psmiles_processor')
@@ -2651,24 +2756,20 @@ elif page == "PSMILES Generation":
                                     workflow_result = psmiles_processor.process_psmiles_workflow_with_autorepair(
                                         psmiles_to_visualize, st.session_state.session_id, "automated_pipeline"
                                     )
+                                    # **CRITICAL FIX**: Extract svg_content from workflow_result
+                                    if workflow_result.get('success') and workflow_result.get('svg_content'):
+                                        svg_content = workflow_result['svg_content']
+                                    else:
+                                        print(f"⚠️  Visualization failed for {psmiles_to_visualize}: {workflow_result.get('error', 'No SVG content generated')}")
                                 else:
                                     print(f"⚠️  PSMILES processor not available or invalid for {psmiles_to_visualize}")
-                                    print(f"   Processor exists: {psmiles_processor is not None}")
-                                    if psmiles_processor:
-                                        print(f"   Missing methods: {[m for m in ['_validate_psmiles_format', 'process_psmiles_workflow', '_fix_connection_points'] if not hasattr(psmiles_processor, m)]}")
-                                    continue
-                                if workflow_result.get('success') and workflow_result.get('svg_content'):
-                                    svg_content = workflow_result['svg_content']
-                                else:
-                                    print(f"⚠️  Visualization failed for {psmiles_to_visualize}: {workflow_result.get('error', 'No SVG content generated')}")
-                                    # Log more details about the failure
-                                    if 'error' in workflow_result:
-                                        print(f"   Error details: {workflow_result['error']}")
-                                    if 'type' in workflow_result:
-                                        print(f"   PSMILES type: {workflow_result['type']}")
+                                    workflow_result = {'success': False, 'error': 'Processor not available'}
                             except Exception as e:
-                                print(f"⚠️  Failed to generate SVG for {psmiles_to_visualize}: {e}")
-                                print(f"   Exception type: {type(e).__name__}")
+                                print(f"⚠️  Failed to process {psmiles_to_visualize}: {e}")
+                                workflow_result = {'success': False, 'error': str(e)}
+                        else:
+                            print(f"⚠️  Invalid or missing PSMILES to visualize: {psmiles_to_visualize}")
+                            workflow_result = {'success': False, 'error': 'Invalid PSMILES format'}
                         
                         # Create layout: SVG on left, details on right
                         if svg_content:
@@ -2698,7 +2799,8 @@ elif page == "PSMILES Generation":
                             else:
                                 st.markdown("**Final PSMILES Structure:**")
                                 st.code(candidate['functionalized'])
-                                if psmiles_to_visualize.count('[*]') != 2:
+                                # **CRITICAL FIX**: Add null check before calling count()
+                                if psmiles_to_visualize and psmiles_to_visualize.count('[*]') != 2:
                                     st.error("❌ Invalid PSMILES - cannot visualize")
                                 else:
                                     st.error("📝 Visualization not available for this structure")
@@ -2760,13 +2862,40 @@ elif page == "PSMILES Generation":
                             temp_info = ""
                             hybrid_method = None
                             
+                            # Check for functionalization
+                            is_functionalized = candidate.get('is_functionalized', False)
+                            functionalization_method = candidate.get('functionalization_method')
+                            
+                            # **FUNCTIONALIZATION INDICATOR** - Show if this is a functionalized variant
+                            if is_functionalized and functionalization_method:
+                                if 'copolymerize' in functionalization_method:
+                                    st.success("🧬 **COPOLYMERIZED VARIANT**")
+                                    st.info(f"🔗 Enhanced via {functionalization_method}")
+                                elif 'substitute' in functionalization_method:
+                                    st.success("⚗️ **SUBSTITUTED VARIANT**")
+                                    st.info(f"🧪 Enhanced via {functionalization_method}")
+                                elif 'randomize' in functionalization_method:
+                                    st.success("🎲 **RANDOMIZED VARIANT**")
+                                    st.info(f"🔄 Enhanced via {functionalization_method}")
+                                else:
+                                    st.success("🌟 **FUNCTIONALIZED VARIANT**")
+                                    st.info(f"✨ Enhanced via {functionalization_method}")
+                            
                             # **PIPELINE STATUS INDICATOR** - Show if broken method used
-                            if 'pure_llm' in method_display or 'diverse_generation' in method_display:
+                            if 'working_pipeline' in method_display:
+                                st.success("✅ **WORKING PIPELINE USED**")
+                                st.info("🔧 Generated via Natural Language → SMILES → PSMILES")
+                            elif 'pure_llm' in method_display or ('diverse_generation' in method_display and 'working_pipeline' not in method_display):
                                 st.error("🚨 **BROKEN PIPELINE USED**")
                                 st.error("❌ This structure was generated with the problematic direct method")
                                 st.warning("🔄 **Restart Streamlit to fix this!**")
-                            elif 'working_pipeline' in method_display:
-                                st.success("✅ **WORKING PIPELINE USED**")
+                            elif 'truly_diverse' in method_display:
+                                st.success("🌟 **TRULY DIVERSE GENERATION**")
+                                st.info("🎯 Generated with advanced diversification system")
+                            elif 'diverse_generation' in method_display:
+                                st.warning("🌟 **Diverse Generation**")
+                                st.info("This structure was generated with a diverse generation method")
+                            else:
                                 st.info("🔧 Generated via Natural Language → SMILES → PSMILES")
                             
                             # Find corresponding original candidate for temperature info and hybrid details
@@ -2890,7 +3019,7 @@ elif page == "PSMILES Generation":
                 st.success("✅ Automated Pipeline with Double Functionalization completed! Your structures now have multiple functional groups for enhanced insulin delivery properties.")
         
         # Interactive section continues for interactive mode only
-        if generation_mode == "Interactive Generation":
+        if generation_mode == "Automated Pipeline":
             # Ensure columns are defined for interactive mode
             col1, col2 = st.columns([2, 1])
             with col1:
@@ -3151,7 +3280,7 @@ elif page == "PSMILES Generation":
             if st.button("Use PCL Template"):
                 st.code("[*]C(=O)CCCCC[*]")
     
-    with tab5:
+    with tab2:
         st.markdown("### 🧬 Insulin Embedding in Polymer Matrix")
         st.markdown("*Embed insulin molecules into polymer structures for drug delivery applications*")
         

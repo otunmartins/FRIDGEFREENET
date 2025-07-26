@@ -4,33 +4,144 @@ from typing import List, Dict, Optional
 from datetime import datetime
 
 from .semantic_scholar_client import SemanticScholarClient
-from .ollama_client import OllamaClient
+
+# **UPDATED: Import OpenAI instead of Ollama**
+from langchain_openai import ChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.messages import HumanMessage, AIMessage
 
 
 class MaterialsLiteratureMiner:
     """
     Literature mining system for discovering materials suitable for fridge-free 
-    insulin delivery patches. Milestone 1: Basic LLM-guided literature mining.
+    insulin delivery patches. Now using OpenAI ChatGPT models for superior analysis.
     """
     
     def __init__(self, 
                  semantic_scholar_api_key: Optional[str] = None,
-                 ollama_model: str = "llama3.2",
-                 ollama_host: str = "http://localhost:11434"):
+                 model_type: str = "openai",
+                 openai_model: str = "gpt-4o",
+                 temperature: float = 0.7):
         """
-        Initialize the Materials Literature Mining system.
+        Initialize the Materials Literature Mining system with OpenAI.
         
         Args:
             semantic_scholar_api_key (str, optional): Semantic Scholar API key
-            ollama_model (str): OLLAMA model to use
-            ollama_host (str): OLLAMA server host URL
+            model_type (str): Type of model ('openai')
+            openai_model (str): OpenAI model name (gpt-4o, gpt-4, gpt-3.5-turbo, etc.)
+            temperature (float): Model temperature (0.0-2.0)
         """
         self.scholar = SemanticScholarClient(api_key=semantic_scholar_api_key)
-        self.ollama = OllamaClient(model_name=ollama_model, host=ollama_host)
+        
+        # **UPDATED: Initialize OpenAI ChatGPT model**
+        self.model_type = model_type
+        self.openai_model = openai_model
+        self.temperature = temperature
+        
+        try:
+            # Verify API key is available
+            api_key = os.environ.get('OPENAI_API_KEY')
+            if not api_key:
+                raise ValueError("OpenAI API key not found. Please set OPENAI_API_KEY environment variable.")
+            
+            self.llm = ChatOpenAI(
+                model=openai_model,
+                temperature=temperature,
+                openai_api_key=api_key
+            )
+            print(f"✅ Literature Mining initialized with OpenAI {openai_model}")
+        except Exception as e:
+            print(f"❌ Failed to initialize OpenAI for literature mining: {e}")
+            raise
+        
+        # Setup analysis prompts
+        self.prompts = self._setup_analysis_prompts()
         
         print("Materials Literature Mining System initialized!")
-        print(f"Using OLLAMA model: {ollama_model}")
+        print(f"Using OpenAI model: {openai_model}")
         print(f"Semantic Scholar API: {'Authenticated' if semantic_scholar_api_key else 'Public (rate limited)'}")
+    
+    def _setup_analysis_prompts(self) -> Dict:
+        """Setup prompt templates for literature analysis."""
+        
+        query_generation_prompt = """You are an expert materials scientist specializing in drug delivery systems and insulin formulations.
+
+Your task is to generate effective search queries for finding research papers about materials for fridge-free insulin delivery patches.
+
+USER REQUEST: {user_request}
+
+Generate 3-5 specific search queries that would find relevant research papers. Focus on:
+1. Polymer materials for insulin encapsulation
+2. Thermal stability enhancers for insulin
+3. Transdermal delivery systems
+4. Biocompatible materials for drug delivery
+5. Insulin formulation stabilizers
+
+Return your response as a JSON list of search terms, like this:
+["polymer insulin delivery", "thermal stable insulin formulation", "transdermal insulin patch"]
+
+Search queries:"""
+
+        relevance_analysis_prompt = """You are an expert in materials science and drug delivery systems.
+
+Analyze this research paper abstract and determine its relevance to fridge-free insulin delivery patch development.
+
+ABSTRACT: {abstract}
+
+Evaluate the paper based on:
+1. Materials mentioned (polymers, hydrogels, nanoparticles, etc.)
+2. Insulin stability or protein drug delivery
+3. Thermal stability or room temperature storage
+4. Transdermal or patch-based delivery
+5. Biocompatibility and safety
+
+Provide your analysis as JSON:
+{{
+    "relevance_score": 0.0-1.0,
+    "key_materials": ["material1", "material2"],
+    "key_findings": "Brief summary of relevant findings",
+    "thermal_stability": true/false,
+    "insulin_related": true/false,
+    "recommended": true/false
+}}
+
+Analysis:"""
+
+        material_extraction_prompt = """You are an expert computational materials scientist.
+
+Extract and analyze materials information from this research abstract for insulin delivery applications.
+
+ABSTRACT: {abstract}
+
+Extract the following information:
+1. Specific materials mentioned (polymers, composites, etc.)
+2. Material properties relevant to insulin delivery
+3. Thermal stability data if mentioned
+4. Biocompatibility information
+5. Performance metrics for drug delivery
+
+Return as JSON:
+{{
+    "materials": [
+        {{
+            "name": "material name",
+            "type": "polymer/hydrogel/nanoparticle/etc",
+            "properties": ["property1", "property2"],
+            "insulin_compatibility": "high/medium/low/unknown",
+            "thermal_stability": "high/medium/low/unknown"
+        }}
+    ],
+    "key_findings": "Summary of material performance",
+    "applications": ["insulin delivery", "drug encapsulation", "etc"]
+}}
+
+Material analysis:"""
+
+        return {
+            'query_generation': ChatPromptTemplate.from_template(query_generation_prompt),
+            'relevance_analysis': ChatPromptTemplate.from_template(relevance_analysis_prompt),
+            'material_extraction': ChatPromptTemplate.from_template(material_extraction_prompt)
+        }
     
     def intelligent_mining(self,
                           user_request: str,
@@ -247,20 +358,12 @@ Generate 8 natural language search queries now that will maximize material disco
 
         try:
             print("🤖 Generating AGGRESSIVE search strategy...")
-            response = self.ollama.client.chat(
-                model=self.ollama.model_name,
-                messages=[{
-                    'role': 'user',
-                    'content': strategy_prompt
-                }],
-                options={
-                    'temperature': 0.7,  # Higher temperature for more diverse search queries
-                    'num_predict': 1500
-                }
-            )
+            response = self.llm.invoke({
+                "messages": [{"role": "user", "content": strategy_prompt}]
+            })
             
             # Parse the strategy response
-            strategy = self._parse_strategy_response(response['message']['content'])
+            strategy = self._parse_strategy_response(response.content)
             
             # Ensure we have enough queries
             if len(strategy.get('search_queries', [])) < 5:
@@ -423,20 +526,12 @@ Generate 8 natural language search queries now that will maximize material disco
         
         try:
             print("🤖 Extracting material data using LLM...")
-            response = self.ollama.client.chat(
-                model=self.ollama.model_name,
-                messages=[{
-                    'role': 'user',
-                    'content': full_prompt
-                }],
-                options={
-                    'temperature': 0.3,
-                    'num_predict': 4000
-                }
-            )
+            response = self.llm.invoke({
+                "messages": [{"role": "user", "content": full_prompt}]
+            })
             
             # Parse the LLM response
-            material_candidates = self._parse_llm_response(response['message']['content'])
+            material_candidates = self._parse_llm_response(response.content)
             return material_candidates
             
         except Exception as e:
@@ -818,17 +913,13 @@ Base your analysis on the following papers:
 Provide a comprehensive technical summary."""
 
         try:
-            response = self.ollama.client.chat(
-                model=self.ollama.model_name,
-                messages=[{
-                    'role': 'user', 
-                    'content': detail_prompt
-                }]
-            )
+            response = self.llm.invoke({
+                "messages": [{"role": "user", "content": detail_prompt}]
+            })
             
             return {
                 "material_name": material_name,
-                "detailed_analysis": response['message']['content'],
+                "detailed_analysis": response.content,
                 "source_papers": len(papers),
                 "papers": papers[:5]
             }
@@ -1000,16 +1091,11 @@ Extract ALL materials now:"""
             }
         
         try:
-            response = self.ollama.client.chat(
-                model=self.ollama.model_name,
-                messages=[{
-                    'role': 'user',
-                    'content': analysis_prompt
-                }],
-                options=llm_options
-            )
+            response = self.llm.invoke({
+                "messages": [{"role": "user", "content": analysis_prompt}]
+            })
             
-            analysis_text = response['message']['content'].strip()
+            analysis_text = response.content.strip()
             
             # Parse the analysis into structured material data
             materials = self._parse_single_paper_analysis(analysis_text, harvard_citation, paper_number)
@@ -1397,19 +1483,11 @@ Be factual and objective. Do NOT assess quality, promise levels, or biocompatibi
                 return "🔄 Processing your request..."
 
             # Generate the explanation using LLM
-            response = self.ollama.client.chat(
-                model=self.ollama.model_name,
-                messages=[{
-                    'role': 'user',
-                    'content': prompt
-                }],
-                options={
-                    'temperature': 0.7,  # Higher temperature for more natural language
-                    'num_predict': 300   # Shorter responses
-                }
-            )
+            response = self.llm.invoke({
+                "messages": [{"role": "user", "content": prompt}]
+            })
             
-            return response['message']['content'].strip()
+            return response.content.strip()
             
         except Exception as e:
             print(f"Error generating explanation: {e}")

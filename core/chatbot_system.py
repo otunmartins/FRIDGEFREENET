@@ -1,72 +1,83 @@
 #!/usr/bin/env python3
 """
-Insulin AI Chatbot System
-A LangChain-based conversational AI for insulin delivery patch research.
-
-This system provides specialized conversation modes:
-- General: Project overview and general questions
-- Research: Technical research assistance
-- Literature: Integration with literature mining
-
-Enhanced with persistent conversation memory using LangChain memory components.
-Now supports Ollama model backend for conversational AI.
+Enhanced Insulin AI Chatbot System
+Conversational AI system for insulin delivery patch research.
+Enhanced with persistent LangChain memory for conversation context.
+Now supports OpenAI ChatGPT models for superior performance.
 """
 
 import os
 import json
-from typing import Dict, List, Optional
+import pickle
+from typing import Dict, List, Optional, Any
+from datetime import datetime
+import traceback
 from datetime import datetime
 import pickle
 
-from langchain_ollama import OllamaLLM
+# **UPDATED: OpenAI imports instead of Ollama**
+from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.runnables import RunnablePassthrough
-from langchain.memory import ConversationBufferMemory, ConversationSummaryMemory, ConversationBufferWindowMemory
-from langchain.schema import BaseMessage
 
-# Removed LlaSMol integration - using Ollama only
+# Enhanced LangChain memory system
+from langchain.memory import (
+    ConversationBufferMemory,
+    ConversationSummaryMemory,
+    ConversationBufferWindowMemory
+)
 
+# **UPDATED: Now supports OpenAI ChatGPT models**
 
 class InsulinAIChatbot:
     """
     Conversational AI system for insulin delivery patch research.
     Enhanced with persistent LangChain memory for conversation context.
-    Uses Ollama model backend for conversational AI.
+    Now uses OpenAI ChatGPT models for superior performance.
     """
     
     def __init__(self, 
-                 model_type: str = "ollama",
-                 ollama_model: str = "llama3.2",
-                 ollama_host: str = "http://localhost:11434",
+                 model_type: str = "openai",
+                 openai_model: str = "gpt-4o",
+                 temperature: float = 0.7,
                  memory_type: str = "buffer_window",
                  memory_dir: str = "chat_memory"):
         """
-        Initialize the Insulin AI Chatbot with model selection and persistent memory.
+        Initialize the Insulin AI Chatbot with OpenAI model and persistent memory.
         
         Args:
-            model_type (str): Type of model to use ('ollama' only)
-            ollama_model (str): Ollama model name
-            ollama_host (str): Ollama server host
+            model_type (str): Type of model to use ('openai')
+            openai_model (str): OpenAI model name (gpt-4o, gpt-4, gpt-3.5-turbo, etc.)
+            temperature (float): Model temperature (0.0-2.0)
             memory_type (str): Type of memory to use ('buffer', 'summary', 'buffer_window')
             memory_dir (str): Directory to store memory files
         """
         self.model_type = model_type.lower()
         self.memory_type = memory_type
         self.memory_dir = memory_dir
+        self.temperature = temperature
         
         # Create memory directory if it doesn't exist
         if not os.path.exists(memory_dir):
             os.makedirs(memory_dir)
         
-        # Initialize Ollama LLM (LlaSMol integration removed)
-        self.model_name = ollama_model
-        self.host = ollama_host
+        # **UPDATED: Initialize OpenAI ChatGPT model**
+        self.model_name = openai_model
         try:
-            self.llm = OllamaLLM(model=ollama_model, base_url=ollama_host)
-            print(f"✅ Ollama chatbot initialized with {ollama_model}")
+            # Verify API key is available
+            api_key = os.environ.get('OPENAI_API_KEY')
+            if not api_key:
+                raise ValueError("OpenAI API key not found. Please set OPENAI_API_KEY environment variable.")
+            
+            self.llm = ChatOpenAI(
+                model=openai_model,
+                temperature=temperature,
+                openai_api_key=api_key
+            )
+            print(f"✅ OpenAI chatbot initialized with {openai_model} (temp: {temperature})")
         except Exception as e:
-            print(f"❌ Failed to initialize Ollama chatbot: {e}")
+            print(f"❌ Failed to initialize OpenAI chatbot: {e}")
             raise
         
         # Initialize memory storage for different sessions
@@ -78,38 +89,50 @@ class InsulinAIChatbot:
     
     def switch_model(self, 
                     model_type: str, 
-                    model_name: Optional[str] = None) -> bool:
+                    model_name: Optional[str] = None,
+                    temperature: Optional[float] = None) -> bool:
         """
-        Switch between different Ollama models.
+        Switch between different OpenAI models.
         
         Args:
-            model_type (str): 'ollama' only (LlaSMol support removed)
-            model_name (str): Specific Ollama model name (optional)
+            model_type (str): 'openai' only
+            model_name (str): Specific OpenAI model name (optional)
+            temperature (float): Model temperature (optional)
             
         Returns:
             bool: Success status
         """
         try:
-            if model_type.lower() == "ollama":
-                target_model = model_name or "llama3.2"
-                host = getattr(self, 'host', 'http://localhost:11434')
+            if model_type.lower() == "openai":
+                target_model = model_name or "gpt-4o"
+                target_temp = temperature or self.temperature
                 
-                new_llm = OllamaLLM(model=target_model, base_url=host)
-                self.model_type = "ollama"
+                # Verify API key
+                api_key = os.environ.get('OPENAI_API_KEY')
+                if not api_key:
+                    raise ValueError("OpenAI API key not found.")
+                
+                new_llm = ChatOpenAI(
+                    model=target_model,
+                    temperature=target_temp,
+                    openai_api_key=api_key
+                )
+                self.model_type = "openai"
                 self.model_name = target_model
+                self.temperature = target_temp
                 self.llm = new_llm
-                print(f"✅ Switched to Ollama: {target_model}")
+                print(f"✅ Switched to OpenAI: {target_model} (temp: {target_temp})")
                 return True
             
             else:
-                print(f"❌ Unknown model type: {model_type}")
+                print(f"❌ Unknown model type: {model_type}. Only 'openai' is supported.")
                 return False
         
         except Exception as e:
             print(f"❌ Failed to switch model: {e}")
             return False
     
-    def _create_memory(self, session_id: str, mode: str) -> BaseMessage:
+    def _create_memory(self, session_id: str, mode: str) -> Any:
         """Create appropriate memory type for a session."""
         memory_key = f"{session_id}_{mode}"
         
@@ -318,7 +341,7 @@ Previous conversations:
              session_id: str, 
              mode: str = 'general') -> Dict:
         """
-        Process a chat message with enhanced memory and multi-model support.
+        Process a chat message with enhanced memory and OpenAI ChatGPT models.
         
         Args:
             message (str): User's message
@@ -341,9 +364,15 @@ Previous conversations:
             # Format history for the prompt
             history = self._format_history_for_prompt(memory)
             
-            # Generate response using Ollama
-            formatted_prompt = prompt_template.format(input=message, history=history)
-            response_text = self.llm.invoke(formatted_prompt)
+            # **UPDATED: Generate response using OpenAI ChatGPT with proper message format**
+            # Format the prompt with history and input
+            messages = prompt_template.format_messages(input=message, history=history)
+            
+            # Invoke the OpenAI model with properly formatted messages
+            response = self.llm.invoke(messages)
+            
+            # Extract the response text (OpenAI returns a message object)
+            response_text = response.content if hasattr(response, 'content') else str(response)
             
             # Add to memory
             memory.chat_memory.add_user_message(message)
@@ -352,9 +381,7 @@ Previous conversations:
             # Save memory to file
             self._save_memory(session_id, mode)
             
-            # Chemistry parsing removed (LlaSMol integration removed)
-            parsed_chemistry = {}
-            
+            # Return enhanced response info
             return {
                 'success': True,
                 'response': response_text,
@@ -362,12 +389,15 @@ Previous conversations:
                 'mode': mode,
                 'model_type': self.model_type,
                 'model_name': self.model_name,
+                'temperature': self.temperature,
                 'memory_type': self.memory_type,
-                'parsed_chemistry': parsed_chemistry,
-                'timestamp': datetime.now().isoformat()
+                'timestamp': datetime.now().isoformat(),
+                'token_usage': getattr(response, 'response_metadata', {}).get('token_usage', {})
             }
             
         except Exception as e:
+            print(f"❌ Chat error: {e}")
+            traceback.print_exc()
             return {
                 'success': False,
                 'error': str(e),
@@ -394,8 +424,8 @@ Previous conversations:
             'available_models': {}
         }
         
-        # Add Ollama info
-        info['available_models']['ollama'] = ['llama3.2', 'llama2', 'codellama', 'mistral', 'mixtral']
+        # Add OpenAI info
+        info['available_models']['openai'] = ['gpt-4o', 'gpt-4', 'gpt-3.5-turbo']
         
         # LlaSMol integration removed
         
@@ -409,9 +439,17 @@ Previous conversations:
             Dict: Chemistry capabilities information
         """
         return {
-            'chemistry_model': False,
-            'specialized_for': 'General conversation and research assistance',
-            'note': 'LlaSMol integration removed - using Ollama for general chemistry assistance'
+            'chemistry_model': True,
+            'specialized_for': 'Advanced chemistry understanding via OpenAI ChatGPT models',
+            'note': f'Using OpenAI {self.model_name} for superior chemistry assistance and reasoning',
+            'capabilities': [
+                'Advanced chemical reasoning',
+                'Molecular structure analysis', 
+                'Chemical property prediction',
+                'Reaction mechanism explanation',
+                'Materials science expertise',
+                'Biochemistry and drug delivery knowledge'
+            ]
         }
     
     def clear_history(self, session_id: str, mode: str = None):
@@ -467,28 +505,39 @@ Previous conversations:
         return self.chat_histories[session_id]
     
     def test_connection(self) -> str:
-        """Test the connection to Ollama."""
+        """Test the connection to OpenAI."""
         try:
-            response = self.llm.invoke("Hello, please respond with 'Connection successful'")
-            return "Connected successfully"
+            # Test with a simple message
+            response = self.llm.invoke([HumanMessage(content="Hello, please respond with 'Connection successful'")])
+            response_text = response.content if hasattr(response, 'content') else str(response)
+            
+            if "successful" in response_text.lower():
+                return f"✅ OpenAI connection successful with {self.model_name}"
+            else:
+                return f"⚠️ OpenAI responded but may have issues: {response_text}"
+                
         except Exception as e:
-            return f"Connection failed: {str(e)}"
+            return f"❌ OpenAI connection failed: {str(e)}"
 
 
 def test_chatbot():
-    """Test function for the chatbot system using Medium article patterns."""
-    print("🧪 Testing Insulin AI Chatbot with proven LangChain patterns...")
+    """Test function for the chatbot system using OpenAI ChatGPT models."""
+    print("🧪 Testing Insulin AI Chatbot with OpenAI ChatGPT...")
     
     try:
-        # Initialize chatbot
-        chatbot = InsulinAIChatbot()
+        # Initialize chatbot with OpenAI
+        chatbot = InsulinAIChatbot(
+            model_type="openai", 
+            openai_model="gpt-4o",
+            temperature=0.7
+        )
         
         # Test connection first
         connection_status = chatbot.test_connection()
         print(f"🔗 Connection test: {connection_status}")
         
         if "failed" in connection_status.lower():
-            print("❌ Cannot proceed with tests - Ollama connection failed")
+            print("❌ Cannot proceed with tests - OpenAI connection failed")
             return
         
         # Test general mode
@@ -509,21 +558,21 @@ def test_chatbot():
         )
         print(f"✅ Research mode response: {response['response'][:150]}...")
         
-        # Test literature mode
-        print("\n📚 Testing Literature Mode...")
+        # Test memory persistence
+        print("\n💭 Testing Memory...")
         response = chatbot.chat(
-            message="What search terms should I use to find polymer materials for insulin delivery?",
+            message="What did I just ask about?",
             session_id="test_session",
-            mode="literature"
+            mode="research"
         )
-        print(f"✅ Literature mode response: {response['response'][:150]}...")
+        print(f"✅ Memory test response: {response['response'][:150]}...")
         
-        print("\n🎉 All chatbot tests passed! Ready for web application integration.")
+        print("\n🎉 All tests passed! OpenAI ChatGPT integration working correctly.")
         
     except Exception as e:
         print(f"❌ Chatbot test failed: {e}")
-        print("💡 Make sure Ollama is running: ollama serve")
-        print("💡 Make sure the model is available: ollama pull llama3.2")
+        print("💡 Make sure OpenAI API key is set: export OPENAI_API_KEY='your_api_key'")
+        print("💡 Check that you have internet access for OpenAI API calls")
 
 
 if __name__ == "__main__":

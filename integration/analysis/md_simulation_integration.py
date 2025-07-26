@@ -55,7 +55,7 @@ except ImportError:
 
 # Import MM-GBSA calculator
 try:
-    from insulin_mmgbsa_calculator import InsulinMMGBSACalculator
+    from .insulin_mmgbsa_calculator import InsulinMMGBSACalculator
     MMGBSA_AVAILABLE = True
 except ImportError:
     MMGBSA_AVAILABLE = False

@@ -68,13 +68,13 @@ except ImportError as e:
     logging.warning(f"SciPy/scikit-learn not available: {e}")
     SCIPY_AVAILABLE = False
 
-# Import the proven MM-GBSA calculator as base
+# Import MM-GBSA calculator
 try:
-    from insulin_mmgbsa_calculator import InsulinMMGBSACalculator
-    MMGBSA_BASE_AVAILABLE = True
-except ImportError as e:
-    logging.warning(f"Base MM-GBSA calculator not available: {e}")
-    MMGBSA_BASE_AVAILABLE = False
+    from .insulin_mmgbsa_calculator import InsulinMMGBSACalculator
+    MMGBSA_AVAILABLE = True
+except ImportError:
+    logging.warning("Base MM-GBSA calculator not available: InsulinMMGBSACalculator not found.")
+    MMGBSA_AVAILABLE = False
 
 class InsulinComprehensiveAnalyzer:
     """
@@ -93,7 +93,7 @@ class InsulinComprehensiveAnalyzer:
         if not OPENFF_AVAILABLE:
             raise ImportError("OpenFF toolkit is required for polymer handling")
         
-        if not MMGBSA_BASE_AVAILABLE:
+        if not MMGBSA_AVAILABLE:
             raise ImportError("Base MM-GBSA calculator is required")
         
         self.output_dir = Path(output_dir)
@@ -1248,7 +1248,7 @@ if __name__ == "__main__":
         print("❌ MDTraj not available. Cannot test comprehensive analyzer.")
     elif not OPENFF_AVAILABLE:
         print("❌ OpenFF/OpenMMForceFields not available. Cannot test comprehensive analyzer.")
-    elif not MMGBSA_BASE_AVAILABLE:
+    elif not MMGBSA_AVAILABLE:
         print("❌ Base MM-GBSA calculator not available. Cannot test comprehensive analyzer.")
     else:
         success = test_comprehensive_analyzer()
