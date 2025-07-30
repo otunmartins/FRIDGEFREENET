@@ -13,12 +13,12 @@ from pathlib import Path
 import os
 import traceback
 
-# Import the SMILES storage utility
+# Import DirectPolymerBuilder for SMILES storage
 try:
-    from app.utils.psmiles_smiles_storage import get_smiles_for_md_simulation, get_stored_smiles_for_psmiles
-    SMILES_STORAGE_AVAILABLE = True
+    from utils.direct_polymer_builder import DirectPolymerBuilder
+    POLYMER_BUILDER_AVAILABLE = True
 except ImportError:
-    SMILES_STORAGE_AVAILABLE = False
+    POLYMER_BUILDER_AVAILABLE = False
 
 # Import MD simulation components
 try:
@@ -50,7 +50,7 @@ class EnhancedMDWithStoredSMILES:
         self.output_dir.mkdir(exist_ok=True)
         
         # Check availability of required components
-        self.smiles_storage_available = SMILES_STORAGE_AVAILABLE
+        self.smiles_storage_available = POLYMER_BUILDER_AVAILABLE
         self.md_integration_available = MD_INTEGRATION_AVAILABLE  
         self.openmm_available = OPENMM_AVAILABLE
         
@@ -114,7 +114,9 @@ class EnhancedMDWithStoredSMILES:
             # **STEP 1: Get SMILES from storage (primary method)**
             smiles = None
             if self.smiles_storage_available:
-                smiles = get_smiles_for_md_simulation(psmiles)
+                # Use DirectPolymerBuilder to get SMILES
+                builder = DirectPolymerBuilder()
+                smiles = builder.get_polymer_smiles_for_md(psmiles)
                 if smiles:
                     status['smiles_source'] = 'pre_stored'
                     print(f"✅ Using pre-stored SMILES: {smiles}")
@@ -228,7 +230,7 @@ class EnhancedMDWithStoredSMILES:
             )
             
             results['force_field_status'] = ff_status
-            results['smiles_used'] = get_smiles_for_md_simulation(psmiles) if self.smiles_storage_available else None
+            results['smiles_used'] = DirectPolymerBuilder().get_polymer_smiles_for_md(psmiles) if self.smiles_storage_available else None
             
             if not ff_status['success']:
                 results['error'] = f"Force field setup failed: {ff_status['error']}"

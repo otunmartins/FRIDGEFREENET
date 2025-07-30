@@ -144,7 +144,8 @@ class SimulationAutomation:
                 psmiles_str=psmiles,
                 chain_length=chain_length,
                 output_dir=molecules_dir,
-                end_cap_atom=end_cap_atom
+                end_cap_atom=end_cap_atom,
+                candidate_id=candidate_id  # Pass candidate_id for automatic SMILES storage
             )
             
             if result['success']:
@@ -152,6 +153,7 @@ class SimulationAutomation:
                 print(f"🔧 Method: {result['method']}")
                 print(f"📁 PDB file: {result['pdb_file']}")
                 print(f"🧬 Polymer SMILES: {result['polymer_smiles'][:50]}...")
+                print(f"💾 SMILES stored: {result.get('smiles_stored', False)}")
                 
                 # Copy the polymer.pdb to expected location for compatibility
                 polymer_pdb_target = os.path.join(molecules_dir, "polymer_chain.pdb")

@@ -18,17 +18,31 @@ from typing import Dict, Any, List, Optional, Tuple
 try:
     from app.utils.session_utils import safe_get_session_object
     from app.services.psmiles_service import process_psmiles_workflow_with_autorepair
-except ImportError:
-    # Fallback for different import contexts
+    from app.utils.psmiles_smiles_storage import update_session_candidates_with_smiles
+    print("✅ PSMILES Generation UI: All imports successful")
+except ImportError as e:
+    print(f"❌ PSMILES Generation UI: Import error: {e}")
+    # Fallback imports for standalone operation
     try:
-        from utils.session_utils import safe_get_session_object
-        from services.psmiles_service import process_psmiles_workflow_with_autorepair
-    except ImportError:
-        # Define dummy functions for testing
+        import sys
+        from pathlib import Path
+        project_root = Path(__file__).parent.parent.parent
+        sys.path.insert(0, str(project_root))
+        
+        from app.utils.session_utils import safe_get_session_object
+        from app.services.psmiles_service import process_psmiles_workflow_with_autorepair  
+        from app.utils.psmiles_smiles_storage import update_session_candidates_with_smiles
+        print("✅ PSMILES Generation UI: Fallback imports successful")
+    except ImportError as e2:
+        print(f"❌ PSMILES Generation UI: Fallback imports failed: {e2}")
+        # Define minimal stubs
         def safe_get_session_object(key):
-            return None
+            return getattr(st.session_state, key, None)
         def process_psmiles_workflow_with_autorepair(*args, **kwargs):
-            return {'candidates': [], 'workflow_summary': {}}
+            return None
+        def update_session_candidates_with_smiles():
+            pass
+
 
 # Define validation functions locally to avoid circular imports
 def validate_psmiles_processor(processor) -> bool:
@@ -580,13 +594,47 @@ def execute_automated_pipeline_with_progress(material_request: str, num_candidat
     progress_bar.progress(100, "Pipeline completed!")
     st.success("🎉 Generation and automation pipeline completed successfully!")
     
-    # Add to session state
+    # **NEW: Enhance candidates with SMILES data for MD simulation readiness**
+    from app.utils.psmiles_smiles_storage import PSMILESWithSMILESStorage
+    
     if functionalized_candidates:
-        for candidate in functionalized_candidates:
-            candidate['request'] = material_request
+        # Initialize SMILES storage utility
+        storage = PSMILESWithSMILESStorage()
+        
+        # Enhance each candidate with SMILES data
+        progress_bar.progress(90, "Enhancing candidates with SMILES data for MD simulation...")
+        enhanced_candidates = []
+        
+        for i, candidate in enumerate(functionalized_candidates):
+            # Enhance with SMILES
+            enhanced_candidate = storage.enhance_candidate_with_smiles(candidate)
+            enhanced_candidate['request'] = material_request
             # Add simulation results to candidates if available
-            candidate['simulation_results'] = simulation_results or {}
-            st.session_state.psmiles_candidates.append(candidate)
+            enhanced_candidate['simulation_results'] = simulation_results or {}
+            enhanced_candidates.append(enhanced_candidate)
+            
+            # Show progress for SMILES enhancement
+            if enhanced_candidate.get('smiles_conversion_success'):
+                st.info(f"✅ Candidate {i+1}: Enhanced with SMILES - Ready for MD simulation")
+            else:
+                st.warning(f"⚠️ Candidate {i+1}: SMILES conversion failed - {enhanced_candidate.get('smiles_conversion_error', 'Unknown error')}")
+        
+        # Store enhanced candidates in session state
+        for enhanced_candidate in enhanced_candidates:
+            st.session_state.psmiles_candidates.append(enhanced_candidate)
+            
+        progress_bar.progress(100, "Pipeline completed with SMILES enhancement!")
+        
+        # Return enhanced candidates
+        functionalized_candidates = enhanced_candidates
+    
+    # Add to session state
+    # if functionalized_candidates:
+    #     for candidate in functionalized_candidates:
+    #         candidate['request'] = material_request
+    #         # Add simulation results to candidates if available
+    #         candidate['simulation_results'] = simulation_results or {}
+    #         st.session_state.psmiles_candidates.append(candidate)
     
     return {
         'candidates': functionalized_candidates,
@@ -1041,6 +1089,22 @@ def render_insulin_embedding_tab():
         st.info("🚧 Embedding functionality will be implemented to match the original app's comprehensive workflow.")
 
 
+# **NEW: Add SMILES enhancement for existing candidates**
+def enhance_existing_candidates_with_smiles():
+    """Enhance existing candidates in session state with SMILES data if missing"""
+    if 'psmiles_candidates' in st.session_state and st.session_state.psmiles_candidates:
+        # Check if any candidates are missing SMILES data
+        candidates_needing_enhancement = [
+            c for c in st.session_state.psmiles_candidates 
+            if not c.get('smiles_conversion_success') and not c.get('smiles')
+        ]
+        
+        if candidates_needing_enhancement:
+            st.info(f"🔄 Enhancing {len(candidates_needing_enhancement)} existing candidates with SMILES data...")
+            update_session_candidates_with_smiles()
+            st.success("✅ Existing candidates enhanced with SMILES data!")
+
+
 def render_psmiles_generation():
     """
     Render the complete enhanced PSMILES generation page
@@ -1064,6 +1128,9 @@ def render_psmiles_generation():
     if 'workflow_result' not in st.session_state:
         st.session_state.workflow_result = None
     
+    # Enhance existing candidates with SMILES data
+    enhance_existing_candidates_with_smiles()
+
     # **ENHANCED**: Main tabs with enhanced functionality
     tab1, tab2 = st.tabs(["Material Generation", "Insulin Embedding"])
     

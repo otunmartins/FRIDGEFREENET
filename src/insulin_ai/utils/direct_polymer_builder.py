@@ -1,11 +1,12 @@
 """
-Direct Polymer Builder using PSMILES Package
+Direct Polymer Builder using PSMILES Package with Integrated SMILES Storage
 
 This module completely bypasses PSP and uses the psmiles package directly for:
 1. Polymer chain generation via alternating_copolymer
 2. PSMILES to SMILES conversion with end-capping
 3. Direct PDB generation with CONECT entries
 4. PACKMOL integration for solvation
+5. Integrated SMILES storage for MD simulation workflows
 
 Author: AI-Driven Material Discovery Team
 """
@@ -18,38 +19,51 @@ from rdkit import Chem
 from rdkit.Chem import AllChem
 from typing import Dict, Optional, Tuple
 from pathlib import Path
+from datetime import datetime
 
 # Import our PSMILES converter
 from utils.psmiles_to_smiles_converter import PSMILESConverter
 
+# Streamlit for session state storage
+try:
+    import streamlit as st
+    STREAMLIT_AVAILABLE = True
+except ImportError:
+    STREAMLIT_AVAILABLE = False
+
 
 class DirectPolymerBuilder:
     """
-    Direct polymer builder using psmiles package, completely bypassing PSP.
+    Direct polymer builder using psmiles package with integrated SMILES storage.
     
     Features:
     - Uses psmiles.alternating_copolymer() for chain generation
     - PSMILES to SMILES conversion with end-capping
     - Direct PDB generation with CONECT entries
     - PACKMOL integration for solvation
+    - Integrated SMILES storage for MD simulation workflows
     """
     
     def __init__(self):
         self.converter = PSMILESConverter()
+        self._stored_smiles = {}  # Local storage as backup
     
     def build_polymer_chain(self, 
                           psmiles_str: str, 
                           chain_length: int = 10,
                           output_dir: Optional[str] = None,
-                          end_cap_atom: str = 'C') -> Dict:
+                          end_cap_atom: str = 'C',
+                          candidate_id: str = None) -> Dict:
         """
         Build a complete polymer chain using psmiles package directly.
+        Automatically stores polymer SMILES for MD simulation use.
         
         Args:
             psmiles_str: Input PSMILES string (monomer)
             chain_length: Number of repeat units
             output_dir: Output directory
             end_cap_atom: Atom to cap polymer ends (default 'C')
+            candidate_id: Optional candidate identifier for tracking
             
         Returns:
             Dict with polymer information and file paths
@@ -82,6 +96,11 @@ class DirectPolymerBuilder:
             pdb_file = self._generate_pdb_with_conect(polymer_smiles, output_dir)
             print(f"✅ PDB file created: {pdb_file}")
             
+            # Step 4: Store polymer SMILES for MD simulation use
+            print(f"\n💾 Step 4: Storing polymer SMILES for MD simulation...")
+            self._store_polymer_smiles(psmiles_str, polymer_smiles, candidate_id)
+            print(f"✅ Polymer SMILES stored for MD simulation use")
+            
             return {
                 'success': True,
                 'method': 'direct_psmiles_no_psp',
@@ -91,7 +110,9 @@ class DirectPolymerBuilder:
                 'pdb_file': pdb_file,
                 'output_dir': output_dir,
                 'chain_length': chain_length,
-                'end_cap_atom': end_cap_atom
+                'end_cap_atom': end_cap_atom,
+                'candidate_id': candidate_id,
+                'smiles_stored': True
             }
             
         except Exception as e:
@@ -102,7 +123,8 @@ class DirectPolymerBuilder:
             return {
                 'success': False,
                 'error': str(e),
-                'method': 'direct_psmiles_failed'
+                'method': 'direct_psmiles_failed',
+                'smiles_stored': False
             }
     
     def _create_polymer_chain(self, psmiles_str: str, chain_length: int) -> str:
@@ -318,6 +340,195 @@ class DirectPolymerBuilder:
                 'success': False,
                 'error': str(e)
             }
+    
+    def _store_polymer_smiles(self, psmiles: str, polymer_smiles: str, candidate_id: str = None) -> bool:
+        """
+        Store polymer SMILES for MD simulation use in both session state and local storage.
+        
+        Args:
+            psmiles: Original monomer PSMILES string
+            polymer_smiles: Full polymer chain SMILES with end-caps
+            candidate_id: Optional candidate identifier
+            
+        Returns:
+            bool: True if successfully stored
+        """
+        try:
+            storage_data = {
+                'polymer_smiles': polymer_smiles,
+                'candidate_id': candidate_id,
+                'timestamp': datetime.now().isoformat(),
+                'source': 'DirectPolymerBuilder',
+                'chain_type': 'polymer_with_endcaps'
+            }
+            
+            # Store in local backup
+            self._stored_smiles[psmiles] = storage_data
+            
+            # Store in Streamlit session state if available
+            if STREAMLIT_AVAILABLE and hasattr(st, 'session_state'):
+                if 'polymer_chain_smiles_mapping' not in st.session_state:
+                    st.session_state.polymer_chain_smiles_mapping = {}
+                
+                st.session_state.polymer_chain_smiles_mapping[psmiles] = storage_data
+                
+                # Also update any existing candidates in session state
+                if 'psmiles_candidates' in st.session_state:
+                    for candidate in st.session_state.psmiles_candidates:
+                        candidate_psmiles = (candidate.get('functionalized') or 
+                                           candidate.get('original') or 
+                                           candidate.get('psmiles'))
+                        if candidate_psmiles == psmiles:
+                            candidate['polymer_smiles'] = polymer_smiles
+                            candidate['polymer_smiles_source'] = 'DirectPolymerBuilder'
+                            candidate['polymer_smiles_timestamp'] = datetime.now().isoformat()
+                            candidate['smiles'] = polymer_smiles
+                            candidate['smiles_conversion_success'] = True
+                            candidate['smiles_conversion_method'] = 'polymer_chain_from_DirectPolymerBuilder'
+                            print(f"   ✅ Updated candidate with polymer chain SMILES")
+            
+            print(f"🔗 Stored polymer chain SMILES mapping:")
+            print(f"   📝 PSMILES: {psmiles}")
+            print(f"   🧬 Polymer SMILES: {polymer_smiles[:60]}...")
+            print(f"   🆔 Candidate ID: {candidate_id}")
+            
+            return True
+            
+        except Exception as e:
+            print(f"❌ Failed to store polymer SMILES: {e}")
+            return False
+    
+    def get_polymer_smiles_for_md(self, psmiles: str) -> Optional[str]:
+        """
+        Get stored polymer SMILES for MD simulation use.
+        
+        Args:
+            psmiles: Original monomer PSMILES string
+            
+        Returns:
+            Polymer SMILES string if found, None otherwise
+        """
+        # Check Streamlit session state first
+        if STREAMLIT_AVAILABLE and hasattr(st, 'session_state'):
+            if hasattr(st.session_state, 'polymer_chain_smiles_mapping'):
+                stored_data = st.session_state.polymer_chain_smiles_mapping.get(psmiles)
+                if stored_data:
+                    polymer_smiles = stored_data['polymer_smiles']
+                    print(f"🎯 Found polymer SMILES in session state: {polymer_smiles[:60]}...")
+                    return polymer_smiles
+        
+        # Check local storage
+        if psmiles in self._stored_smiles:
+            polymer_smiles = self._stored_smiles[psmiles]['polymer_smiles']
+            print(f"🎯 Found polymer SMILES in local storage: {polymer_smiles[:60]}...")
+            return polymer_smiles
+        
+        print(f"❌ No polymer SMILES found for PSMILES: {psmiles}")
+        return None
+    
+    def get_smiles_conversion_result(self, psmiles: str) -> Dict:
+        """
+        Get complete SMILES conversion result for a PSMILES string.
+        This method provides the same interface as the old storage system.
+        
+        Args:
+            psmiles: PSMILES string
+            
+        Returns:
+            Dict with SMILES conversion data
+        """
+        polymer_smiles = self.get_polymer_smiles_for_md(psmiles)
+        
+        if polymer_smiles:
+            # Get stored metadata
+            stored_data = None
+            if STREAMLIT_AVAILABLE and hasattr(st, 'session_state'):
+                if hasattr(st.session_state, 'polymer_chain_smiles_mapping'):
+                    stored_data = st.session_state.polymer_chain_smiles_mapping.get(psmiles)
+            
+            if not stored_data and psmiles in self._stored_smiles:
+                stored_data = self._stored_smiles[psmiles]
+            
+            return {
+                'psmiles': psmiles,
+                'smiles': polymer_smiles,
+                'smiles_conversion_success': True,
+                'smiles_conversion_method': 'polymer_chain_from_DirectPolymerBuilder',
+                'smiles_conversion_error': None,
+                'conversion_metadata': {
+                    'timestamp': datetime.now().isoformat(),
+                    'source': 'DirectPolymerBuilder',
+                    'candidate_id': stored_data.get('candidate_id') if stored_data else None,
+                    'original_timestamp': stored_data.get('timestamp') if stored_data else None,
+                    'description': 'Full polymer chain SMILES with end-caps from DirectPolymerBuilder',
+                    'chain_type': 'polymer_with_endcaps'
+                }
+            }
+        else:
+            # Fallback to monomer conversion
+            print(f"⚠️ No stored polymer SMILES found, falling back to monomer conversion")
+            try:
+                conversion_result = self.converter.convert_psmiles_to_smiles(psmiles)
+                
+                if conversion_result['success'] and conversion_result['best_smiles']:
+                    return {
+                        'psmiles': psmiles,
+                        'smiles': conversion_result['best_smiles'],
+                        'smiles_conversion_success': True,
+                        'smiles_conversion_method': f"monomer_fallback_{conversion_result['best_method']}",
+                        'smiles_conversion_error': None,
+                        'conversion_metadata': {
+                            'timestamp': datetime.now().isoformat(),
+                            'source': 'monomer_fallback',
+                            'description': 'Monomer SMILES with dummy atoms (not full polymer chain)',
+                            'warning': 'This is monomer SMILES, not the final polymer chain SMILES'
+                        }
+                    }
+                else:
+                    return {
+                        'psmiles': psmiles,
+                        'smiles': None,
+                        'smiles_conversion_success': False,
+                        'smiles_conversion_method': None,
+                        'smiles_conversion_error': conversion_result.get('error', 'Unknown conversion error'),
+                        'conversion_metadata': {}
+                    }
+            except Exception as e:
+                return {
+                    'psmiles': psmiles,
+                    'smiles': None,
+                    'smiles_conversion_success': False,
+                    'smiles_conversion_method': None,
+                    'smiles_conversion_error': str(e),
+                    'conversion_metadata': {}
+                }
+    
+    def list_stored_polymers(self) -> Dict:
+        """
+        List all stored polymer SMILES.
+        
+        Returns:
+            Dict with stored polymer information
+        """
+        stored_polymers = {}
+        
+        # Check session state
+        if STREAMLIT_AVAILABLE and hasattr(st, 'session_state'):
+            if hasattr(st.session_state, 'polymer_chain_smiles_mapping'):
+                stored_polymers.update(st.session_state.polymer_chain_smiles_mapping)
+        
+        # Add local storage (avoid duplicates)
+        for psmiles, data in self._stored_smiles.items():
+            if psmiles not in stored_polymers:
+                stored_polymers[psmiles] = data
+        
+        print(f"📋 Stored polymers: {len(stored_polymers)}")
+        for psmiles, data in stored_polymers.items():
+            print(f"   📝 {psmiles}")
+            print(f"   🧬 {data['polymer_smiles'][:60]}...")
+            print(f"   🆔 {data.get('candidate_id', 'N/A')}")
+        
+        return stored_polymers
 
 
 def test_direct_builder():
