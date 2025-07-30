@@ -281,113 +281,139 @@ def ensure_systems_initialized() -> bool:
 # ==================================================
 # CORE GENERATION FUNCTION
 # ==================================================
+# Import the new SMILES storage utility
+from app.utils.psmiles_smiles_storage import enhance_psmiles_generation_with_smiles_storage
+
 def psmiles_generation_with_llm(material_request, conversation_memory=None):
     """
     Sophisticated PSMILES generation using the most advanced pipeline:
     - Multiple diverse candidates with temperature variation
     - Chemical functionalization for true diversity
     - Proper validation and diversity scoring
+    - **NEW: Automatic SMILES conversion and storage for efficient MD workflows**
     - No fake/hard-coded properties
     """
-    try:
-        print(f"🚀 Starting sophisticated PSMILES generation for: {material_request}")
-        
-        # Use the most sophisticated generation method with functionalization
-        results = st.session_state.psmiles_generator.generate_truly_diverse_candidates(
-            base_request=material_request,
-            num_candidates=5,  # Generate multiple diverse candidates
-            enable_functionalization=True,  # Enable chemical functionalization
-            diversity_threshold=0.4,  # Require meaningful diversity
-            temperature_range=(0.6, 1.0),  # Use temperature variation
-            max_retries=2  # Allow retries for better results
-        )
-        
-        print(f"📊 Generation results: success={results.get('success')}, candidates={results.get('num_generated', 0)}")
-        
-        # Check if generation was successful
-        if results.get('success') and results.get('candidates'):
-            candidates = results['candidates']
-            best_candidate = results.get('best_candidate')
+    
+    def _original_generation_function(material_request, conversation_memory=None):
+        """Original generation logic wrapped for enhancement"""
+        try:
+            print(f"🚀 Starting sophisticated PSMILES generation for: {material_request}")
             
-            if best_candidate and best_candidate.count('[*]') == 2:
+            # Use the most sophisticated generation method with functionalization
+            results = st.session_state.psmiles_generator.generate_truly_diverse_candidates(
+                base_request=material_request,
+                num_candidates=5,  # Generate multiple diverse candidates
+                enable_functionalization=True,  # Enable chemical functionalization
+                diversity_threshold=0.4,  # Require meaningful diversity
+                temperature_range=(0.6, 1.0),  # Use temperature variation
+                max_retries=2  # Allow retries for better results
+            )
+            
+            print(f"📊 Generation results: success={results.get('success')}, candidates={results.get('num_generated', 0)}")
+            
+            # Check if generation was successful
+            if results.get('success') and results.get('candidates'):
+                candidates = results['candidates']
+                best_candidate = results.get('best_candidate')
+                
+                if best_candidate and best_candidate.count('[*]') == 2:
+                    return {
+                        'psmiles': best_candidate,
+                        'explanation': f"Generated using advanced orchestration system with {results.get('total_generated', results.get('num_generated', 0))} total candidates",
+                        'candidates': candidates,  # Selected best candidates
+                        'all_candidates': results.get('all_candidates', candidates),  # ALL generated candidates including variants
+                        'total_generated': results.get('total_generated', len(candidates)),  # Total before selection
+                        'diversity_info': {
+                            'num_generated': results.get('num_generated', 0),
+                            'num_valid': results.get('num_valid', 0),
+                            'total_generated': results.get('total_generated', 0),
+                            'diversity_score': results.get('diversity_validation', {}).get('diversity_score', 0),
+                            'meets_threshold': results.get('diversity_validation', {}).get('meets_diversity_threshold', False),
+                            'functionalization_enabled': True
+                        },
+                        'method': 'truly_diverse_candidates',
+                        'temperature_range': results.get('temperature_range', (0.6, 1.0)),
+                        'validation_status': 'chemistry_validated',
+                        'generation_details': {
+                            'pipeline': results.get('pipeline', 'Advanced-Orchestration'),
+                            'model': results.get('model', 'unknown'),
+                            'timestamp': results.get('timestamp', ''),
+                            'orchestration_system': True,
+                            'functionalization_applied': True
+                        }
+                    }
+            
+            # If truly diverse generation failed, fallback to standard diverse generation
+            print("⚠️ Truly diverse generation failed, falling back to standard diverse generation")
+            fallback_results = st.session_state.psmiles_generator.generate_diverse_candidates(
+                base_request=material_request,
+                num_candidates=6,
+                temperature_range=(0.6, 1.0)
+            )
+            
+            if fallback_results.get('success') and fallback_results.get('best_candidate'):
                 return {
-                    'psmiles': best_candidate,
-                    'explanation': f"Generated using advanced orchestration system with {results.get('total_generated', results.get('num_generated', 0))} total candidates",
-                    'candidates': candidates,  # Selected best candidates
-                    'all_candidates': results.get('all_candidates', candidates),  # ALL generated candidates including variants
-                    'total_generated': results.get('total_generated', len(candidates)),  # Total before selection
+                    'psmiles': fallback_results['best_candidate'],
+                    'explanation': f"Generated using standard diverse pipeline (fallback) with {fallback_results.get('total_generated', fallback_results.get('num_generated', 0))} total candidates",
+                    'candidates': fallback_results.get('candidates', []),
+                    'all_candidates': fallback_results.get('all_candidates', fallback_results.get('candidates', [])),
+                    'total_generated': fallback_results.get('total_generated', len(fallback_results.get('candidates', []))),
                     'diversity_info': {
-                        'num_generated': results.get('num_generated', 0),
-                        'num_valid': results.get('num_valid', 0),
-                        'total_generated': results.get('total_generated', 0),
-                        'diversity_score': results.get('diversity_validation', {}).get('diversity_score', 0),
-                        'meets_threshold': results.get('diversity_validation', {}).get('meets_diversity_threshold', False),
-                        'functionalization_enabled': True
+                        'num_generated': fallback_results.get('num_generated', 0),
+                        'num_valid': fallback_results.get('num_valid', 0),
+                        'total_generated': fallback_results.get('total_generated', 0),
+                        'functionalization_enabled': False
                     },
-                    'method': 'truly_diverse_candidates',
-                    'temperature_range': results.get('temperature_range', (0.6, 1.0)),
+                    'method': 'diverse_candidates_fallback',
+                    'temperature_range': fallback_results.get('temperature_range', (0.6, 1.0)),
                     'validation_status': 'chemistry_validated',
                     'generation_details': {
-                        'pipeline': results.get('pipeline', 'Advanced-Orchestration'),
-                        'model': results.get('model', 'unknown'),
-                        'timestamp': results.get('timestamp', ''),
-                        'orchestration_system': True,
-                        'functionalization_applied': True
+                        'pipeline': fallback_results.get('pipeline', 'NaturalLanguage→SMILES→PSMILES'),
+                        'model': fallback_results.get('model', 'unknown'),
+                        'timestamp': fallback_results.get('timestamp', ''),
+                        'fallback_used': True
                     }
                 }
-        
-        # If truly diverse generation failed, fallback to standard diverse generation
-        print("⚠️ Truly diverse generation failed, falling back to standard diverse generation")
-        fallback_results = st.session_state.psmiles_generator.generate_diverse_candidates(
-            base_request=material_request,
-            num_candidates=6,
-            temperature_range=(0.6, 1.0)
-        )
-        
-        if fallback_results.get('success') and fallback_results.get('best_candidate'):
+            
+            # If everything fails
             return {
-                'psmiles': fallback_results['best_candidate'],
-                'explanation': f"Generated using standard diverse pipeline (fallback) with {fallback_results.get('total_generated', fallback_results.get('num_generated', 0))} total candidates",
-                'candidates': fallback_results.get('candidates', []),
-                'all_candidates': fallback_results.get('all_candidates', fallback_results.get('candidates', [])),
-                'total_generated': fallback_results.get('total_generated', len(fallback_results.get('candidates', []))),
-                'diversity_info': {
-                    'num_generated': fallback_results.get('num_generated', 0),
-                    'num_valid': fallback_results.get('num_valid', 0),
-                    'total_generated': fallback_results.get('total_generated', 0),
-                    'functionalization_enabled': False
-                },
-                'method': 'diverse_candidates_fallback',
-                'temperature_range': fallback_results.get('temperature_range', (0.6, 1.0)),
-                'validation_status': 'chemistry_validated',
-                'generation_details': {
-                    'pipeline': fallback_results.get('pipeline', 'NaturalLanguage→SMILES→PSMILES'),
-                    'model': fallback_results.get('model', 'unknown'),
-                    'timestamp': fallback_results.get('timestamp', ''),
-                    'fallback_used': True
+                'error': 'All sophisticated generation methods failed',
+                'psmiles': None,
+                'method': 'generation_failure',
+                'details': {
+                    'sophisticated_failed': True,
+                    'fallback_failed': True,
+                    'original_error': results.get('error', 'Unknown error')
                 }
             }
-        
-        # If everything fails
-        return {
-            'error': 'All sophisticated generation methods failed',
-            'psmiles': None,
-            'method': 'generation_failure',
-            'details': {
-                'sophisticated_failed': True,
-                'fallback_failed': True,
-                'original_error': results.get('error', 'Unknown error')
+            
+        except Exception as e:
+            print(f"❌ Error in sophisticated PSMILES generation: {e}")
+            return {
+                'error': str(e),
+                'psmiles': None,
+                'method': 'generation_error',
+                'details': {'exception': str(e)}
             }
-        }
-        
-    except Exception as e:
-        print(f"❌ Error in sophisticated PSMILES generation: {e}")
-        return {
-            'error': str(e),
-            'psmiles': None,
-            'method': 'generation_error',
-            'details': {'exception': str(e)}
-        }
+    
+    # **NEW: Use the enhanced generation with automatic SMILES storage**
+    print(f"🧬 Enhanced PSMILES generation with automatic SMILES storage")
+    enhanced_result = enhance_psmiles_generation_with_smiles_storage(
+        _original_generation_function,
+        material_request,
+        conversation_memory
+    )
+    
+    # The enhanced result now contains both PSMILES and SMILES for efficient MD workflows
+    if enhanced_result.get('smiles_conversion_success'):
+        print(f"✅ PSMILES generated with stored SMILES ready for MD simulation")
+        print(f"   PSMILES: {enhanced_result.get('psmiles', 'N/A')}")
+        print(f"   SMILES:  {enhanced_result.get('smiles', 'N/A')}")
+        print(f"   Method:  {enhanced_result.get('smiles_conversion_method', 'N/A')}")
+    else:
+        print(f"⚠️ PSMILES generated but SMILES conversion failed: {enhanced_result.get('smiles_conversion_error', 'Unknown error')}")
+    
+    return enhanced_result
 
 # ==================================================
 # SYSTEM INITIALIZATION

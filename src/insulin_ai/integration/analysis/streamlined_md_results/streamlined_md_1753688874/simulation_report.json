@@ -1,0 +1,58 @@
+{
+  "timestamp": "2025-07-28T03:47:55.862096",
+  "input_file": "../data/insulin/insulin_default_backup.pdb",
+  "simulation_id": "streamlined_md_1753688874",
+  "parameters": {
+    "temperature": 310.0,
+    "equilibration_steps": 1000,
+    "production_steps": 2000,
+    "save_interval": 100
+  },
+  "results": {
+    "success": true,
+    "simulation_id": "streamlined_md_1753688874",
+    "stages_completed": [
+      "preprocessing",
+      "structure_fixing",
+      "system_creation",
+      "simulation_setup",
+      "minimization",
+      "equilibration",
+      "production"
+    ],
+    "timing": {
+      "preprocessing": 0.2461860179901123,
+      "structure_fixing": 0.09138774871826172,
+      "system_creation": 0.057340145111083984,
+      "simulation_setup": 0.05892014503479004,
+      "minimization": 0.06525039672851562,
+      "equilibration": 0.14264917373657227,
+      "production": 0.2785649299621582,
+      "total": 0.9403612613677979
+    },
+    "files_created": [
+      "../data/insulin/insulin_default_backup_preprocessed.pdb",
+      "streamlined_md_results/streamlined_md_1753688874/simulation_data.csv",
+      "streamlined_md_results/streamlined_md_1753688874/trajectory.dcd",
+      "streamlined_md_results/streamlined_md_1753688874/final_structure.pdb"
+    ],
+    "errors": [],
+    "energy_minimization": {
+      "initial_energy": "-12987.490119934082 kJ/mol",
+      "final_energy": "-17014.1050491333 kJ/mol",
+      "energy_change": "-4026.6149291992188 kJ/mol"
+    },
+    "performance": {
+      "ns_per_day": 2079.6948393261428,
+      "simulated_time_ns": 0.006,
+      "wall_time_seconds": 0.2492673397064209,
+      "total_steps": 3000
+    },
+    "final_energies": {
+      "potential": "-11869.603923797607 kJ/mol",
+      "kinetic": "5073.814061988611 kJ/mol",
+      "total": "-6795.789861808997 kJ/mol"
+    },
+    "output_directory": "streamlined_md_results/streamlined_md_1753688874"
+  }
+}
