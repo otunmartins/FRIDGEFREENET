@@ -1,0 +1,250 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "insulin-ai"
+version = "0.1.0"
+description = "AI-Powered Drug Delivery System for Insulin Patch Materials Discovery"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "Insulin-AI Team", email = "contact@insulin-ai.org"}
+]
+maintainers = [
+    {name = "Insulin-AI Team", email = "contact@insulin-ai.org"}
+]
+keywords = ["artificial-intelligence", "drug-delivery", "insulin", "molecular-dynamics", "materials-science", "psmiles", "polymer-chemistry"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Chemistry",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Medical Science Apps.",
+]
+requires-python = ">=3.8"
+
+dependencies = [
+    # Core web framework
+    "streamlit>=1.28.0",
+    "Flask>=2.3.0",
+    "Flask-CORS>=4.0.0",
+    
+    # LangChain and LLM integration
+    "langchain>=0.1.0",
+    "langchain-community>=0.0.10",
+    "langchain-core>=0.1.7",
+    "langchain-ollama>=0.1.0",
+    "langchain-openai>=0.1.0",
+    
+    # OpenAI
+    "openai>=1.0.0",
+    
+    # Scientific computing and data analysis
+    "pandas>=2.0.0",
+    "numpy>=1.24.0",
+    "scipy>=1.10.0",
+    "matplotlib>=3.7.0",
+    "plotly>=5.15.0",
+    "seaborn>=0.12.0",
+    
+    # HTTP requests and APIs
+    "requests>=2.31.0",
+    "httpx>=0.24.0",
+    
+    # Semantic Scholar API
+    "semanticscholar>=0.5.0",
+    
+    # Chemistry and molecular processing
+    "rdkit>=2023.9.1",
+    "rdchiral>=1.1.0",
+    "py3Dmol>=2.0.0",
+    
+    # OpenMM and molecular dynamics
+    "openmm>=8.0.0",
+    "openmmforcefields>=0.12.0",
+    "openff-toolkit>=0.14.0",
+    "pdbfixer>=1.9",
+    
+    # SELFIES for SMILES processing
+    "selfies>=2.1.0",
+    
+    # Data validation and schemas
+    "jsonschema>=4.19.0",
+    "pydantic>=2.0.0",
+    
+    # Configuration and environment
+    "python-dotenv>=1.0.0",
+    "click>=8.0.0",
+    
+    # Utilities
+    "tqdm>=4.65.0",
+    "pathlib-mate>=1.0.0",
+    "typing-extensions>=4.7.0",
+]
+
+[project.optional-dependencies]
+# Development dependencies
+dev = [
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+    "pytest-mock>=3.11.0",
+    "black>=23.7.0",
+    "isort>=5.12.0",
+    "flake8>=6.0.0",
+    "mypy>=1.5.0",
+    "pre-commit>=3.3.0",
+]
+
+# Documentation dependencies
+docs = [
+    "sphinx>=7.1.0",
+    "sphinx-rtd-theme>=1.3.0",
+    "sphinx-autodoc-typehints>=1.24.0",
+    "myst-parser>=2.0.0",
+]
+
+# Enhanced analysis capabilities
+analysis = [
+    "jupyter>=1.0.0",
+    "jupyterlab>=4.0.0",
+    "mdanalysis>=2.6.0",
+    "nglview>=3.0.0",
+    "biotite>=0.39.0",
+]
+
+# GPU acceleration (optional)
+gpu = [
+    "cupy-cuda12x>=12.0.0",  # For CUDA 12.x
+    "pytorch>=2.0.0",
+]
+
+# Complete installation with all optional dependencies
+all = [
+    "insulin-ai[dev,docs,analysis,gpu]"
+]
+
+[project.urls]
+Homepage = "https://github.com/insulin-ai/insulin-ai"
+Documentation = "https://insulin-ai.readthedocs.io"
+Repository = "https://github.com/insulin-ai/insulin-ai"
+"Bug Tracker" = "https://github.com/insulin-ai/insulin-ai/issues"
+
+[project.scripts]
+insulin-ai = "insulin_ai.cli:main"
+insulin-ai-web = "insulin_ai.app:main"
+
+[project.entry-points."insulin_ai.plugins"]
+# Plugin system for extensibility
+
+[tool.setuptools]
+zip-safe = false
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["insulin_ai*"]
+exclude = ["tests*", "docs*"]
+
+[tool.setuptools.package-data]
+insulin_ai = [
+    "data/*.json",
+    "data/*.yaml", 
+    "data/*.yml",
+    "templates/*.html",
+    "static/css/*.css",
+    "static/js/*.js",
+    "config/*.yaml",
+    "config/*.yml",
+]
+
+# Black formatting configuration
+[tool.black]
+line-length = 88
+target-version = ['py38', 'py39', 'py310', 'py311']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | venv
+  | _build
+  | buck-out
+  | build
+  | dist
+  | PSP
+)/
+'''
+
+# isort configuration
+[tool.isort]
+profile = "black"
+line_length = 88
+multi_line_output = 3
+include_trailing_comma = true
+force_grid_wrap = 0
+use_parentheses = true
+ensure_newline_before_comments = true
+src_paths = ["src", "tests"]
+
+# pytest configuration
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-ra -q --strict-markers --strict-config"
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+    "unit: marks tests as unit tests",
+    "gpu: marks tests that require GPU",
+]
+
+# mypy configuration
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+ignore_missing_imports = true
+exclude = [
+    "PSP/",
+    "build/",
+    "dist/",
+]
+
+# Coverage configuration
+[tool.coverage.run]
+source = ["src"]
+omit = [
+    "*/tests/*",
+    "*/test_*",
+    "setup.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "if settings.DEBUG",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if 0:",
+    "if __name__ == .__main__.:",
+    "class .*\\bProtocol\\):",
+    "@(abc\\.)?abstractmethod",
+] 
