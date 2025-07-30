@@ -135,11 +135,11 @@ def render_comprehensive_pipeline_health_check():
 def render_advanced_generation_options():
     """Render simplified material generation options and parameters"""
     st.markdown("#### 🤖 Automated Pipeline")
-    st.markdown("_Generate candidates → Functionalize → Visualize structures_")
+    st.markdown("_Generate candidates → Functionalize → Create simulation boxes → Visualize structures_")
     
     # Input area (full width)
     material_request = st.text_area(
-        "🎯 Describe your material:",
+        "Describe your material:",
         placeholder="biocompatible polymer for insulin delivery with amide groups and sulfur functionality...",
         height=100,
         help="Describe the polymer properties and functional groups you want"
@@ -169,7 +169,127 @@ def render_advanced_generation_options():
             st.info("🔄 Systems will reinitialize with the working SMILES→PSMILES pipeline on next refresh.")
             st.rerun()
     
-    return material_request, num_candidates, auto_functionalize
+    # **NEW: Simulation automation options**
+            st.markdown("#### Simulation Automation")
+    
+    sim_col1, sim_col2 = st.columns(2)
+    with sim_col1:
+        auto_create_polymer_boxes = st.checkbox(
+            "Auto-create polymer simulation boxes (PSP)", 
+            value=True,
+            help="Automatically create simulation boxes filled with polymers using PSP package"
+        )
+        auto_create_insulin_systems = st.checkbox(
+            "Auto-create insulin-flanked systems", 
+            value=True,
+            help="Automatically create systems where insulin is flanked by polymer boxes with PDBFixer cleaning"
+        )
+    
+    with sim_col2:
+        if auto_create_polymer_boxes or auto_create_insulin_systems:
+            st.info("🔬 Will automatically create simulation boxes for all candidates")
+            
+            # Initialize defaults before expander
+            default_length, default_molecules, default_density, default_tolerance, default_timeout = 5, 8, 0.3, 3.5, 15
+            
+            # Enhanced simulation parameters with density-based calculation
+            with st.expander("Enhanced Simulation Parameters", expanded=True):
+                st.info("💡 **Enhanced Features**: Density-based box calculation with molecular weight estimation")
+                
+                # Import and initialize the density calculator UI
+                try:
+                    from app.ui.components.density_box_calculator import DensityBoxCalculatorUI
+                    
+                    if 'density_calculator_ui' not in st.session_state:
+                        st.session_state.density_calculator_ui = DensityBoxCalculatorUI()
+                    
+                    # Use the enhanced interface
+                    enhanced_params = st.session_state.density_calculator_ui.render_enhanced_simulation_parameters(
+                        auto_create_polymer_boxes=auto_create_polymer_boxes,
+                        auto_create_insulin_systems=auto_create_insulin_systems,
+                        default_polymer_length=default_length,
+                        default_num_molecules=default_molecules,
+                        default_density=default_density,
+                        default_tolerance=default_tolerance,
+                        default_timeout=default_timeout,
+                        default_insulin_molecules=1,
+                        default_box_size=3.0
+                    )
+                    
+                    # Extract parameters
+                    polymer_length = enhanced_params['polymer_length']
+                    num_polymer_molecules = enhanced_params['num_polymer_molecules']
+                    density = enhanced_params['density']
+                    tolerance_distance = enhanced_params['tolerance_distance']
+                    timeout_minutes = enhanced_params['timeout_minutes']
+                    num_insulin_molecules = enhanced_params['num_insulin_molecules']
+                    box_size_nm = enhanced_params['box_size_nm']
+                    
+                    # Store enhanced calculation info for later use
+                    if enhanced_params.get('calculation_method') == 'density_based':
+                        st.session_state.enhanced_simulation_info = {
+                            'method': 'density_based',
+                            'molecular_weight': enhanced_params.get('molecular_weight'),
+                            'system_composition': enhanced_params.get('system_composition'),
+                            'box_calculation_result': enhanced_params.get('box_calculation_result')
+                        }
+                        st.success("✅ Using density-based box calculation with molecular weight estimation")
+                    else:
+                        st.session_state.enhanced_simulation_info = {'method': enhanced_params.get('calculation_method', 'manual')}
+                        if enhanced_params.get('calculation_method') == 'manual_override':
+                            st.info("ℹ️ Using manual parameter override")
+                
+                except ImportError as e:
+                    # Fallback to original interface if new component is not available
+                    st.warning("⚠️ Enhanced density calculator not available. Using original interface.")
+                    st.error(f"Import error: {str(e)}")
+                    
+                    # Original parameter interface as fallback
+                    # Preset configurations
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        if st.button("🚀 Fast Build", help="Quick setup for testing"):
+                            default_length, default_molecules, default_density, default_tolerance, default_timeout = 3, 5, 0.2, 4.0, 10
+                    with col2:
+                        if st.button("⚖️ Balanced", help="Good balance of speed and realism"):
+                            default_length, default_molecules, default_density, default_tolerance, default_timeout = 5, 8, 0.3, 3.5, 20
+                    with col3:
+                        if st.button("🎯 Realistic", help="More accurate but slower"):
+                            default_length, default_molecules, default_density, default_tolerance, default_timeout = 15, 25, 0.8, 2.5, 45
+                
+                    # Original parameter sliders
+                    polymer_length = st.slider("Polymer chain length:", 3, 50, default_length, 
+                                              help="Shorter chains pack faster")
+                    num_polymer_molecules = st.slider("Number of polymer molecules:", 5, 100, default_molecules,
+                                                     help="Fewer molecules pack faster") 
+                    density = st.slider("Packing density (g/cm³):", 0.2, 1.5, default_density, step=0.1,
+                                       help="Lower density packs faster")
+                    tolerance_distance = st.slider("Tolerance distance (Å):", 2.0, 5.0, default_tolerance, step=0.1,
+                                                  help="Higher tolerance packs faster")
+                    timeout_minutes = st.slider("Timeout (minutes):", 1, 60, default_timeout,
+                                               help="Maximum time to spend building each box (up to 1 hour)")
+                    
+                    if auto_create_insulin_systems:
+                        num_insulin_molecules = st.slider("Number of insulin molecules:", 1, 10, 1)
+                        box_size_nm = st.slider("Box size (nm):", 1.0, 10.0, 3.0, step=0.5)
+                    else:
+                        num_insulin_molecules = 1
+                        box_size_nm = 3.0
+        else:
+            st.info("🚫 Simulation automation disabled")
+            polymer_length = 5
+            num_polymer_molecules = 8
+            density = 0.3
+            tolerance_distance = 3.5
+            timeout_minutes = 15
+            num_insulin_molecules = 1
+            box_size_nm = 3.0
+    
+    return (material_request, num_candidates, auto_functionalize, 
+            auto_create_polymer_boxes, auto_create_insulin_systems,
+            polymer_length, num_polymer_molecules, density, 
+            tolerance_distance, timeout_minutes,
+            num_insulin_molecules, box_size_nm)
 
 
 def render_hybrid_approach_info():
@@ -200,7 +320,7 @@ def render_hybrid_approach_info():
         """)
 
 
-def execute_automated_pipeline_with_progress(material_request: str, num_candidates: int, auto_functionalize: bool) -> Optional[Dict]:
+def execute_automated_pipeline_with_progress(material_request: str, num_candidates: int, auto_functionalize: bool, simulation_params: Optional[Dict] = None) -> Optional[Dict]:
     """Execute the automated generation pipeline with simplified progress tracking"""
     
     st.markdown("---")
@@ -383,24 +503,102 @@ def execute_automated_pipeline_with_progress(material_request: str, num_candidat
                 'timestamp': datetime.now().isoformat()
             })
     
-    # Step 4: Completion
+    # Step 4: Simulation Automation (if enabled)
+    simulation_results = None
+    
+    if simulation_params and (simulation_params.get('auto_create_polymer_boxes') or simulation_params.get('auto_create_insulin_systems')):
+        st.info("🧪 Starting automated simulation box creation...")
+        progress_bar.progress(80, "Creating simulation boxes...")
+        
+        try:
+            # Import the automation pipeline
+            from integration.automation.simulation_automation import run_automated_simulation_pipeline
+            
+            # Create UI callback for logging
+            simulation_log_container = st.empty()
+            simulation_logs = []
+            
+            def simulation_callback(msg):
+                simulation_logs.append(msg)
+                with simulation_log_container.container():
+                    # Show more log lines to capture error details
+                    recent_logs = simulation_logs[-10:]  # Show last 10 log lines
+                    st.text("\n".join(recent_logs))
+            
+            st.write("**Simulation Progress:**")
+            
+            # Run the automation pipeline with parameters
+            simulation_results = run_automated_simulation_pipeline(
+                candidates=functionalized_candidates,
+                simulation_params=simulation_params,
+                output_callback=simulation_callback
+            )
+            
+            if simulation_results and simulation_results.get('success_count', 0) > 0:
+                st.success(f"✅ Created simulation boxes for {simulation_results.get('success_count', 0)}/{simulation_results.get('total_candidates', 0)} candidates")
+                
+                # Display simulation summary
+                with st.expander("📊 Simulation Results Summary", expanded=True):
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("Polymer Boxes Created", len([r for r in simulation_results.get('polymer_boxes', []) if r.get('success')]))
+                    with col2:
+                        st.metric("Insulin Systems Created", len([r for r in simulation_results.get('insulin_systems', []) if r.get('success')]))
+                    with col3:
+                        st.metric("Success Rate", f"{(simulation_results.get('success_count', 0)/max(1, simulation_results.get('total_candidates', 1))*100):.1f}%")
+                    
+                    if simulation_results.get('session_id'):
+                        st.info(f"📁 Results saved in session: {simulation_results.get('session_id', 'unknown')}")
+            else:
+                st.warning("⚠️ Simulation automation completed with limited success")
+                
+                # Show detailed error information for failed candidates
+                if simulation_results and simulation_results.get('errors'):
+                    with st.expander("🔍 Error Details", expanded=False):
+                        for error_info in simulation_results.get('errors', []):
+                            candidate_id = error_info.get('candidate_id', 'unknown')
+                            psmiles = error_info.get('psmiles', 'N/A')
+                            
+                            if error_info.get('polymer_box', {}).get('error'):
+                                st.error(f"**Candidate {candidate_id}**: {error_info['polymer_box']['error']}")
+                                st.code(f"PSMILES: {psmiles}", language="text")
+                            
+                            if error_info.get('insulin_system', {}).get('error'):
+                                st.error(f"**Candidate {candidate_id} (Insulin System)**: {error_info['insulin_system']['error']}")
+                
+        except ImportError:
+            st.warning("⚠️ Simulation automation not available - missing dependencies")
+        except Exception as e:
+            st.error(f"❌ Simulation automation failed: {e}")
+            
+            # Show full error details in an expander
+            with st.expander("🔍 Full Error Details", expanded=False):
+                import traceback
+                st.code(traceback.format_exc(), language="python")
+    
+    # Step 5: Final Completion
     progress_bar.progress(100, "Pipeline completed!")
-    st.success("🎉 Generation completed successfully!")
+    st.success("🎉 Generation and automation pipeline completed successfully!")
     
     # Add to session state
     if functionalized_candidates:
         for candidate in functionalized_candidates:
             candidate['request'] = material_request
+            # Add simulation results to candidates if available
+            candidate['simulation_results'] = simulation_results or {}
             st.session_state.psmiles_candidates.append(candidate)
     
     return {
         'candidates': functionalized_candidates,
+        'simulation_results': simulation_results or {},
         'workflow_summary': {
             'total_generated': len(generated_candidates),
             'unique_structures': len(unique_psmiles),
             'average_temperature': avg_temperature,
             'functionalized_count': len([c for c in functionalized_candidates if c['functionalization_method'] != 'disabled']),
-            'success_rate': len(functionalized_candidates) / max(1, len(selected_candidates))
+            'success_rate': len(functionalized_candidates) / max(1, len(selected_candidates)),
+            'simulation_enabled': bool(simulation_params and (simulation_params.get('auto_create_polymer_boxes') or simulation_params.get('auto_create_insulin_systems'))),
+            'simulation_success_rate': (simulation_results.get('success_count', 0)/max(1, simulation_results.get('total_candidates', 1))) if simulation_results else 0.0
         }
     }
 
@@ -472,6 +670,10 @@ def render_enhanced_candidate_details(candidate: Dict[str, Any], index: int):
             st.success("✅ Chemically Valid")
         else:
             st.error("❌ Validation Failed")
+        
+        # Processing mode status (if fallback was used)
+        if candidate.get('processing_mode') == 'fallback':
+            st.warning("🔧 Processed with fallback mode (psmiles library limitations)")
         
         # **Simplified functionalization display**
         if candidate.get('functionalization_method') == 'automated_psmiles_library':
@@ -552,49 +754,161 @@ def render_enhanced_generation_results(results: Dict[str, Any]):
     if results.get('candidates'):
         st.success(f"✅ Generated {len(results['candidates'])} candidates successfully!")
         
-        # **Simplified workflow summary**
-        if results.get('workflow_summary'):
-            summary = results['workflow_summary']
-            
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.markdown(f"""
-                <div class="metric-card">
-                    <h3>{summary.get("total_generated", 0)}</h3>
-                    <p>Total Generated</p>
-                </div>
-                """, unsafe_allow_html=True)
-            with col2:
-                st.markdown(f"""
-                <div class="metric-card">
-                    <h3>{summary.get("unique_structures", 0)}</h3>
-                    <p>Unique Structures</p>
-                </div>
-                """, unsafe_allow_html=True)
-            with col3:
-                success_rate = summary.get("success_rate", 0) * 100
-                st.markdown(f"""
-                <div class="metric-card">
-                    <h3>{success_rate:.1f}%</h3>
-                    <p>Success Rate</p>
-                </div>
-                """, unsafe_allow_html=True)
+        # **Enhanced metrics showing all vs selected candidates**
+        total_generated = results.get('total_generated', len(results.get('candidates', [])))
+        selected_count = len(results.get('candidates', []))
+        all_candidates_count = len(results.get('all_candidates', []))
         
-        # **Display candidates with visualization**
-        for i, candidate in enumerate(results['candidates'], 1):
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.markdown(f"""
+            <div class="metric-card">
+                <h3>{total_generated}</h3>
+                <p>Total Generated</p>
+            </div>
+            """, unsafe_allow_html=True)
+        with col2:
+            st.markdown(f"""
+            <div class="metric-card">
+                <h3>{all_candidates_count}</h3>
+                <p>Including Variants</p>
+            </div>
+            """, unsafe_allow_html=True)
+        with col3:
+            st.markdown(f"""
+            <div class="metric-card">
+                <h3>{selected_count}</h3>
+                <p>Selected Best</p>
+            </div>
+            """, unsafe_allow_html=True)
+        with col4:
+            # Calculate success rate from workflow summary or estimate
+            if results.get('workflow_summary'):
+                success_rate = results['workflow_summary'].get("success_rate", 0) * 100
+            else:
+                # Estimate success rate as valid candidates / total attempts
+                success_rate = (selected_count / max(1, total_generated)) * 100
+            st.markdown(f"""
+            <div class="metric-card">
+                <h3>{success_rate:.1f}%</h3>
+                <p>Success Rate</p>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        # **Display ALL candidates with visualization**
+        # Check if we have both selected and all candidates
+        all_candidates = results.get('all_candidates', results.get('candidates', []))
+        selected_candidates = results.get('candidates', [])
+        
+        if len(all_candidates) > len(selected_candidates):
+            st.info(f"🎯 Showing ALL {len(all_candidates)} generated candidates (including variants) instead of just {len(selected_candidates)} selected ones")
+            candidates_to_show = all_candidates
+        else:
+            candidates_to_show = selected_candidates
+        
+        for i, candidate in enumerate(candidates_to_show, 1):
             psmiles_preview = candidate.get('functionalized', candidate.get('psmiles', 'Unknown'))[:50]
-            with st.expander(f"🧪 Candidate {i}: {psmiles_preview}{'...' if len(psmiles_preview) >= 50 else ''}", expanded=i == 1):
+            
+            # Add indicator if this is a selected candidate vs. variant
+            is_selected = candidate in selected_candidates if len(all_candidates) > len(selected_candidates) else True
+            status_icon = "⭐" if is_selected else "🧪"
+            status_text = "Selected" if is_selected else "Variant"
+            
+            with st.expander(f"{status_icon} Candidate {i} ({status_text}): {psmiles_preview}{'...' if len(psmiles_preview) >= 50 else ''}", expanded=i == 1):
                 render_enhanced_candidate_details(candidate, i)
     
-    # Simplified workflow summary details
+    # Enhanced workflow summary with simulation details
     if results.get('workflow_summary'):
         with st.expander("📊 Workflow Details", expanded=False):
             summary = results['workflow_summary']
-            st.write(f"**Total Generated:** {summary.get('total_generated', 0)}")
-            st.write(f"**Unique Structures:** {summary.get('unique_structures', 0)}")
-            st.write(f"**Average Temperature:** {summary.get('average_temperature', 0):.2f}")
-            st.write(f"**Functionalized Count:** {summary.get('functionalized_count', 0)}")
-            st.write(f"**Success Rate:** {summary.get('success_rate', 0)*100:.1f}%")
+            
+            # Generation metrics
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown("**🧪 Generation Metrics:**")
+                st.write(f"• Total Generated: {summary.get('total_generated', 0)}")
+                st.write(f"• Unique Structures: {summary.get('unique_structures', 0)}")
+                st.write(f"• Average Temperature: {summary.get('average_temperature', 0):.2f}")
+                st.write(f"• Functionalized Count: {summary.get('functionalized_count', 0)}")
+                st.write(f"• Success Rate: {summary.get('success_rate', 0)*100:.1f}%")
+            
+            with col2:
+                # Simulation metrics (if available)
+                if summary.get('simulation_enabled'):
+                    st.markdown("**🔬 Simulation Metrics:**")
+                    sim_results = results.get('simulation_results') or {}
+                    st.write(f"• Polymer Boxes: {len([r for r in sim_results.get('polymer_boxes', []) if r.get('success')])}")
+                    st.write(f"• Insulin Systems: {len([r for r in sim_results.get('insulin_systems', []) if r.get('success')])}")
+                    st.write(f"• Simulation Success Rate: {summary.get('simulation_success_rate', 0)*100:.1f}%")
+                    if sim_results.get('session_id'):
+                        st.write(f"• Session ID: `{sim_results['session_id']}`")
+                else:
+                    st.markdown("**🚫 Simulation:**")
+                    st.write("Automation disabled")
+    
+    # **NEW: Simulation Results Section**
+    if results.get('simulation_results'):
+        with st.expander("🔬 Simulation Box Results", expanded=True):
+            sim_results = results.get('simulation_results') or {}
+            
+            # Summary metrics
+            st.markdown("### Summary")
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Total Candidates", sim_results.get('total_candidates', 0))
+            with col2:
+                st.metric("Successful", sim_results.get('success_count', 0), 
+                         delta=f"{(sim_results.get('success_count', 0)/max(1, sim_results.get('total_candidates', 1))*100):.1f}%")
+            with col3:
+                st.metric("Failed", sim_results.get('failed_count', 0))
+            with col4:
+                if sim_results.get('session_id'):
+                    st.info(f"📁 Session: `{sim_results['session_id']}`")
+            
+            # Detailed results tabs
+            if sim_results.get('polymer_boxes') or sim_results.get('insulin_systems'):
+                sim_tab1, sim_tab2 = st.tabs(["🔧 Polymer Boxes", "🧬 Insulin Systems"])
+                
+                with sim_tab1:
+                    polymer_results = sim_results.get('polymer_boxes', [])
+                    if polymer_results:
+                        for i, result in enumerate(polymer_results):
+                            success_icon = "✅" if result.get('success') else "❌"
+                            with st.expander(f"{success_icon} Candidate {i+1}: {result.get('candidate_id', 'Unknown')}", 
+                                           expanded=(i < 2)):  # Expand first 2
+                                if result.get('success'):
+                                    st.write(f"**PDB File:** `{result.get('polymer_pdb', 'N/A')}`")
+                                    st.write(f"**PSMILES:** `{result.get('psmiles', 'N/A')[:60]}...`")
+                                    
+                                    params = result.get('parameters', {})
+                                    st.write(f"**Parameters:** Length={params.get('polymer_length', 'N/A')}, "
+                                           f"Molecules={params.get('num_molecules', 'N/A')}, "
+                                           f"Density={params.get('density', 'N/A')}")
+                                else:
+                                    st.error(f"Failed: {result.get('error', 'Unknown error')}")
+                    else:
+                        st.info("No polymer box results available")
+                
+                with sim_tab2:
+                    insulin_results = sim_results.get('insulin_systems', [])
+                    if insulin_results:
+                        for i, result in enumerate(insulin_results):
+                            success_icon = "✅" if result.get('success') else "❌"
+                            with st.expander(f"{success_icon} Candidate {i+1}: {result.get('candidate_id', 'Unknown')}", 
+                                           expanded=(i < 2)):  # Expand first 2
+                                if result.get('success'):
+                                    st.write(f"**Composite PDB:** `{result.get('composite_pdb', 'N/A')}`")
+                                    st.write(f"**Processed Insulin:** `{result.get('processed_insulin_pdb', 'N/A')}`")
+                                    st.write(f"**Original Polymer:** `{result.get('original_polymer_pdb', 'N/A')}`")
+                                    
+                                    params = result.get('parameters', {})
+                                    st.write(f"**Parameters:** Insulin molecules={params.get('num_insulin_molecules', 'N/A')}, "
+                                           f"Polymer duplicates={params.get('num_polymer_duplicates', 'N/A')}, "
+                                           f"Box size={params.get('box_size_nm', 'N/A')} nm")
+                                else:
+                                    st.error(f"Failed: {result.get('error', 'Unknown error')}")
+                    else:
+                        st.info("No insulin system results available")
 
 
 def render_material_generation_tab():
@@ -611,8 +925,12 @@ def render_material_generation_tab():
     render_comprehensive_pipeline_health_check()
     
     if generation_mode == "Automated Pipeline":
-        # **Simplified generation options**
-        material_request, num_candidates, auto_functionalize = render_advanced_generation_options()
+        # **Enhanced generation options with simulation automation**
+        (material_request, num_candidates, auto_functionalize, 
+         auto_create_polymer_boxes, auto_create_insulin_systems,
+         polymer_length, num_polymer_molecules, density, 
+         tolerance_distance, timeout_minutes,
+         num_insulin_molecules, box_size_nm) = render_advanced_generation_options()
         
         # **Simplified hybrid approach info**
         with st.expander("🔬 Generation Approach", expanded=False):
@@ -640,8 +958,21 @@ def render_material_generation_tab():
                 return
             
             # **Start generation workflow with progress tracking**
-            with st.spinner("Running automated PSMILES generation..."):
-                results = execute_automated_pipeline_with_progress(material_request, num_candidates, auto_functionalize)
+            simulation_params = {
+                'auto_create_polymer_boxes': auto_create_polymer_boxes,
+                'auto_create_insulin_systems': auto_create_insulin_systems,
+                'polymer_length': polymer_length,
+                'num_polymer_molecules': num_polymer_molecules,
+                'density': density,
+                'tolerance_distance': tolerance_distance,
+                'timeout_minutes': timeout_minutes,
+                'num_insulin_molecules': num_insulin_molecules,
+                'box_size_nm': box_size_nm
+            }
+            
+            with st.spinner("Running automated PSMILES generation and simulation setup..."):
+                results = execute_automated_pipeline_with_progress(
+                    material_request, num_candidates, auto_functionalize, simulation_params)
                 
                 if results:
                     render_enhanced_generation_results(results)

@@ -39,7 +39,7 @@ class PackmolEmbedder:
             'num_polymers': num_polymers
         }
     
-    def calculate_max_polymers_for_limit(self, max_atoms=15000, num_insulin=1):
+    def calculate_max_polymers_for_limit(self, max_atoms=50000, num_insulin=1):
         """Calculate maximum number of polymers to stay under atom limit"""
         insulin_atoms = self.count_atoms_in_pdb(self.insulin_pdb)
         polymer_atoms = self.count_atoms_in_pdb(self.polymer_pdb)
@@ -79,16 +79,18 @@ class PackmolEmbedder:
         return dimensions, center, min_coords, max_coords
     
     def create_packmol_input(self, box_size=100.0, num_polymers=50, 
-                           insulin_center=None, buffer_distance=15.0, max_atoms=15000):
+                           insulin_center=None, buffer_distance=15.0, max_atoms=50000,
+                           allow_close_packing=True):
         """
         Create Packmol input file for embedding insulin in polymer matrix
         
         Parameters:
-        - box_size: Size of the simulation box
-        - num_polymers: Number of polymer molecules to place
+        - box_size: Size of the simulation box (user-specified)
+        - num_polymers: Number of polymer molecules to place (user-specified)
         - insulin_center: Center position for insulin (defaults to box center)
-        - buffer_distance: Minimum distance between insulin and polymers
+        - buffer_distance: IGNORED if allow_close_packing=True
         - max_atoms: Maximum total atoms allowed
+        - allow_close_packing: If True, remove exclusion radius for dense packing
         """
         
         # Check atom limit and adjust if necessary
@@ -112,7 +114,7 @@ class PackmolEmbedder:
         if estimate['total_atoms'] > max_atoms:
             raise ValueError(f"System too large: {estimate['total_atoms']} atoms exceeds limit of {max_atoms}")
         
-        # Get dimensions
+        # Get dimensions for reference
         insulin_dims, insulin_center_orig, insulin_min, insulin_max = self.get_molecule_dimensions(self.insulin_pdb)
         polymer_dims, _, _, _ = self.get_molecule_dimensions(self.polymer_pdb)
         
@@ -123,12 +125,41 @@ class PackmolEmbedder:
         if insulin_center is None:
             insulin_center = [box_size/2, box_size/2, box_size/2]
         
-        # Calculate insulin boundaries with buffer
-        insulin_radius = max(insulin_dims) / 2 + buffer_distance
-        
-        # Create Packmol input
-        packmol_content = f"""#
-# Packmol input for embedding insulin in polymer matrix
+        # Create Packmol input with or without exclusion radius
+        if allow_close_packing:
+            # NO EXCLUSION RADIUS - allows dense packing near insulin
+            packmol_content = f"""#
+# Packmol input for embedding insulin in polymer matrix (close packing enabled)
+# User-specified: {num_polymers} polymers in {box_size} Å box
+# Estimated atoms: {estimate['total_atoms']} (limit: {max_atoms})
+#
+
+tolerance 2.0
+filetype pdb
+output {self.output_pdb}
+
+# Place insulin at the center
+structure {self.insulin_pdb}
+  number 1
+  center
+  fixed {insulin_center[0]} {insulin_center[1]} {insulin_center[2]} 0. 0. 0.
+end structure
+
+# Distribute polymers throughout the entire box (can be close to insulin)
+structure {self.polymer_pdb}
+  number {num_polymers}
+  inside box 0. 0. 0. {box_size} {box_size} {box_size}
+end structure
+"""
+            print(f"🎯 CLOSE PACKING ENABLED - polymers can approach insulin closely")
+            print(f"📦 User-specified box size: {box_size} Å")
+            print(f"🧬 User-specified polymer count: {num_polymers}")
+            
+        else:
+            # WITH EXCLUSION RADIUS (legacy behavior)
+            insulin_radius = max(insulin_dims) / 2 + buffer_distance
+            packmol_content = f"""#
+# Packmol input for embedding insulin in polymer matrix (with exclusion radius)
 # Estimated atoms: {estimate['total_atoms']} (limit: {max_atoms})
 #
 
@@ -150,15 +181,14 @@ structure {self.polymer_pdb}
   outside sphere {insulin_center[0]} {insulin_center[1]} {insulin_center[2]} {insulin_radius}
 end structure
 """
+            print(f"🚧 Exclusion radius: {insulin_radius} Å around insulin")
         
         with open(self.packmol_input, 'w') as f:
             f.write(packmol_content)
         
-        print(f"Created Packmol input file: {self.packmol_input}")
-        print(f"Box size: {box_size} Å")
-        print(f"Insulin center: {insulin_center}")
-        print(f"Insulin exclusion radius: {insulin_radius} Å")
-        print(f"Number of polymers: {num_polymers}")
+        print(f"✅ Created Packmol input file: {self.packmol_input}")
+        print(f"📦 Box size: {box_size} Å")
+        print(f"📍 Insulin center: {insulin_center}")
         
         return estimate
     
@@ -200,7 +230,7 @@ end structure
             return False
     
     def embed_insulin(self, box_size=100.0, num_polymers=50, 
-                     buffer_distance=15.0, packmol_executable="packmol", max_atoms=15000):
+                      buffer_distance=15.0, packmol_executable="packmol", max_atoms=50000):
         """
         Complete workflow to embed insulin in polymer matrix
         """
@@ -252,7 +282,7 @@ if __name__ == "__main__":
         num_polymers=20,          # Reduced from 100 to keep system manageable
         buffer_distance=20.0,     # Buffer around insulin
         packmol_executable="packmol",
-        max_atoms=15000           # Limit total atoms to 15K
+        max_atoms=50000           # Limit total atoms to 50K for larger systems
     )
     
     if success:

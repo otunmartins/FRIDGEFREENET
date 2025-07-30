@@ -50,12 +50,31 @@ try:
 except ImportError:
     AUTOCORRECTOR_AVAILABLE = False
 
-# Import MD simulation integration
+# Import MD simulation integration - USING NEW SIMPLE WORKING SYSTEM
 try:
-    from integration.analysis.md_simulation_integration import MDSimulationIntegration, get_insulin_polymer_pdb_files
+    # Import our NEW SIMPLE WORKING system based on openmm_test.py
+    from integration.analysis.simple_md_integration import SimpleMDIntegration
+    from integration.analysis.test_real_md_simulation import find_test_pdb_file
     MD_INTEGRATION_AVAILABLE = True
+    print("✅ Simple Working MD Integration imported successfully (based on openmm_test.py)")
+except ImportError as e:
+    # Fallback to old streamlined system
+    try:
+        from integration.analysis.streamlined_md_integration import StreamlinedMDIntegration as SimpleMDIntegration
+        from integration.analysis.streamlined_md_integration import run_streamlined_md
+        MD_INTEGRATION_AVAILABLE = True
+        print("⚠️ Using fallback streamlined system (simple working system not available)")
+    except ImportError as e2:
+        MD_INTEGRATION_AVAILABLE = False
+        print(f"❌ Both simple working and streamlined MD integration failed: {e}, {e2}")
+        print("   This may be due to missing dependencies like OpenMM or pdbfixer")
+    
+# Import legacy system for compatibility (if needed)
+try:
+    from integration.analysis.md_simulation_integration import get_insulin_polymer_pdb_files
+    LEGACY_MD_UTILS_AVAILABLE = True
 except ImportError:
-    MD_INTEGRATION_AVAILABLE = False
+    LEGACY_MD_UTILS_AVAILABLE = False
 
 # Import comprehensive analysis system
 try:
@@ -64,6 +83,15 @@ try:
     COMPREHENSIVE_ANALYSIS_AVAILABLE = True
 except ImportError:
     COMPREHENSIVE_ANALYSIS_AVAILABLE = False
+
+# Import simulation automation system (Updated to use DirectPolymerBuilder)
+try:
+    from integration.automation.simulation_automation import SimulationAutomation, SimulationAutomationPipeline, run_automated_simulation_pipeline
+    SIMULATION_AUTOMATION_AVAILABLE = True
+    print("✅ DirectPolymerBuilder simulation automation imported successfully")
+except ImportError:
+    SIMULATION_AUTOMATION_AVAILABLE = False
+    print("❌ Simulation automation not available")
 
 # Import debugging utilities
 try:
@@ -254,49 +282,111 @@ def ensure_systems_initialized() -> bool:
 # CORE GENERATION FUNCTION
 # ==================================================
 def psmiles_generation_with_llm(material_request, conversation_memory=None):
-    """Pure LLM-driven PSMILES generation with 100% reliability."""
+    """
+    Sophisticated PSMILES generation using the most advanced pipeline:
+    - Multiple diverse candidates with temperature variation
+    - Chemical functionalization for true diversity
+    - Proper validation and diversity scoring
+    - No fake/hard-coded properties
+    """
     try:
-        # **PURE LLM GENERATION** - No fallbacks, 100% LLM-driven with built-in reliability
-        results = st.session_state.psmiles_generator.generate_psmiles(description=material_request)  # Fixed parameter name
+        print(f"🚀 Starting sophisticated PSMILES generation for: {material_request}")
         
-        # The PSMILESGenerator now guarantees success with its multi-attempt strategy
-        if results.get('success') and results.get('best_candidate'):
-            psmiles = results['best_candidate']
+        # Use the most sophisticated generation method with functionalization
+        results = st.session_state.psmiles_generator.generate_truly_diverse_candidates(
+            base_request=material_request,
+            num_candidates=5,  # Generate multiple diverse candidates
+            enable_functionalization=True,  # Enable chemical functionalization
+            diversity_threshold=0.4,  # Require meaningful diversity
+            temperature_range=(0.6, 1.0),  # Use temperature variation
+            max_retries=2  # Allow retries for better results
+        )
+        
+        print(f"📊 Generation results: success={results.get('success')}, candidates={results.get('num_generated', 0)}")
+        
+        # Check if generation was successful
+        if results.get('success') and results.get('candidates'):
+            candidates = results['candidates']
+            best_candidate = results.get('best_candidate')
             
-            # Validate format (PSMILESGenerator should ensure this)
-            if psmiles.count('[*]') == 2:
+            if best_candidate and best_candidate.count('[*]') == 2:
                 return {
-                    'psmiles': psmiles,
-                    'explanation': results.get('explanation', 'Pure LLM-generated polymer structure'),
-                    'properties': {
-                        'thermal_stability': np.random.uniform(0.4, 0.9),
-                        'biocompatibility': np.random.uniform(0.6, 1.0),
-                        'insulin_binding': np.random.uniform(0.3, 0.8)
+                    'psmiles': best_candidate,
+                    'explanation': f"Generated using advanced orchestration system with {results.get('total_generated', results.get('num_generated', 0))} total candidates",
+                    'candidates': candidates,  # Selected best candidates
+                    'all_candidates': results.get('all_candidates', candidates),  # ALL generated candidates including variants
+                    'total_generated': results.get('total_generated', len(candidates)),  # Total before selection
+                    'diversity_info': {
+                        'num_generated': results.get('num_generated', 0),
+                        'num_valid': results.get('num_valid', 0),
+                        'total_generated': results.get('total_generated', 0),
+                        'diversity_score': results.get('diversity_validation', {}).get('diversity_score', 0),
+                        'meets_threshold': results.get('diversity_validation', {}).get('meets_diversity_threshold', False),
+                        'functionalization_enabled': True
                     },
-                    'method': results.get('method', 'pure_llm'),
-                    'temperature_used': results.get('temperature_used', 'unknown'),
-                    'validation_status': results.get('validation', 'llm_validated'),
+                    'method': 'truly_diverse_candidates',
+                    'temperature_range': results.get('temperature_range', (0.6, 1.0)),
+                    'validation_status': 'chemistry_validated',
                     'generation_details': {
-                        'method': results.get('method', 'pure_llm'),
-                        'validation': results.get('validation', 'llm_validated'),
-                        'conversation_turn': results.get('conversation_turn', 0),
-                        'timestamp': results.get('timestamp', '')
+                        'pipeline': results.get('pipeline', 'Advanced-Orchestration'),
+                        'model': results.get('model', 'unknown'),
+                        'timestamp': results.get('timestamp', ''),
+                        'orchestration_system': True,
+                        'functionalization_applied': True
                     }
                 }
         
-        # If we get here, generation wasn't successful
+        # If truly diverse generation failed, fallback to standard diverse generation
+        print("⚠️ Truly diverse generation failed, falling back to standard diverse generation")
+        fallback_results = st.session_state.psmiles_generator.generate_diverse_candidates(
+            base_request=material_request,
+            num_candidates=6,
+            temperature_range=(0.6, 1.0)
+        )
+        
+        if fallback_results.get('success') and fallback_results.get('best_candidate'):
+            return {
+                'psmiles': fallback_results['best_candidate'],
+                'explanation': f"Generated using standard diverse pipeline (fallback) with {fallback_results.get('total_generated', fallback_results.get('num_generated', 0))} total candidates",
+                'candidates': fallback_results.get('candidates', []),
+                'all_candidates': fallback_results.get('all_candidates', fallback_results.get('candidates', [])),
+                'total_generated': fallback_results.get('total_generated', len(fallback_results.get('candidates', []))),
+                'diversity_info': {
+                    'num_generated': fallback_results.get('num_generated', 0),
+                    'num_valid': fallback_results.get('num_valid', 0),
+                    'total_generated': fallback_results.get('total_generated', 0),
+                    'functionalization_enabled': False
+                },
+                'method': 'diverse_candidates_fallback',
+                'temperature_range': fallback_results.get('temperature_range', (0.6, 1.0)),
+                'validation_status': 'chemistry_validated',
+                'generation_details': {
+                    'pipeline': fallback_results.get('pipeline', 'NaturalLanguage→SMILES→PSMILES'),
+                    'model': fallback_results.get('model', 'unknown'),
+                    'timestamp': fallback_results.get('timestamp', ''),
+                    'fallback_used': True
+                }
+            }
+        
+        # If everything fails
         return {
-            'error': 'Failed to generate valid PSMILES',
+            'error': 'All sophisticated generation methods failed',
             'psmiles': None,
-            'method': 'failed_generation'
+            'method': 'generation_failure',
+            'details': {
+                'sophisticated_failed': True,
+                'fallback_failed': True,
+                'original_error': results.get('error', 'Unknown error')
+            }
         }
         
     except Exception as e:
-        print(f"❌ Error in PSMILES generation: {e}")
+        print(f"❌ Error in sophisticated PSMILES generation: {e}")
         return {
             'error': str(e),
             'psmiles': None,
-            'method': 'generation_error'
+            'method': 'generation_error',
+            'details': {'exception': str(e)}
         }
 
 # ==================================================
@@ -414,6 +504,20 @@ def initialize_systems(openai_model='gpt-4o', temperature=0.7):
             systems['psmiles_auto_corrector'] = create_psmiles_auto_corrector()
             print("✅ PSMILES Auto-Corrector initialized")
         
+        # Initialize MD simulation integration if available
+        if MD_INTEGRATION_AVAILABLE:
+            try:
+                systems['md_integration'] = SimpleMDIntegration()
+                print("✅ Simple Working MD Integration initialized successfully (uses openmm_test.py approach)")
+            except Exception as e:
+                print(f"⚠️ Simple Working MD Integration failed to initialize: {e}")
+                print(f"   Error type: {type(e).__name__}")
+                print(f"   Consider installing missing dependencies or check module compatibility")
+                systems['md_integration'] = None
+        else:
+            systems['md_integration'] = None
+            print("⚠️ MD Simulation Integration not available - import failed during startup")
+        
         systems['status'] = 'success'
         return systems
         
@@ -471,10 +575,15 @@ def main():
             if systems.get('status') == 'success':
                 # Store in session state
                 for key, system in systems.items():
-                    setattr(st.session_state, key, system)
+                    if key != 'status':  # Don't store 'status' as it's metadata
+                        setattr(st.session_state, key, system)
+                
+                # Set availability flags
                 st.session_state.systems_initialized = True
                 st.session_state.current_initialized_model = selected_model
                 st.session_state.current_initialized_temp = temperature
+                st.session_state.md_integration_available = systems.get('md_integration') is not None
+                
                 st.success("✅ All systems initialized successfully!")
             else:
                 st.error(f"❌ Failed to initialize systems: {systems.get('error')}")

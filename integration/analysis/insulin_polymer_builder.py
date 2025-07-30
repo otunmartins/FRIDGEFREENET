@@ -151,9 +151,10 @@ def create_large_box_with_random_edges(
     num_insulin_molecules: int = 1,
     num_polymer_duplicates: int = 20,
     box_size_nm: float = 3.0,
-    output_dir: str = ""
+    output_dir: str = "",
+    allow_close_packing: bool = True
 ) -> bool:
-    """Create large box with polymer duplicates using sphere exclusion around insulin (PackmolEmbedder approach)."""
+    """Create large box with polymer duplicates using PACKMOL - can allow close packing to insulin."""
     
     try:
         # Check if PACKMOL is available
@@ -193,31 +194,26 @@ def create_large_box_with_random_edges(
         # Final box size is the maximum of all constraints
         box_size = max(min_box_size, base_box_size, user_preference_size)
         
-        # Buffer distance based on molecule sizes
-        buffer_distance = max(15.0, insulin_max_dim * 0.5, polymer_max_dim * 2.0)
-        
-        # Calculate insulin exclusion radius
-        insulin_radius = insulin_max_dim / 2 + buffer_distance
-        
         # Set insulin center position (box center)
         insulin_center = [box_size/2, box_size/2, box_size/2]
         
-        print(f"   Dynamic box size calculation:")
+        print(f"   📦 Dynamic box size calculation:")
         print(f"     - Insulin volume estimate: {insulin_volume_estimate:.1f} Å³")
         print(f"     - Polymer volume estimate: {polymer_volume_estimate:.1f} Å³")
         print(f"     - Total volume needed: {total_volume_needed:.1f} Å³")
         print(f"     - Minimum box size: {min_box_size:.1f} Å")
         print(f"     - User preference size: {user_preference_size:.1f} Å")
-        print(f"   Final box size: {box_size:.1f} Å")
-        print(f"   Insulin center: {insulin_center}")
-        print(f"   Insulin exclusion radius: {insulin_radius:.1f} Å")
-        print(f"   Dynamic buffer distance: {buffer_distance:.1f} Å")
+        print(f"   📏 Final box size: {box_size:.1f} Å")
+        print(f"   📍 Insulin center: {insulin_center}")
+        print(f"   🧬 Number of polymer duplicates: {num_polymer_duplicates}")
+        print(f"   🎯 Close packing enabled: {allow_close_packing}")
         
         # Create PACKMOL input file
         packmol_dir = os.path.join(output_dir, 'packmol')
         os.makedirs(packmol_dir, exist_ok=True)
         
-        input_file = os.path.join(packmol_dir, 'sphere_exclusion.inp')
+        input_filename = 'close_packing.inp' if allow_close_packing else 'sphere_exclusion.inp'
+        input_file = os.path.join(packmol_dir, input_filename)
         
         # Copy input files to packmol directory
         polymer_local = os.path.join(packmol_dir, 'polymer.pdb')
@@ -238,11 +234,20 @@ def create_large_box_with_random_edges(
             f.write(f"  fixed {insulin_center[0]:.1f} {insulin_center[1]:.1f} {insulin_center[2]:.1f} 0. 0. 0.\n")
             f.write("end structure\n\n")
             
-            # Distribute polymers around insulin, excluding the central sphere
+            # Distribute polymers with or without exclusion radius
             f.write(f"structure {os.path.abspath(polymer_local)}\n")
             f.write(f"  number {num_polymer_duplicates}\n")
             f.write(f"  inside box 0. 0. 0. {box_size:.1f} {box_size:.1f} {box_size:.1f}\n")
-            f.write(f"  outside sphere {insulin_center[0]:.1f} {insulin_center[1]:.1f} {insulin_center[2]:.1f} {insulin_radius:.1f}\n")
+            
+            if not allow_close_packing:
+                # Legacy behavior with exclusion radius
+                buffer_distance = max(15.0, insulin_max_dim * 0.5, polymer_max_dim * 2.0)
+                insulin_radius = insulin_max_dim / 2 + buffer_distance
+                f.write(f"  outside sphere {insulin_center[0]:.1f} {insulin_center[1]:.1f} {insulin_center[2]:.1f} {insulin_radius:.1f}\n")
+                print(f"   🚧 Using exclusion radius: {insulin_radius:.1f} Å")
+            else:
+                print(f"   🎯 No exclusion radius - polymers can be close to insulin")
+            
             f.write("end structure\n")
         
         print(f"   Created PACKMOL input: {input_file}")

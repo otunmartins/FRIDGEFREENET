@@ -262,14 +262,34 @@ class PSMILESProcessor:
                 print(f"⚠️ Chemistry validation error: {validation_error}")
             
             # Create PSMILES object for standard organic polymers
-            ps = PS(psmiles_string)
-            
-            # Store in session for future operations
-            if session_id not in self.session_psmiles:
-                self.session_psmiles[session_id] = []
-            
-            # Canonicalize the PSMILES
-            canonical_ps = ps.canonicalize
+            try:
+                ps = PS(psmiles_string)
+                
+                # Store in session for future operations
+                if session_id not in self.session_psmiles:
+                    self.session_psmiles[session_id] = []
+                
+                # Canonicalize the PSMILES - this can fail with complex structures
+                try:
+                    canonical_ps = ps.canonicalize
+                except Exception as canonicalize_error:
+                    print(f"⚠️ Canonicalization failed: {canonicalize_error}")
+                    print(f"   Using original PSMILES structure as fallback")
+                    # Create a minimal fallback object
+                    canonical_ps = type('FallbackPS', (), {
+                        '__str__': lambda: psmiles_string,
+                        'savefig': lambda path: self._create_fallback_svg(psmiles_string, path)
+                    })()
+                    
+            except Exception as ps_creation_error:
+                print(f"⚠️ PSMILES object creation failed: {ps_creation_error}")
+                print(f"   Creating minimal fallback object")
+                # Create fallback objects when psmiles library fails
+                ps = type('FallbackPS', (), {'__str__': lambda: psmiles_string})()
+                canonical_ps = type('FallbackPS', (), {
+                    '__str__': lambda: psmiles_string,
+                    'savefig': lambda path: self._create_fallback_svg(psmiles_string, path)
+                })()
             
             # Generate and save SVG
             svg_filename = f"psmiles_{session_id}_{len(self.session_psmiles[session_id])}.svg"
@@ -309,6 +329,9 @@ class PSMILESProcessor:
             else:
                 canonical_display = canonical_str
             
+            # Check if we used fallback processing
+            is_fallback = hasattr(canonical_ps, '__class__') and canonical_ps.__class__.__name__ == 'FallbackPS'
+            
             return {
                 'success': True,
                 'original_psmiles': psmiles_string,
@@ -319,7 +342,9 @@ class PSMILESProcessor:
                 'session_count': len(self.session_psmiles[session_id]),
                 'step': step,
                 'timestamp': datetime.now().isoformat(),
-                'type': 'organic'
+                'type': 'organic',
+                'processing_mode': 'fallback' if is_fallback else 'standard',
+                'note': 'Processed with fallback mode due to psmiles library limitations' if is_fallback else None
             }
             
         except Exception as e:
@@ -683,6 +708,48 @@ class PSMILESProcessor:
         options['current_step'] = current_step
         
         return options
+    
+    def _create_fallback_svg(self, psmiles_string: str, svg_path: str) -> None:
+        """
+        Create a fallback SVG when the psmiles library fails to generate visualization.
+        
+        Args:
+            psmiles_string (str): The PSMILES string to display
+            svg_path (str): Path where to save the SVG
+        """
+        try:
+            fallback_svg = f'''<?xml version="1.0" encoding="UTF-8"?>
+<svg width="400" height="300" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+        <style>
+            .header {{ font-family: Arial, sans-serif; font-size: 16px; font-weight: bold; fill: #2c3e50; }}
+            .psmiles {{ font-family: 'Courier New', monospace; font-size: 12px; fill: #34495e; }}
+            .note {{ font-family: Arial, sans-serif; font-size: 10px; fill: #7f8c8d; }}
+        </style>
+    </defs>
+    
+    <rect width="400" height="300" fill="#f8f9fa" stroke="#dee2e6" stroke-width="2" rx="10"/>
+    
+    <text x="200" y="40" text-anchor="middle" class="header">PSMILES Structure</text>
+    
+    <text x="200" y="70" text-anchor="middle" class="note">Visualization not available - using fallback display</text>
+    
+    <!-- PSMILES string -->
+    <text x="200" y="120" text-anchor="middle" class="psmiles">{psmiles_string[:50]}</text>
+    {f'<text x="200" y="140" text-anchor="middle" class="psmiles">{psmiles_string[50:100]}</text>' if len(psmiles_string) > 50 else ''}
+    {f'<text x="200" y="160" text-anchor="middle" class="psmiles">...</text>' if len(psmiles_string) > 100 else ''}
+    
+    <text x="200" y="200" text-anchor="middle" class="note">Structure contains:</text>
+    <text x="200" y="220" text-anchor="middle" class="note">• Connection points: {psmiles_string.count('[*]')}</text>
+    <text x="200" y="240" text-anchor="middle" class="note">• Chemical validity: Assumed valid</text>
+    <text x="200" y="260" text-anchor="middle" class="note">• Processing status: Fallback mode</text>
+</svg>'''
+            
+            with open(svg_path, 'w') as f:
+                f.write(fallback_svg)
+                
+        except Exception as svg_error:
+            print(f"⚠️ Could not create fallback SVG: {svg_error}")
     
     def get_session_psmiles(self, session_id: str) -> List[Dict]:
         """Get all PSMILES strings for a session."""
@@ -1215,7 +1282,7 @@ class PSMILESProcessor:
                 print(f"   🚀 Using Enhanced Chemical Repair System")
                 
                 # Use the state-of-the-art repair system with original request context
-                repair_result = self.enhanced_repairer.repair_psmiles_structure(failed_psmiles, original_request)
+                repair_result = self.enhanced_repairer.repair_psmiles_structure(failed_psmiles)
                 
                 if repair_result['success']:
                     print(f"   ✅ ENHANCED REPAIR SUCCESS!")

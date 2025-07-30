@@ -328,9 +328,9 @@ class FunctionalizationEngine:
                 'parameters': {'connection_types': ['head_to_tail', 'head_to_head']}
             },
             'copolymerize': {
-                'description': 'Create copolymer variations with common monomers',
+                'description': 'Create copolymer variations with functional monomers only',
                 'method': self._apply_copolymerization,
-                'parameters': {'common_monomers': ['[*]CC[*]', '[*]CCO[*]', '[*]c1ccccc1[*]']}
+                'parameters': {'common_monomers': ['[*]CCO[*]', '[*]c1ccccc1[*]', '[*]C(=O)OC[*]', '[*]C(=O)N[*]']}  # Removed [*]CC[*] alkyl monomer
             },
             'substitute': {
                 'description': 'Add substituent groups to the polymer backbone',
@@ -340,7 +340,7 @@ class FunctionalizationEngine:
         }
     
     def _apply_randomization(self, psmiles: str, **kwargs) -> List[str]:
-        """Apply randomization using psmiles package."""
+        """Apply randomization using psmiles package with fixed API calls."""
         if not self.psmiles_available:
             return [psmiles]  # Return original if psmiles not available
         
@@ -351,20 +351,53 @@ class FunctionalizationEngine:
             randomized_variants = []
             
             max_iterations = kwargs.get('max_iterations', 5)
-            for _ in range(max_iterations):
+            for i in range(max_iterations):
                 try:
-                    # Use randomize method from psmiles
-                    randomized = ps.randomize()  # Fixed: Added parentheses to call the method
+                    # Try different randomization approaches
+                    randomized = None
+                    
+                    # Method 1: Try direct randomize call
+                    if hasattr(ps, 'randomize'):
+                        try:
+                            randomized = ps.randomize
+                            if callable(randomized):
+                                randomized = randomized()
+                        except:
+                            pass
+                    
+                    # Method 2: Try with seed parameter
+                    if not randomized and hasattr(ps, 'randomize'):
+                        try:
+                            randomized = ps.randomize(seed=42+i)
+                        except:
+                            pass
+                    
+                    # Method 3: Use string-based randomization as fallback
+                    if not randomized:
+                        # Simple structural variations by modifying SMILES
+                        import random
+                        random.seed(42+i)
+                        base_smiles = psmiles.replace('[*]', '')
+                        if 'C' in base_smiles:
+                            # Add random branching
+                            variants = [
+                                psmiles.replace('C', 'C(C)', 1),
+                                psmiles.replace('C', 'C(O)', 1),
+                                psmiles.replace('CC', 'CCC', 1) if 'CC' in psmiles else psmiles
+                            ]
+                            randomized = random.choice([v for v in variants if v != psmiles])
+                    
                     # Convert to string if it's a PolymerSmiles object
                     if hasattr(randomized, 'psmiles'):
                         randomized = randomized.psmiles
-                    elif not isinstance(randomized, str):
+                    elif randomized and not isinstance(randomized, str):
                         randomized = str(randomized)
                     
-                    if randomized != psmiles:  # Only add if different
+                    if randomized and randomized != psmiles:  # Only add if different
                         randomized_variants.append(randomized)
+                        
                 except Exception as e:
-                    logger.debug(f"Randomization attempt failed: {e}")
+                    logger.debug(f"Randomization attempt {i+1} failed: {e}")
                     continue
             
             return randomized_variants if randomized_variants else [psmiles]
@@ -374,7 +407,7 @@ class FunctionalizationEngine:
             return [psmiles]
     
     def _apply_dimerization(self, psmiles: str, **kwargs) -> List[str]:
-        """Apply dimerization using psmiles package."""
+        """Apply dimerization using psmiles package with fixed API calls."""
         if not self.psmiles_available:
             return [psmiles]
         
@@ -384,17 +417,42 @@ class FunctionalizationEngine:
             ps = PS(psmiles)
             dimers = []
             
-            # Try dimerization
+            # Try different dimerization approaches
             try:
-                dimerized = ps.dimerize()
+                dimerized = None
+                
+                # Method 1: Try direct dimerize call
+                if hasattr(ps, 'dimer'):
+                    try:
+                        dimerized = ps.dimer()
+                    except Exception as e:
+                        logger.debug(f"dimer() method failed: {e}")
+                
+                # Method 2: Try dimerize method  
+                if not dimerized and hasattr(ps, 'dimerize'):
+                    try:
+                        dimerized = ps.dimerize()
+                    except Exception as e:
+                        logger.debug(f"dimerize() method failed: {e}")
+                
+                # Method 3: Try creating dimer manually
+                if not dimerized:
+                    try:
+                        # Create head-to-tail dimer by combining two units
+                        base_smiles = psmiles.replace('[*]', '')
+                        dimerized = f"[*]{base_smiles}{base_smiles}[*]"
+                    except Exception as e:
+                        logger.debug(f"Manual dimerization failed: {e}")
+                
                 # Convert to string if it's a PolymerSmiles object
                 if hasattr(dimerized, 'psmiles'):
                     dimerized = dimerized.psmiles
-                elif not isinstance(dimerized, str):
+                elif dimerized and not isinstance(dimerized, str):
                     dimerized = str(dimerized)
                 
-                if dimerized != psmiles:
+                if dimerized and dimerized != psmiles:
                     dimers.append(dimerized)
+                    
             except Exception as e:
                 logger.debug(f"Dimerization failed: {e}")
             
@@ -745,8 +803,10 @@ class CandidateOrchestrator:
             results = {
                 'success': len(final_candidates) > 0,
                 'base_request': config.base_request,
-                'candidates': final_candidates,
+                'candidates': final_candidates,  # Selected best candidates
+                'all_candidates': candidates,  # ALL generated candidates (including variants)
                 'num_generated': len(final_candidates),
+                'total_generated': len(candidates),  # Total before selection
                 'diverse_prompts': diverse_prompts,
                 'generation_stats': generation_stats,
                 'diversity_validation': diversity_results,

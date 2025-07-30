@@ -85,22 +85,21 @@ class InsulinDeliveryAnalysisIntegration:
             Complete analysis results
         """
         def log_output(message: str):
+            print(message)  # Always print to console
             if output_callback:
-                output_callback(message)
-            else:
-                print(message)
+                output_callback(message)  # Also send to app interface
         
         log_output(f"\n🚀 Starting Complete Insulin Delivery Analysis")
         log_output(f"📄 Input PDB: {pdb_file}")
         log_output("=" * 80)
         
-        # Default simulation options
+        # Default simulation options - Quick Test mode for user convenience
         if simulation_options is None:
             simulation_options = {
                 'temperature': 310.0,          # Physiological temperature
-                'equilibration_steps': 125000, # 1.25 ns equilibration
-                'production_steps': 2500000,   # 25 ns production
-                'save_interval': 500           # Save every 5 ps
+                'equilibration_steps': 125000, # Quick Test: 250 ps equilibration
+                'production_steps': 500000,    # Quick Test: 1 ns production (was 2500000 = 5 ns)
+                'save_interval': 500           # Save every 1 ps for quick tests
             }
         
         # Default analysis options (run all analyses)
@@ -237,10 +236,9 @@ class InsulinDeliveryAnalysisIntegration:
             Analysis results
         """
         def log_output(message: str):
+            print(message)  # Always print to console
             if output_callback:
-                output_callback(message)
-            else:
-                print(message)
+                output_callback(message)  # Also send to app interface
         
         log_output(f"\n📊 Running Analysis on Existing Simulation")
         log_output(f"🎯 Simulation ID: {simulation_id}")

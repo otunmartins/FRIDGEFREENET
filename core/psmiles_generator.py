@@ -49,9 +49,15 @@ class OpenAIWorkingPipeline:
         self.llm = llm
         self.chemistry_examples = self._get_chemistry_examples()
         
-        # Enhanced SMILES generation prompt based on the working system
+        # Enhanced SMILES generation prompt based on VALID-Mol research (2025)
         self.nl_to_smiles_prompt = ChatPromptTemplate.from_messages([
             ("system", """You are a chemistry expert. Convert this description to a valid SMILES string following these EXACT rules:
+
+CONSTRAINTS (CRITICAL - FROM VALID-MOL FRAMEWORK):
+- Molecular weight: MUST be between 100-800 Da (realistic drug-like range)
+- SMILES length: MUST be between 5-1000 characters (prevents unrealistic structures)
+- Chemical validity: MUST pass RDKit validation
+- Output format: SMILES_STRING_ONLY (no explanations, no text, no descriptions)
 
 SMILES GUIDELINES (FOLLOW EXACTLY - VERBATIM):
 SMILES (simplified molecular-input line-entry system) uses short ASCII string to represent the structure of chemical species. Because the SMILES format described here is custom-designed by us for polymers, it is not completely identical to other SMILES formats. Strictly following the rules explained below is crucial for having correct results.
@@ -96,7 +102,7 @@ VALID SULFUR CHEMISTRY (CRITICAL FOR SULFUR-CONTAINING REQUESTS):
 - Sulfur in aromatic ring: c1sccc1 (thiophene)
 - Simple sulfide: CCC(S)CC
 
-EXAMPLES:
+EXAMPLES (ALL WITHIN CONSTRAINTS):
 - water → O
 - ethanol → CCO
 - benzene → c1ccccc1
@@ -108,8 +114,12 @@ EXAMPLES:
 - sulfur bridge → CSC
 - disulfide → CSSC
 
-RETURN ONLY THE SMILES STRING, NO EXPLANATIONS OR EXTRA TEXT."""),
-            ("human", "Convert this description to SMILES: {description}")
+OUTPUT FORMAT EXAMPLE:
+Input: "polymer with boron atoms"
+Output: CC[B]CC
+
+STRICT REQUIREMENT: RETURN ONLY THE SMILES STRING, NO EXPLANATIONS OR EXTRA TEXT."""),
+            ("human", "Convert this description to SMILES (MW: 100-800 Da, Length: 5-1000 chars): {description}")
         ])
     
     def _get_chemistry_examples(self) -> dict:
@@ -205,12 +215,40 @@ RETURN ONLY THE SMILES STRING, NO EXPLANATIONS OR EXTRA TEXT."""),
             
             print(f"   Generated SMILES: {smiles}")
             
+            # **STEP 3: VALID-Mol Constraint Validation (NEW)**
+            print(f"   🔍 Applying VALID-Mol constraints...")
+            valid_constraints, constraint_message = self.validate_valid_mol_constraints(smiles)
+            
+            if not valid_constraints:
+                print(f"   ❌ VALID-Mol constraints failed: {constraint_message}")
+                # Retry with more constrained prompt
+                print(f"   🔄 Retrying with stricter constraints...")
+                retry_prompt = f"Generate a REALISTIC small molecule for: {description}. CRITICAL: Must be 5-1000 characters, 100-800 Da molecular weight. Output ONLY the SMILES string."
+                retry_messages = [("system", "You are a chemistry expert. Generate ONLY a valid, realistic SMILES string within molecular weight 100-800 Da and 5-1000 characters."), ("human", retry_prompt)]
+                
+                retry_response = self.llm.invoke(retry_messages)
+                retry_smiles = self._clean_smiles_response(retry_response.content.strip())
+                
+                # Validate retry
+                retry_valid, retry_message = self.validate_valid_mol_constraints(retry_smiles)
+                if retry_valid:
+                    print(f"   ✅ Retry successful: {retry_message}")
+                    smiles = retry_smiles
+                else:
+                    print(f"   ❌ Retry also failed: {retry_message}")
+                    # Continue with original SMILES but mark as constraint-violating
+                    
+            else:
+                print(f"   ✅ VALID-Mol constraints satisfied: {constraint_message}")
+            
             return {
                 'success': True,
                 'smiles': smiles,
                 'method': 'openai_comprehensive',
                 'description': description,
-                'confidence': 0.8
+                'confidence': 0.8,
+                'constraints_satisfied': valid_constraints,
+                'constraint_details': constraint_message
             }
             
         except Exception as e:
@@ -280,6 +318,53 @@ RETURN ONLY THE SMILES STRING, NO EXPLANATIONS OR EXTRA TEXT."""),
             
         except Exception as e:
             return False, None, f"Validation error: {str(e)}"
+    
+    def validate_valid_mol_constraints(self, smiles: str) -> tuple:
+        """
+        VALID-Mol Framework Constraints Validation (2025 Research)
+        Implements molecular weight and length constraints that improved validity from 3% to 83%
+        """
+        try:
+            # Step 1: SMILES Length Constraint (5-1000 characters)
+            MIN_LENGTH = 5
+            MAX_LENGTH = 1000
+            
+            if len(smiles) < MIN_LENGTH:
+                return False, f"SMILES too short ({len(smiles)} < {MIN_LENGTH} chars)"
+            
+            if len(smiles) > MAX_LENGTH:
+                return False, f"SMILES too long ({len(smiles)} > {MAX_LENGTH} chars) - unrealistic structure"
+            
+            # Step 2: Molecular Weight Constraint (100-800 Da)
+            try:
+                from rdkit import Chem
+                from rdkit.Chem import rdMolDescriptors
+                
+                mol = Chem.MolFromSmiles(smiles)
+                if mol is None:
+                    return False, "Invalid SMILES structure"
+                
+                # Calculate molecular weight
+                mw = rdMolDescriptors.CalcExactMolWt(mol)
+                MIN_MW = 100.0  # Da
+                MAX_MW = 800.0  # Da (drug-like range)
+                
+                if mw < MIN_MW:
+                    return False, f"Molecular weight too low ({mw:.1f} < {MIN_MW} Da)"
+                
+                if mw > MAX_MW:
+                    return False, f"Molecular weight too high ({mw:.1f} > {MAX_MW} Da) - unrealistic for drug-like molecules"
+                
+                return True, f"Valid: {len(smiles)} chars, {mw:.1f} Da"
+                
+            except ImportError:
+                # RDKit not available, only check length
+                return True, f"Valid length: {len(smiles)} chars (MW check requires RDKit)"
+            except Exception as e:
+                return False, f"Molecular weight calculation failed: {str(e)}"
+                
+        except Exception as e:
+            return False, f"VALID-Mol validation error: {str(e)}"
     
     def _clean_smiles_response(self, response: str) -> str:
         """Clean OpenAI response to extract just the SMILES string"""
@@ -368,7 +453,7 @@ class PSMILESGenerator:
 
 PSMILES (Polymer SMILES) is a notation system for representing polymers with exactly TWO connection points marked as [*].
 
-CRITICAL RULES:
+CRITICAL RULES (ENHANCED WITH MOLLM MULTI-OBJECTIVE FRAMEWORK):
 1. ALWAYS use exactly TWO [*] symbols to mark connection points
 2. Use proper SMILES syntax for chemical structures
 3. Consider real polymer chemistry and realistic structures
@@ -377,21 +462,35 @@ CRITICAL RULES:
 6. NEVER use explicit hydrogen atoms (H) in the structure - SMILES implicit hydrogen handling
 7. For sulfur atoms, use valid patterns like CSC (thioether), c1sccc1 (thiophene), CSS (disulfide)
 
+DIVERSIFICATION STRATEGY (FROM MOLLM RESEARCH 2025):
+- Vary functionalization types: ester, amide, ether, aromatic substitution, vinyl, sulfur-based
+- Mix backbone types: aliphatic chains, aromatic rings, heterocycles
+- Combine different heteroatoms: N, O, S, P (when appropriate)
+- Use different connection patterns: linear, branched, cyclic integration
+
+MOLECULAR WEIGHT CONSTRAINTS (VALID-MOL FRAMEWORK):
+- Target polymer repeat units: 50-500 Da (realistic monomer range)
+- PSMILES length: 8-100 characters (excludes [*] symbols)
+- Ensure chemical feasibility for polymerization
+
+FUNCTIONALIZATION DIVERSITY (TSMMG TEACHER-STUDENT APPROACH):
+- Primary types: C(=O)O (ester), C(=O)N (amide), O (ether), c1ccccc1 (aromatic)
+- Secondary types: CSS (disulfide), CSC (thioether), C=C (vinyl), c1sccc1 (thiophene)
+- Tertiary types: P-containing (when specified), halogenated (F, Cl), cyclic structures
+
 IMPORTANT SMILES SYNTAX:
 - NO explicit hydrogen atoms: Never write H, HS, SH, HSH, HCSH, etc.
 - Sulfur examples: CSC (thioether bridge), c1sccc1 (thiophene ring), CSS (disulfide)
 - Carbon backbone: CC, CCC, c1ccccc1 (aromatic)
 - Functional groups: C(=O) (carbonyl), C(=O)O (carboxyl), C(=O)N (amide)
 
-VALID EXAMPLES:
-- "polymer with aromatic rings": [*]c1ccccc1[*]
-- "polymer with amide linkages": [*]C(=O)NC[*]
-- "polymer with ester groups": [*]C(=O)OC[*]
-- "polyethylene-like": [*]CC[*]
-- "polymer with hydroxyl groups": [*]C(O)C[*]
-- "sulfur-containing polymer": [*]CSC[*] or [*]c1sccc1[*]
-- "disulfide bridge polymer": [*]CSS[*]
-- "thiophene polymer": [*]c1sccc1[*]
+VALID EXAMPLES (WITH DIVERSITY):
+- "polymer with aromatic rings": [*]c1ccccc1[*] OR [*]Cc1ccccc1C[*] OR [*]c1ccc(C)cc1[*]
+- "polymer with amide linkages": [*]C(=O)NC[*] OR [*]CC(=O)NCC[*] OR [*]C(=O)Nc1ccccc1[*]
+- "polymer with ester groups": [*]C(=O)OC[*] OR [*]CC(=O)OCC[*] OR [*]C(=O)Oc1ccccc1[*]
+- "polyethylene-like": [*]CC[*] OR [*]CCC[*] OR [*]C(C)C[*]
+- "polymer with hydroxyl groups": [*]C(O)C[*] OR [*]CC(O)CC[*] OR [*]c1ccc(O)cc1[*]
+- "sulfur-containing polymer": [*]CSC[*] OR [*]c1sccc1[*] OR [*]CSS[*] OR [*]CSCC[*]
 
 INVALID EXAMPLES TO AVOID:
 - [*]HSH[*] - NO explicit hydrogens
@@ -402,8 +501,9 @@ INVALID EXAMPLES TO AVOID:
 TASK: Convert the user's description into a valid PSMILES string.
 - Think about the polymer structure they're describing
 - Generate a chemically realistic PSMILES with exactly 2 [*] connection points
+- Use diverse functionalization appropriate to the request
 - Ensure proper SMILES syntax and chemical validity
-- For sulfur requests, use CSC, CSS, or c1sccc1 patterns
+- For sulfur requests, use CSC, CSS, or c1sccc1 patterns with variation
 - Respond with just the PSMILES string, no explanation unless requested"""
 
         psmiles_prompt = ChatPromptTemplate.from_messages([
@@ -752,21 +852,25 @@ TASK: Convert the user's description into a valid PSMILES string.
                                         num_candidates: int = 5,
                                         enable_functionalization: bool = True,
                                         diversity_threshold: float = 0.4,
-                                        temperature_range: Tuple[float, float] = (0.6, 1.0),
-                                        max_retries: int = 2) -> Dict[str, Any]:
+                                        temperature_range: Tuple[float, float] = (0.6, 1.2),  # Enhanced range from PSV-PPO
+                                        max_retries: int = 3,  # Increased retries for better VALID-Mol compliance
+                                        enable_valid_mol_constraints: bool = True) -> Dict[str, Any]:
         """
-        Generate truly diverse PSMILES candidates using the new orchestration system.
+        Generate truly diverse PSMILES candidates using enhanced research-based methods.
         
-        This method creates diverse prompts for each candidate and applies
-        functionalization to ensure true chemical diversity.
+        Implements improvements from:
+        - PSV-PPO (2025): Temperature scheduling and stepwise validation
+        - VALID-Mol (2025): Molecular weight and length constraints
+        - MOLLM (2025): Multi-objective optimization for diversity
         
         Args:
             base_request: Natural language description of the polymer
             num_candidates: Number of diverse candidates to generate
             enable_functionalization: Whether to apply chemical functionalization
             diversity_threshold: Minimum diversity score required
-            temperature_range: Range of temperatures for generation diversity
-            max_retries: Maximum retry attempts for better diversity
+            temperature_range: Range of temperatures for generation diversity (enhanced PSV-PPO range)
+            max_retries: Maximum retry attempts for better diversity and constraints
+            enable_valid_mol_constraints: Whether to apply VALID-Mol framework constraints
             
         Returns:
             Dict with diverse candidates and comprehensive metadata
@@ -778,7 +882,17 @@ TASK: Convert the user's description into a valid PSMILES string.
         try:
             from .psmiles_diversification import CandidateConfig
             
-            # Configure diverse generation
+            # PSV-PPO Temperature Scheduling: Use different temperatures for different phases
+            temp_min, temp_max = temperature_range
+            temperature_schedule = []
+            for i in range(num_candidates):
+                # Progressive temperature increase for exploration
+                temp = temp_min + (temp_max - temp_min) * (i / max(1, num_candidates - 1))
+                temperature_schedule.append(temp)
+            
+            print(f"🔬 PSV-PPO Temperature Schedule: {[f'{t:.2f}' for t in temperature_schedule]}")
+            
+            # Configure diverse generation with enhanced parameters
             config = CandidateConfig(
                 base_request=base_request,
                 num_candidates=num_candidates,
@@ -788,21 +902,58 @@ TASK: Convert the user's description into a valid PSMILES string.
                 max_functionalization_attempts=3,
                 prompt_variation_strategies=[
                     'perspective_variation',
-                    'property_emphasis',
+                    'property_emphasis', 
                     'structure_focus',
                     'application_context',
-                    'chemical_modification'
+                    'chemical_modification',
+                    'functional_group_diversity',  # NEW: Enhanced functionalization
+                    'backbone_variation'  # NEW: Structural diversity
                 ]
             )
             
-            print(f"🚀 Starting truly diverse generation with orchestration system")
+            print(f"🚀 Starting enhanced diverse generation with research-based improvements")
             print(f"   Base request: {base_request}")
             print(f"   Candidates: {num_candidates}")
             print(f"   Functionalization: {enable_functionalization}")
             print(f"   Diversity threshold: {diversity_threshold}")
+            print(f"   VALID-Mol constraints: {enable_valid_mol_constraints}")
             
-            # Use retry logic for better results
+            # Use enhanced retry logic with VALID-Mol constraint checking
             result = self.orchestrator.generate_with_retry(config, max_retries=max_retries)
+            
+            # Post-process with VALID-Mol constraints if enabled
+            if enable_valid_mol_constraints and result.get('success'):
+                print(f"🔍 Applying VALID-Mol constraints to generated candidates...")
+                enhanced_candidates = []
+                constraint_stats = {'total': 0, 'passed': 0, 'failed': 0}
+                
+                for candidate in result.get('candidates', []):
+                    constraint_stats['total'] += 1
+                    psmiles = candidate.get('psmiles', '')
+                    
+                    # Remove [*] for SMILES constraint checking
+                    smiles_for_validation = psmiles.replace('[*]', '')
+                    
+                    if smiles_for_validation:
+                        valid_constraints, constraint_message = self.validate_valid_mol_constraints(smiles_for_validation)
+                        candidate['valid_mol_constraints'] = valid_constraints
+                        candidate['constraint_details'] = constraint_message
+                        
+                        if valid_constraints:
+                            constraint_stats['passed'] += 1
+                        else:
+                            constraint_stats['failed'] += 1
+                            print(f"   ❌ Candidate failed VALID-Mol: {constraint_message}")
+                    else:
+                        candidate['valid_mol_constraints'] = False
+                        candidate['constraint_details'] = "Empty SMILES"
+                        constraint_stats['failed'] += 1
+                    
+                    enhanced_candidates.append(candidate)
+                
+                result['candidates'] = enhanced_candidates
+                result['valid_mol_stats'] = constraint_stats
+                print(f"   VALID-Mol Results: {constraint_stats['passed']}/{constraint_stats['total']} passed constraints")
             
             # Add compatibility fields for existing interfaces
             if result.get('success'):
@@ -810,18 +961,31 @@ TASK: Convert the user's description into a valid PSMILES string.
                 result['valid_candidates'] = [c for c in result.get('candidates', []) if c.get('valid', False)]
                 result['num_valid'] = len(result['valid_candidates'])
                 
-                print(f"✅ Truly diverse generation successful!")
+                # Enhanced statistics
+                constraint_compliant = [c for c in result.get('candidates', []) if c.get('valid_mol_constraints', False)]
+                result['constraint_compliant_candidates'] = constraint_compliant
+                result['num_constraint_compliant'] = len(constraint_compliant)
+                
+                print(f"✅ Enhanced diverse generation successful!")
                 print(f"   Generated: {result['num_generated']} candidates")
                 print(f"   Valid: {result['num_valid']} candidates")
+                print(f"   Constraint compliant: {result['num_constraint_compliant']} candidates")
                 print(f"   Diversity score: {result.get('diversity_validation', {}).get('diversity_score', 0):.3f}")
                 print(f"   Meets threshold: {result.get('diversity_validation', {}).get('meets_diversity_threshold', False)}")
             
             return result
             
         except Exception as e:
-            print(f"❌ Truly diverse generation failed: {e}")
+            print(f"❌ Enhanced diverse generation failed: {e}")
             print("⚠️ Falling back to standard diverse generation")
             return self.generate_diverse_candidates(base_request, num_candidates, temperature_range)
+
+    def validate_valid_mol_constraints(self, smiles: str) -> tuple:
+        """
+        VALID-Mol Framework Constraints Validation (2025 Research) - Copy for PSMILESGenerator
+        Implements molecular weight and length constraints that improved validity from 3% to 83%
+        """
+        return self.nl_to_psmiles.validate_valid_mol_constraints(smiles)
 
 
 def test_psmiles_generator():

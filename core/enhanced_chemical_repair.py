@@ -96,6 +96,20 @@ class EnhancedChemicalRepair:
             r'P\(=O\)\(=O\)': 'P(=O)(O)',          # P(=O)(=O) -> P(=O)(O) (too many oxygens)
         }
         
+        # **NEW: Valence correction patterns for common issues**
+        self.valence_patterns = {
+            # Boron valence fixes (max 3 bonds)
+            r'B\(Br\)\(O\)C': 'B(Br)OC',           # B(Br)(O)C -> B(Br)OC (remove one bond)
+            r'B\([^)]*\)\([^)]*\)\([^)]*\)\([^)]*\)': 'B(O)(O)O',  # Any 4-coordinate B -> 3-coordinate
+            
+            # Oxygen valence fixes (max 2 bonds) 
+            r'N\[B\]N=O': 'N[B]NO',                # N[B]N=O -> N[B]NO (single bond to O)
+            r'N\(=O\)=O': 'N(=O)O',                # N(=O)=O -> N(=O)O (remove one O double bond)
+            
+            # Nitrogen valence fixes (max 3 bonds in most cases)
+            r'N\([^)]*\)\([^)]*\)\([^)]*\)\([^)]*\)': 'N(C)(C)C',  # 4-coordinate N -> 3-coordinate
+        }
+        
         # Advanced repair strategies
         self.repair_strategies = [
             'structure_rebuilding',   # NEW: For extremely problematic structures
@@ -202,29 +216,43 @@ class EnhancedChemicalRepair:
         try:
             logger.info(f"      🧪 Valence-aware repair for: {smiles}")
             
-            # First, handle phosphorus-specific issues
+            # **STEP 1: Apply general valence correction patterns**
             repaired = smiles
+            for pattern, replacement in self.valence_patterns.items():
+                old_smiles = repaired
+                repaired = re.sub(pattern, replacement, repaired)
+                if repaired != old_smiles:
+                    logger.info(f"         Applied valence pattern: {pattern} → {replacement}")
+            
+            # **STEP 2: Apply phosphorus-specific fixes**
             for pattern, replacement in self.phosphorus_patterns.items():
                 old_smiles = repaired
                 repaired = re.sub(pattern, replacement, repaired)
                 if repaired != old_smiles:
                     logger.info(f"         Applied P-pattern: {pattern} → {replacement}")
             
-            # Try to create molecule with partial sanitization
+            # **STEP 3: Try to create molecule with partial sanitization**
             mol = Chem.MolFromSmiles(repaired, sanitize=False)
             if mol is None:
-                return None
+                logger.info(f"         Cannot create molecule, trying simpler fixes...")
+                # Apply more aggressive simplification
+                repaired = self._apply_aggressive_valence_fixes(repaired)
+                mol = Chem.MolFromSmiles(repaired, sanitize=False)
+                if mol is None:
+                    return None
             
-            # Apply incremental sanitization to identify specific issues
+            # **STEP 4: Apply incremental sanitization to identify specific issues**
             problems = []
             
             # Check for valence errors
             try:
                 Chem.SanitizeMol(mol, sanitizeOps=SanitizeFlags.SANITIZE_PROPERTIES)
+                logger.info(f"         ✅ Valence repair successful: {repaired}")
+                return repaired
             except AtomValenceException as e:
                 problems.append(f"Valence error: {str(e)}")
-                # Try to fix valence issues
-                repaired = self._fix_valence_issues(repaired, mol)
+                # Try to fix remaining valence issues
+                repaired = self._fix_remaining_valence_issues(repaired, mol)
                 
             except Exception as e:
                 problems.append(f"General sanitization error: {str(e)}")
@@ -661,37 +689,122 @@ class EnhancedChemicalRepair:
     
     def _validate_repaired_structure(self, smiles: str) -> Tuple[bool, Dict]:
         """
-        Validate that the repaired structure is chemically valid.
+        Enhanced validation with pre-screening for common valence errors.
         """
+        # **PRE-VALIDATION: Check for obvious valence violations**
+        valence_issues = self._pre_screen_valence_issues(smiles)
+        if valence_issues:
+            return False, {
+                'validation_errors': valence_issues,
+                'pre_validation_failed': True,
+                'message': f"Pre-validation failed: {', '.join(valence_issues)}"
+            }
+        
         if not RDKIT_AVAILABLE:
-            return True, {'method': 'no_validation', 'message': 'RDKit not available'}
+            return True, {'message': 'Basic validation only (RDKit not available)'}
         
         try:
-            # Create molecule and sanitize
-            mol = Chem.MolFromSmiles(smiles)
+            # Convert PSMILES to SMILES for validation if needed
+            test_smiles = smiles.replace('[*]', 'H') if '[*]' in smiles else smiles
+            
+            mol = Chem.MolFromSmiles(test_smiles)
             if mol is None:
-                return False, {'error': 'Cannot create molecule from SMILES'}
+                return False, {'validation_errors': ['Invalid SMILES structure']}
             
-            # Full sanitization
-            Chem.SanitizeMol(mol)
-            
-            # Additional checks
-            canonical = Chem.MolToSmiles(mol)
-            
-            # Check for reasonable molecule properties
-            mw = Descriptors.ExactMolWt(mol)
-            if mw > 2000:  # Probably too large
-                return False, {'error': f'Molecular weight too high: {mw}'}
-            
-            return True, {
-                'canonical_smiles': canonical,
-                'molecular_weight': mw,
-                'num_atoms': mol.GetNumAtoms(),
-                'validation': 'passed'
-            }
-            
+            # Try sanitization with detailed error capture
+            try:
+                Chem.SanitizeMol(mol)
+                return True, {'message': 'Valid structure with RDKit validation'}
+            except Exception as sanitize_error:
+                error_msg = str(sanitize_error)
+                return False, {
+                    'validation_errors': [f'RDKit sanitization failed: {error_msg}'],
+                    'sanitization_error': error_msg
+                }
         except Exception as e:
-            return False, {'error': f'Validation failed: {str(e)}'}
+            return False, {'validation_errors': [f'Validation error: {str(e)}']}
+    
+    def _pre_screen_valence_issues(self, smiles: str) -> List[str]:
+        """
+        Pre-screen for obvious valence violations before RDKit processing.
+        """
+        issues = []
+        
+        # Check for invalid boron patterns
+        if 'B' in smiles:
+            # Boron typically forms 3 bonds, check for over-coordination
+            if any(pattern in smiles for pattern in ['B(', 'B=', 'B#']):
+                # Count explicit connections around boron
+                import re
+                boron_patterns = re.findall(r'B\([^)]*\)', smiles)
+                for pattern in boron_patterns:
+                    # Simple count of comma-separated items in parentheses
+                    connections = pattern.count(',') + pattern.count('(') - pattern.count(')')
+                    if connections > 3:
+                        issues.append(f"Boron over-coordination detected: {pattern}")
+        
+        # Check for invalid oxygen patterns
+        if 'O' in smiles:
+            # Oxygen typically forms 2 bonds
+            if 'N=O' in smiles and '=' in smiles:
+                # Check for patterns like N=O with additional bonds
+                if any(pattern in smiles for pattern in ['N=O)', 'N=O]', 'N=O[*]']):
+                    issues.append("Oxygen over-coordination in N=O pattern")
+        
+        # Check for invalid nitrogen patterns  
+        if 'N' in smiles:
+            # Look for nitrogen with too many explicit bonds
+            if 'N(' in smiles:
+                import re
+                nitrogen_patterns = re.findall(r'N\([^)]*\)', smiles)
+                for pattern in nitrogen_patterns:
+                    bond_indicators = pattern.count('=') + pattern.count('#') + pattern.count(',')
+                    if bond_indicators > 3:
+                        issues.append(f"Nitrogen over-coordination detected: {pattern}")
+        
+        return issues
+    
+    def _apply_aggressive_valence_fixes(self, smiles: str) -> str:
+        """
+        Apply aggressive fixes for valence issues when standard patterns fail.
+        """
+        logger.info(f"         🔧 Applying aggressive valence fixes...")
+        
+        # **Simplify complex boron structures**
+        if 'B' in smiles:
+            # Replace complex boron with simple B-O pattern
+            smiles = re.sub(r'B\([^)]+\)', 'BO', smiles)
+            smiles = re.sub(r'B\[[^\]]+\]', 'BO', smiles)
+        
+        # **Simplify complex nitrogen-oxygen patterns**
+        if 'NO' in smiles or 'N=O' in smiles:
+            # Replace with simple nitrogen
+            smiles = re.sub(r'N\[.*?\]N=O', 'NNO', smiles)
+            smiles = re.sub(r'N\(=O\)=O', 'NO', smiles)
+        
+        # **Remove overly complex bracketed atoms**
+        smiles = re.sub(r'\[[A-Z][^]]*\]', lambda m: m.group(0)[1] if len(m.group(0)) > 3 else m.group(0), smiles)
+        
+        return smiles
+    
+    def _fix_remaining_valence_issues(self, smiles: str, mol) -> str:
+        """
+        Fix remaining valence issues identified during RDKit sanitization.
+        """
+        logger.info(f"         🔧 Fixing remaining valence issues...")
+        
+        # **Simple fallback strategies**
+        # Strategy 1: Remove problematic double bonds
+        fixed = re.sub(r'=O\)', 'O)', smiles)
+        fixed = re.sub(r'=N\)', 'N)', fixed)
+        
+        # Strategy 2: Simplify charged atoms
+        fixed = re.sub(r'\[[A-Z]+[+-]\]', lambda m: m.group(0)[1], fixed)
+        
+        # Strategy 3: Remove explicit hydrogens that might cause issues
+        fixed = re.sub(r'\[.*?H.*?\]', lambda m: m.group(0)[1] if len(m.group(0)) > 3 else 'C', fixed)
+        
+        return fixed
     
     def repair_psmiles_structure(self, psmiles: str) -> Dict:
         """
@@ -705,10 +818,16 @@ class EnhancedChemicalRepair:
         """
         logger.info(f"🔧 PSMILES repair requested for: {psmiles}")
         
+        # **PRE-CLEANING: Handle common format issues**
+        cleaned_psmiles = self._pre_clean_psmiles_format(psmiles)
+        if cleaned_psmiles != psmiles:
+            logger.info(f"   📝 Format cleaned: {psmiles} → {cleaned_psmiles}")
+            psmiles = cleaned_psmiles
+        
         if not psmiles or psmiles.count('[*]') != 2:
             return {
                 'success': False,
-                'error': 'Invalid PSMILES format (must have exactly 2 [*] connection points)'
+                'error': f'Invalid PSMILES format (must have exactly 2 [*] connection points, found {psmiles.count("[*]") if psmiles else 0})'
             }
         
         # Convert to SMILES for repair
@@ -833,6 +952,70 @@ class EnhancedChemicalRepair:
         
         logger.warning(f"         Could not find suitable connection points for: {repaired_smiles}")
         return None
+
+    def _pre_clean_psmiles_format(self, psmiles: str) -> str:
+        """
+        Pre-clean PSMILES format to remove common issues like embedded text.
+        """
+        if not psmiles:
+            return psmiles
+            
+        # Remove excessive whitespace first
+        psmiles = re.sub(r'\s+', ' ', psmiles.strip())
+        
+        # **Pattern 1: Extract PSMILES from mixed text - handle text between connection points**
+        # Look for pattern like "[*]...chemical_structure... descriptive_text [*]"
+        if psmiles.count('[*]') >= 2:
+            # Find first and last [*] positions
+            first_star = psmiles.find('[*]')
+            last_star = psmiles.rfind('[*]')
+            
+            if first_star != -1 and last_star != -1 and first_star != last_star:
+                # Extract everything between first and last [*], remove text
+                middle_part = psmiles[first_star+3:last_star]
+                
+                # Remove descriptive text patterns from the middle
+                text_patterns = [
+                    r'\s+Nitrogen-containing.*$',
+                    r'\s+containing.*$', 
+                    r'\s+with.*$',
+                    r'\s+amide.*$',
+                    r'\s+boron.*$',
+                    r'\s+atom.*$'
+                ]
+                
+                for pattern in text_patterns:
+                    middle_part = re.sub(pattern, '', middle_part, flags=re.IGNORECASE)
+                
+                # Reconstruct PSMILES
+                cleaned = f"[*]{middle_part.strip()}[*]"
+                return cleaned
+        
+        # **Pattern 2: Standard cleaning for other cases**
+        # Remove common descriptive phrases that appear in PSMILES
+        text_patterns = [
+            r'\s+Nitrogen-containing.*$',
+            r'\s+containing.*$', 
+            r'\s+with.*$',
+            r'\s+amide.*$',
+            r'\s+boron.*$',
+            r'\s+atom.*$'
+        ]
+        
+        cleaned = psmiles
+        for pattern in text_patterns:
+            cleaned = re.sub(pattern, '', cleaned, flags=re.IGNORECASE)
+        
+        # **Pattern 3: Fix malformed connection points**
+        # Ensure exactly 2 [*] connection points
+        if '[*]' not in cleaned and '*' in cleaned:
+            # Fix naked asterisks
+            cleaned = re.sub(r'(?<!\[)\*(?!\])', '[*]', cleaned)
+        
+        # Remove any extra spaces again
+        cleaned = re.sub(r'\s+', '', cleaned)
+        
+        return cleaned
 
 
 # Convenience function for easy integration

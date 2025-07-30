@@ -41,15 +41,15 @@ class MixedSystemReporter:
     """State reporter optimized for mixed systems"""
     
     def __init__(self, file, reportInterval):
-        self._file = open(file, 'w')
+        self._file = open(file, 'w', encoding='utf-8')
         self._reportInterval = reportInterval
         self._energies = []
         self._temperatures = []
         self._volumes = []
         self._lastReportTime = time.time()
         
-        # Write header
-        self._file.write('#Step\tTime(ps)\tPE(kJ/mol)\tKE(kJ/mol)\tTotal(kJ/mol)\tTemp(K)\tVolume(nm³)\tSpeed(ns/day)\n')
+        # Write header with ASCII-safe units
+        self._file.write('#Step\tTime(ps)\tPE(kJ/mol)\tKE(kJ/mol)\tTotal(kJ/mol)\tTemp(K)\tVolume(nm^3)\tSpeed(ns/day)\n')
         self._file.flush()
     
     def describeNextReport(self, simulation):
@@ -103,7 +103,7 @@ class MixedSystemReporter:
             
             # Console output
             if step % (self._reportInterval * 5) == 0:
-                print(f"📊 Step {step:6d}: PE={pe:8.1f} kJ/mol, T={temp:6.1f} K, V={volume:6.2f} nm³, Speed={ns_per_day:.1f} ns/day")
+                print(f"📊 Step {step:6d}: PE={pe:8.1f} kJ/mol, T={temp:6.1f} K, V={volume:6.2f} nm^3, Speed={ns_per_day:.1f} ns/day")
     
     def get_statistics(self):
         """Get simulation statistics"""
@@ -492,10 +492,10 @@ class MixedSystemSimulator:
                 axes[0, 1].grid(True, alpha=0.3)
             
             # Volume plot
-            if 'Volume(nm³)' in df.columns:
-                axes[1, 0].plot(df['Step'], df['Volume(nm³)'], 'g-', alpha=0.7)
+            if 'Volume(nm^3)' in df.columns:
+                axes[1, 0].plot(df['Step'], df['Volume(nm^3)'], 'g-', alpha=0.7)
                 axes[1, 0].set_title('Volume')
-                axes[1, 0].set_ylabel('Volume (nm³)')
+                axes[1, 0].set_ylabel('Volume (nm^3)')
                 axes[1, 0].set_xlabel('Step')
                 axes[1, 0].grid(True, alpha=0.3)
             

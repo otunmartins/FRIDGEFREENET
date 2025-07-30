@@ -15,7 +15,11 @@ import numpy as np
 import pandas as pd
 from datetime import datetime
 import matplotlib.pyplot as plt
-import seaborn as sns
+try:
+    import seaborn as sns
+    SEABORN_AVAILABLE = True
+except ImportError:
+    SEABORN_AVAILABLE = False
 
 # OpenMM imports
 try:
@@ -45,7 +49,7 @@ class EnhancedStateReporter:
                  step=True, report_time=True, potentialEnergy=True, kineticEnergy=True,
                  totalEnergy=True, temperature=True, volume=True, density=True,
                  speed=True, systemSize=None):
-        self._file = open(file, 'w')
+        self._file = open(file, 'w', encoding='utf-8')
         self._reportInterval = reportInterval
         self._step = step
         self._time = report_time
@@ -65,7 +69,7 @@ class EnhancedStateReporter:
         self._lastReportTime = time.time()
         self._stepCount = 0
         
-        # Write header
+        # Write header with ASCII-safe units
         headers = []
         if step: headers.append("Step")
         if report_time: headers.append("Time (ps)")
@@ -73,7 +77,7 @@ class EnhancedStateReporter:
         if kineticEnergy: headers.append("Kinetic Energy (kJ/mol)")
         if totalEnergy: headers.append("Total Energy (kJ/mol)")
         if temperature: headers.append("Temperature (K)")
-        if volume: headers.append("Volume (nm³)")
+        if volume: headers.append("Volume (nm^3)")
         if density: headers.append("Density (g/mL)")
         if speed: headers.append("Speed (ns/day)")
         
@@ -159,7 +163,7 @@ class EnhancedStateReporter:
             if step % (self._reportInterval * 10) == 0:
                 print(f"📊 Step {step:6d}: PE={self._energies[-1] if self._energies else 'N/A':8.1f} kJ/mol, "
                       f"T={self._temperatures[-1] if self._temperatures else 'N/A':6.1f} K, "
-                      f"V={self._volumes[-1] if self._volumes else 'N/A':6.2f} nm³")
+                      f"V={self._volumes[-1] if self._volumes else 'N/A':6.2f} nm^3")
     
     def get_statistics(self):
         """Get simulation statistics"""
@@ -647,8 +651,8 @@ class EnhancedOpenMMSimulator:
                 }
             
             # Volume analysis (if available)
-            if 'Volume (nm³)' in state_df.columns:
-                vol_col = 'Volume (nm³)'
+            if 'Volume (nm^3)' in state_df.columns:
+                vol_col = 'Volume (nm^3)'
                 analysis_results['volume_analysis'] = {
                     'mean_volume': float(state_df[vol_col].mean()),
                     'volume_change_percent': float((state_df[vol_col].iloc[-1] - state_df[vol_col].iloc[0]) / state_df[vol_col].iloc[0] * 100)
@@ -726,10 +730,10 @@ class EnhancedOpenMMSimulator:
                 axes[0, 1].grid(True, alpha=0.3)
             
             # Volume plot
-            if 'Volume (nm³)' in state_df.columns:
-                axes[1, 0].plot(state_df.index, state_df['Volume (nm³)'], 'g-', alpha=0.7)
+            if 'Volume (nm^3)' in state_df.columns:
+                axes[1, 0].plot(state_df.index, state_df['Volume (nm^3)'], 'g-', alpha=0.7)
                 axes[1, 0].set_title('System Volume vs Time')
-                axes[1, 0].set_ylabel('Volume (nm³)')
+                axes[1, 0].set_ylabel('Volume (nm^3)')
                 axes[1, 0].set_xlabel('Frame')
                 axes[1, 0].grid(True, alpha=0.3)
             

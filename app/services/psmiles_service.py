@@ -30,7 +30,7 @@ except ImportError:
 
 def generate_psmiles_with_llm(material_request: str, conversation_memory: Optional[List] = None) -> Dict[str, Any]:
     """
-    Generate PSMILES using LLM based on material request.
+    Generate PSMILES using the most sophisticated LLM pipeline available.
     
     Args:
         material_request: Description of the desired material
@@ -49,20 +49,77 @@ def generate_psmiles_with_llm(material_request: str, conversation_memory: Option
                 'psmiles': None
             }
         
-        # Generate PSMILES using the generator
+        # First try the most sophisticated generation method
+        if hasattr(psmiles_generator, 'generate_truly_diverse_candidates'):
+            print(f"🚀 Using sophisticated generation for: {material_request}")
+            result = psmiles_generator.generate_truly_diverse_candidates(
+                base_request=material_request,
+                num_candidates=3,  # Generate a few candidates for choice
+                enable_functionalization=True,
+                diversity_threshold=0.3,
+                temperature_range=(0.7, 0.9),
+                max_retries=1
+            )
+            
+            if result.get('success') and result.get('best_candidate'):
+                return {
+                    'success': True,
+                    'psmiles': result['best_candidate'],
+                    'explanation': f"Generated using advanced orchestration with {result.get('num_generated', 0)} candidates",
+                    'all_candidates': result.get('candidates', []),
+                    'diversity_info': {
+                        'num_generated': result.get('num_generated', 0),
+                        'diversity_score': result.get('diversity_validation', {}).get('diversity_score', 0),
+                        'functionalization_enabled': True
+                    },
+                    'method': 'truly_diverse_generation',
+                    'raw_result': result
+                }
+        
+        # Fallback to diverse generation
+        if hasattr(psmiles_generator, 'generate_diverse_candidates'):
+            print(f"🔄 Using diverse generation fallback for: {material_request}")
+            result = psmiles_generator.generate_diverse_candidates(
+                base_request=material_request,
+                num_candidates=5,
+                temperature_range=(0.6, 1.0)
+            )
+            
+            if result.get('success') and result.get('best_candidate'):
+                return {
+                    'success': True,
+                    'psmiles': result['best_candidate'],
+                    'explanation': f"Generated using diverse pipeline with {result.get('num_generated', 0)} candidates",
+                    'all_candidates': result.get('candidates', []),
+                    'diversity_info': {
+                        'num_generated': result.get('num_generated', 0),
+                        'functionalization_enabled': False
+                    },
+                    'method': 'diverse_generation',
+                    'raw_result': result
+                }
+        
+        # Last resort: basic generation
+        print(f"⚠️ Using basic generation as last resort for: {material_request}")
         result = psmiles_generator.generate_psmiles(
-            description=material_request,  # Fixed: use 'description' parameter instead of 'material_request'
-            num_candidates=1,  # Generate single candidate for now
+            description=material_request,
+            num_candidates=1,
             validate=True
         )
         
+        if result.get('success') and result.get('best_candidate'):
+            return {
+                'success': True,
+                'psmiles': result['best_candidate'],
+                'explanation': result.get('explanation', 'Basic LLM generation'),
+                'method': 'basic_generation',
+                'raw_result': result
+            }
+        
         return {
-            'success': True,
-            'psmiles': result.get('psmiles'),
-            'explanation': result.get('explanation', ''),
-            'properties': result.get('properties', {}),
-            'method': result.get('method', 'llm_generation'),
-            'raw_result': result
+            'success': False,
+            'error': 'All generation methods failed',
+            'psmiles': None
         }
         
     except Exception as e:
@@ -695,48 +752,48 @@ def calculate_psmiles_properties(psmiles: str) -> Dict[str, float]:
     """
     Calculate predicted properties for a PSMILES.
     
+    NOTE: This function currently returns placeholder values.
+    Real implementation should use:
+    - Molecular dynamics simulations
+    - Machine learning models trained on experimental data
+    - Quantum chemical calculations
+    - Experimental validation
+    
     Args:
         psmiles: PSMILES string to analyze
         
     Returns:
-        Dict[str, float]: Predicted material properties
+        Dict[str, float]: Predicted material properties (currently placeholders)
     """
     try:
-        # This is a simplified implementation
-        # Real implementation would use ML models or cheminformatics
+        # TODO: Replace with real chemical property prediction
+        # This could integrate with:
+        # - RDKit descriptors
+        # - ML models (scikit-learn, TensorFlow, PyTorch)
+        # - Cheminformatics libraries
+        # - Quantum chemistry packages (PySCF, Psi4)
         
-        # Basic heuristics based on PSMILES structure
-        length = len(psmiles)
-        heteroatom_count = sum(1 for char in psmiles if char in 'NOPS')
-        aromatic_count = psmiles.lower().count('c')
+        print(f"⚠️ calculate_psmiles_properties called for {psmiles}")
+        print("📝 Currently returning placeholder values - needs real chemistry implementation")
         
-        # Normalize factors
-        length_factor = min(length / 50.0, 1.0)
-        hetero_factor = min(heteroatom_count / 10.0, 1.0)
-        aromatic_factor = min(aromatic_count / 5.0, 1.0)
-        
-        properties = {
-            'thermal_stability': 0.3 + 0.4 * aromatic_factor + 0.3 * length_factor,
-            'biocompatibility': 0.5 + 0.3 * hetero_factor - 0.2 * aromatic_factor,
-            'release_control': 0.4 + 0.3 * length_factor + 0.3 * hetero_factor,
-            'insulin_binding': 0.3 + 0.4 * hetero_factor + 0.3 * aromatic_factor,
-            'uncertainty_score': 0.1 + 0.1 * (1.0 - length_factor)
+        # Return minimal structure indicating this needs real implementation
+        return {
+            'note': 'Properties need real chemical calculation',
+            'implementation_needed': True,
+            'psmiles_analyzed': psmiles,
+            'suggested_methods': [
+                'molecular_dynamics_simulation',
+                'ml_property_prediction',
+                'quantum_chemical_calculation',
+                'experimental_validation'
+            ]
         }
         
-        # Ensure values are between 0 and 1
-        for key in properties:
-            properties[key] = max(0.0, min(1.0, properties[key]))
-        
-        return properties
-        
     except Exception as e:
-        # Return default properties on error
         return {
-            'thermal_stability': 0.5,
-            'biocompatibility': 0.5,
-            'release_control': 0.5,
-            'insulin_binding': 0.5,
-            'uncertainty_score': 0.8  # High uncertainty due to error
+            'error': f"Property calculation failed: {str(e)}",
+            'implementation_needed': True,
+            'note': 'Real chemical property prediction system required'
         } 
 
 def calculate_material_properties(psmiles: str, material_description: str = "") -> Dict[str, float]:

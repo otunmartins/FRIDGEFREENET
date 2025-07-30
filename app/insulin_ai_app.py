@@ -49,12 +49,21 @@ try:
 except ImportError:
     AUTOCORRECTOR_AVAILABLE = False
 
-# Import MD simulation integration
+# Import MD simulation integration - NEW SIMPLE WORKING SYSTEM
 try:
-    from integration.analysis.md_simulation_integration import MDSimulationIntegration, get_insulin_polymer_pdb_files
+    from integration.analysis.simple_md_integration import SimpleMDIntegration as MDSimulationIntegration
+    from integration.analysis.md_simulation_integration import get_insulin_polymer_pdb_files
     MD_INTEGRATION_AVAILABLE = True
+    print("✅ Simple Working MD Integration imported successfully (based on openmm_test.py)")
 except ImportError:
-    MD_INTEGRATION_AVAILABLE = False
+    # Fallback to old system
+    try:
+        from integration.analysis.md_simulation_integration import MDSimulationIntegration, get_insulin_polymer_pdb_files
+        MD_INTEGRATION_AVAILABLE = True
+        print("⚠️ Using fallback MD integration system")
+    except ImportError:
+        MD_INTEGRATION_AVAILABLE = False
+        print("❌ MD Integration not available")
 
 # Import comprehensive analysis system
 try:
@@ -71,10 +80,14 @@ try:
 except ImportError:
     DEBUGGING_AVAILABLE = False
 
-# Page configuration
+# Custom CSS - Minimal Apple-inspired design
+from styles.minimal_design_system import inject_minimal_design_system
+inject_minimal_design_system()
+
+# Page Configuration
 st.set_page_config(
-    page_title="🧬 Insulin-AI: AI-Powered Drug Delivery System",
-    page_icon="🧬",
+    page_title="Insulin-AI: AI-Powered Drug Delivery System",
+    page_icon="🔬",  # Keep only page icon for browser tab
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -111,86 +124,10 @@ if 'use_processed_insulin' not in st.session_state:
 if 'insulin_preprocessing_result' not in st.session_state:
     st.session_state.insulin_preprocessing_result = None
 
-# Custom CSS (same as template)
-st.markdown("""
-<style>
-    .main-header {
-        font-size: 2.5rem;
-        color: #2E86AB;
-        text-align: center;
-        margin-bottom: 2rem;
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-    }
-    .framework-card {
-        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
-        padding: 1.5rem;
-        border-radius: 15px;
-        color: white;
-        text-align: center;
-        margin: 1rem 0;
-        box-shadow: 0 8px 32px rgba(31, 38, 135, 0.37);
-    }
-    .psmiles-display {
-        background: #f8f9fa;
-        border: 2px solid #28a745;
-        border-radius: 10px;
-        padding: 1rem;
-        font-family: 'Courier New', monospace;
-        font-size: 1.1rem;
-        margin: 1rem 0;
-    }
-    .iteration-card {
-        background: #e8f4fd;
-        border-left: 5px solid #2196f3;
-        padding: 1.5rem;
-        margin: 1rem 0;
-        border-radius: 10px;
-    }
-    .llm-response {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
-        border-radius: 15px;
-        padding: 1.5rem;
-        margin: 1rem 0;
-    }
-    .metric-insulin {
-        background: linear-gradient(135deg, #ff9a9e 0%, #fecfef 50%, #fecfef 100%);
-        padding: 1rem;
-        border-radius: 10px;
-        color: #333;
-        text-align: center;
-        margin: 0.5rem 0;
-    }
-    .simulation-dashboard {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        padding: 2rem;
-        border-radius: 15px;
-        color: white;
-        margin: 1rem 0;
-    }
-    .metric-card {
-        background: rgba(255, 255, 255, 0.1);
-        padding: 1rem;
-        border-radius: 10px;
-        margin: 0.5rem 0;
-        border: 1px solid rgba(255, 255, 255, 0.2);
-    }
-    .progress-phase {
-        background: rgba(255, 255, 255, 0.05);
-        padding: 1rem;
-        border-radius: 10px;
-        margin: 0.5rem 0;
-        border-left: 4px solid #4CAF50;
-    }
-</style>
-""", unsafe_allow_html=True)
-
 # **NEW: OpenAI API Key Management**
 def setup_openai_api():
     """Setup OpenAI API key from user input or environment."""
-    st.sidebar.header("🔑 OpenAI Configuration")
+    st.sidebar.header("OpenAI Configuration")
     
     # Check if API key exists in environment
     env_api_key = os.environ.get('OPENAI_API_KEY', '')
@@ -845,16 +782,20 @@ def perform_real_copolymerization(psmiles1, psmiles2, pattern=[1,1]):
             raise Exception("Systems not initialized")
         
         # Add both PSMILES to session
-        st.session_state.psmiles_processor.process_psmiles_workflow(
+        psmiles_processor = safe_get_session_object('psmiles_processor')
+        if not psmiles_processor:
+            raise Exception("PSMILES processor not available")
+            
+        psmiles_processor.process_psmiles_workflow(
             psmiles1, st.session_state.session_id, "copolymer_base"
         )
         
-        session_psmiles = st.session_state.psmiles_processor.get_session_psmiles(st.session_state.session_id)
+        session_psmiles = psmiles_processor.get_session_psmiles(st.session_state.session_id)
         if not session_psmiles:
             raise Exception("No PSMILES in session")
         
         psmiles_index = len(session_psmiles) - 1
-        result = st.session_state.psmiles_processor.perform_copolymerization(
+        result = psmiles_processor.perform_copolymerization(
             st.session_state.session_id, psmiles_index, psmiles2, pattern
         )
         
@@ -4670,51 +4611,53 @@ elif page == "MD Simulation":
                         temperature = st.slider("Temperature (K)", 250, 400, 310, 5, help="Simulation temperature in Kelvin (physiological = 310 K)")
                         
                         # Equilibration steps with better options and descriptions
+                        # NOTE: These steps are calculated for 2 fs timestep (actual simulator timestep)
                         equilibration_options = {
-                            "Quick Test (125 ps)": 31250,
-                            "Short (500 ps) - Recommended": 125000,
-                            "Medium (1000 ps)": 250000,
-                            "Long (2000 ps)": 500000,
-                            "Extended (4000 ps)": 1000000
+                            "Quick Test (250 ps)": 125000,    # 250 ps with 2 fs timestep
+                            "Short (500 ps) - Recommended": 250000,  # 500 ps with 2 fs timestep
+                            "Medium (1000 ps)": 500000,       # 1000 ps with 2 fs timestep
+                            "Long (2000 ps)": 1000000,        # 2000 ps with 2 fs timestep
+                            "Extended (4000 ps)": 2000000     # 4000 ps with 2 fs timestep
                         }
                         
                         eq_selection = st.selectbox(
                             "Equilibration Duration",
                             list(equilibration_options.keys()),
-                            index=1,  # Default to "Short (500 ps) - Recommended"
-                            help="Equilibration phase duration (4 fs timestep with hydrogen mass repartitioning)"
+                            index=0,  # Default to "Quick Test (250 ps)"
+                            help="Equilibration phase duration (2 fs timestep used by simulator)"
                         )
                         equilibration_steps = equilibration_options[eq_selection]
                         
-                        # Convert to time
-                        eq_time_ps = equilibration_steps * 4 / 1000
+                        # Convert to time (2 fs timestep)
+                        eq_time_ps = equilibration_steps * 2 / 1000
                         eq_time_ns = eq_time_ps / 1000
                         st.caption(f"⏱️ Equilibration: {eq_time_ps:.0f} ps ({eq_time_ns:.1f} ns)")
                     
                     with param_col2:
                         # Production steps with better options and descriptions
+                        # NOTE: These steps are calculated for 2 fs timestep (actual simulator timestep)
                         production_options = {
-                            "Quick Test (1 ns)": 250000,
-                            "Short (5 ns)": 1250000,
-                            "Medium (10 ns) - Recommended": 2500000,
-                            "Long (20 ns)": 5000000,
-                            "Extended (50 ns)": 12500000
+                            "Quick Test (1 ns)": 500000,     # 1 ns with 2 fs timestep
+                            "Short (2.5 ns)": 1250000,       # 2.5 ns with 2 fs timestep  
+                            "Medium (5 ns) - Recommended": 2500000,   # 5 ns with 2 fs timestep
+                            "Long (10 ns)": 5000000,         # 10 ns with 2 fs timestep
+                            "Extended (25 ns)": 12500000      # 25 ns with 2 fs timestep
                         }
                         
                         prod_selection = st.selectbox(
                             "Production Duration",
                             list(production_options.keys()),
-                            index=2,  # Default to "Medium (10 ns) - Recommended"
-                            help="Production phase duration (4 fs timestep with hydrogen mass repartitioning)"
+                            index=0,  # Default to "Quick Test (1 ns)"
+                            help="Production phase duration (2 fs timestep used by simulator)"
                         )
                         production_steps = production_options[prod_selection]
                         
-                        # Save interval with better options
+                        # Save interval with better options (2 fs timestep)
                         save_options = {
-                            "Frequent (1 ps)": 250,
-                            "Normal (2 ps) - Recommended": 500,
-                            "Sparse (4 ps)": 1000,
-                            "Very Sparse (8 ps)": 2000
+                            "Frequent (1 ps)": 500,          # 1 ps with 2 fs timestep
+                            "Normal (2 ps) - Recommended": 1000,    # 2 ps with 2 fs timestep
+                            "Sparse (4 ps)": 2000,           # 4 ps with 2 fs timestep
+                            "Very Sparse (8 ps)": 4000       # 8 ps with 2 fs timestep
                         }
                         
                         save_selection = st.selectbox(
@@ -4725,11 +4668,11 @@ elif page == "MD Simulation":
                         )
                         save_interval = save_options[save_selection]
                         
-                        # Convert to time
-                        prod_time_ps = production_steps * 4 / 1000
+                        # Convert to time (2 fs timestep)
+                        prod_time_ps = production_steps * 2 / 1000
                         prod_time_ns = prod_time_ps / 1000
-                        save_time_ps = save_interval * 4 / 1000
-                        total_time_ns = (equilibration_steps + production_steps) * 4 / 1000000
+                        save_time_ps = save_interval * 2 / 1000
+                        total_time_ns = (equilibration_steps + production_steps) * 2 / 1000000
                         
                         st.caption(f"⏱️ Production: {prod_time_ps:.0f} ps ({prod_time_ns:.1f} ns)")
                         st.caption(f"💾 Save every: {save_time_ps:.1f} ps")
@@ -4887,90 +4830,38 @@ elif page == "MD Simulation":
                                     )
                                     
                                     # Add JavaScript to auto-scroll to bottom for live updates
-                                    if auto_refresh and len(recent_lines) > 10:
-                                        st.markdown("""
-                                        <script>
-                                            // Auto-scroll console to bottom to show latest content
-                                            setTimeout(() => {
-                                                const textAreas = document.querySelectorAll('textarea[aria-label*="Real-time Console Output"]');
-                                                if (textAreas.length > 0) {
-                                                    const lastTextArea = textAreas[textAreas.length - 1];
-                                                    lastTextArea.scrollTop = lastTextArea.scrollHeight;
-                                                }
-                                            }, 200);
-                                        </script>
-                                        """, unsafe_allow_html=True)
-                                
-                                # Update stats container
-                                with stats_container.container():
+                                    st.markdown("""
+                                    <script>
+                                        // Auto-scroll to bottom for live updates
+                                        const textarea = document.querySelector('textarea[data-testid="stTextArea"]');
+                                        if (textarea) {
+                                            textarea.scrollTop = textarea.scrollHeight;
+                                        }
+                                    </script>
+                                    """, unsafe_allow_html=True)
+                                    
+                                    # Show statistics
                                     total_lines = len(st.session_state.console_capture.output_lines)
-                                    st.caption(f"📝 {total_lines} lines captured (showing last 50 lines in chronological order) - Last updated: {datetime.now().strftime('%H:%M:%S')}")
+                                    st.caption(f"📝 {total_lines} lines captured (showing last 50 lines) - Last updated: {datetime.now().strftime('%H:%M:%S')}")
                                     
-                                    # Debug: Show what's being captured
-                                    if total_lines > 0:
-                                        with st.expander("🔍 Debug: Latest Raw Messages"):
-                                            for i, line in enumerate(recent_lines[-5:]):
+                                    # Debug section to help troubleshoot
+                                    with st.expander("🔍 Debug: Console Capture Status"):
+                                        st.write(f"**Console capture object:** {type(st.session_state.console_capture)}")
+                                        st.write(f"**Total lines:** {total_lines}")
+                                        st.write(f"**Recent lines count:** {len(recent_lines)}")
+                                        if recent_lines:
+                                            st.write("**Latest 3 lines:**")
+                                            for i, line in enumerate(recent_lines[-3:]):
                                                 st.code(line, language=None)
-                                
-                                # Show recent key metrics if we can extract them
-                                if recent_lines:
-                                    # Try to extract some key info from recent lines
-                                    latest_step = None
-                                    latest_pe = None
-                                    latest_temp = None
-                                    latest_speed = None
-                                    
-                                    for line in reversed(recent_lines):
-                                        if "📊 Step" in line and latest_step is None:
-                                            # Extract step info: "📊 Step   30000: PE=   19999.8 kJ/mol, T= 306."
-                                            try:
-                                                import re
-                                                step_match = re.search(r'Step\s+(\d+)', line)
-                                                pe_match = re.search(r'PE=\s*([\d.-]+)', line)
-                                                temp_match = re.search(r'T=\s*([\d.-]+)', line)
-                                                speed_match = re.search(r'Speed=\s*([\d.-]+)', line)
-                                                
-                                                if step_match:
-                                                    latest_step = int(step_match.group(1))
-                                                if pe_match:
-                                                    latest_pe = float(pe_match.group(1))
-                                                if temp_match:
-                                                    latest_temp = float(temp_match.group(1))
-                                                if speed_match:
-                                                    latest_speed = float(speed_match.group(1))
-                                                    
-                                                if all([latest_step, latest_pe, latest_temp, latest_speed]):
-                                                    break
-                                            except:
-                                                pass
-                                    
-                                    # Display key metrics if found
-                                    if any([latest_step, latest_pe, latest_temp, latest_speed]):
-                                        with metrics_container:
-                                            st.markdown("### 📊 Latest Metrics")
-                                            metric_col1, metric_col2, metric_col3, metric_col4 = st.columns(4)
-                                            
-                                            with metric_col1:
-                                                if latest_step:
-                                                    st.metric("📈 Current Step", f"{latest_step:,}")
-                                            
-                                            with metric_col2:
-                                                if latest_pe:
-                                                    st.metric("⚡ Potential Energy", f"{latest_pe:.0f} kJ/mol")
-                                            
-                                            with metric_col3:
-                                                if latest_temp:
-                                                    temp_delta = latest_temp - 310.0  # Compare to target
-                                                    st.metric(
-                                                        "🌡️ Temperature", 
-                                                        f"{latest_temp:.1f} K",
-                                                        delta=f"{temp_delta:+.1f} K" if abs(temp_delta) > 0.1 else None
-                                                    )
-                                            
-                                            with metric_col4:
-                                                if latest_speed:
-                                                    perf_color = "🟢" if latest_speed > 500 else "🟡" if latest_speed > 100 else "🔴"
-                                                    st.metric(f"{perf_color} Performance", f"{latest_speed:.0f} ns/day")
+                                        else:
+                                            st.write("**No lines captured yet**")
+                                        
+                                        # Check if simulation is actually running
+                                        sim_status = st.session_state.md_integration.get_simulation_status()
+                                        st.write(f"**Simulation status:** {sim_status['simulation_running']}")
+                                        if sim_status['simulation_info']:
+                                            st.write(f"**Simulation ID:** {sim_status['simulation_info'].get('id', 'N/A')}")
+                                            st.write(f"**Simulation phase:** {sim_status['simulation_info'].get('status', 'N/A')}")
                             
                             else:
                                 with console_container.container():
@@ -4980,8 +4871,37 @@ elif page == "MD Simulation":
                         else:
                             with console_container.container():
                                 st.info("📝 Console capture not initialized. Refresh the page.")
+                                # Try to initialize console capture
+                                if st.button("🔄 Initialize Console Capture"):
+                                    # Create console capture
+                                    class ThreadSafeConsoleCapture:
+                                        def __init__(self):
+                                            self.output_lines = []
+                                            
+                                        def write(self, text):
+                                            """Capture console output in a thread-safe way"""
+                                            if text.strip():  # Only capture non-empty lines
+                                                timestamp = datetime.now().strftime("%H:%M:%S")
+                                                formatted_line = f"[{timestamp}] {text.strip()}"
+                                                self.output_lines.append(formatted_line)
+                                                # Keep only last 200 lines
+                                                if len(self.output_lines) > 200:
+                                                    self.output_lines = self.output_lines[-200:]
+                                        
+                                        def flush(self):
+                                            pass
+                                        
+                                        def get_output(self):
+                                            return "\n".join(self.output_lines)
+                                        
+                                        def get_recent_lines(self, n=50):
+                                            return self.output_lines[-n:] if len(self.output_lines) > n else self.output_lines
+                                    
+                                    st.session_state.console_capture = ThreadSafeConsoleCapture()
+                                    st.success("✅ Console capture initialized!")
+                                    st.rerun()
                         
-                        # Control buttons
+                        # Control buttons for manual refresh
                         button_col1, button_col2 = st.columns(2)
                         with button_col1:
                             if st.button("🔄 Refresh Console Now"):
@@ -5052,11 +4972,19 @@ elif page == "MD Simulation":
                             # Get reference for thread-safe access
                             console_capture_ref = st.session_state.console_capture
                             
-                            # Simple callback that just stores raw output
+                            # Enhanced callback that handles threading issues
                             def simple_console_callback(message):
-                                """Simple callback that captures console output without accessing session state"""
-                                # Use the local reference to avoid session state access from background thread
-                                console_capture_ref.write(message)
+                                """Enhanced callback that captures console output with better error handling"""
+                                try:
+                                    # Use the local reference to avoid session state access from background thread
+                                    if console_capture_ref and hasattr(console_capture_ref, 'write'):
+                                        console_capture_ref.write(message)
+                                    else:
+                                        # Fallback: print to console if capture is not available
+                                        print(f"[CONSOLE_CAPTURE_FALLBACK] {message}")
+                                except Exception as e:
+                                    # Fallback: print to console if callback fails
+                                    print(f"[CONSOLE_CALLBACK_ERROR] {e}: {message}")
                             
                             # Start simulation
                             simulation_id = st.session_state.md_integration.run_md_simulation_async(
