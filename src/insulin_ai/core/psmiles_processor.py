@@ -10,6 +10,7 @@ from typing import Dict, List, Optional, Tuple
 from datetime import datetime
 import json
 import base64
+import traceback
 
 try:
     from psmiles import PolymerSmiles as PS
@@ -277,22 +278,22 @@ class PSMILESProcessor:
                     print(f"   Using original PSMILES structure as fallback")
                     # Create a minimal fallback object
                     canonical_ps = type('FallbackPS', (), {
-                        '__str__': lambda: psmiles_string,
-                        'savefig': lambda path: self._create_fallback_svg(psmiles_string, path)
+                        '__str__': lambda _: psmiles_string,
+                        'savefig': lambda _, path: self._create_fallback_svg(psmiles_string, path)
                     })()
                     
             except Exception as ps_creation_error:
                 print(f"⚠️ PSMILES object creation failed: {ps_creation_error}")
                 print(f"   Creating minimal fallback object")
                 # Create fallback objects when psmiles library fails
-                ps = type('FallbackPS', (), {'__str__': lambda: psmiles_string})()
+                ps = type('FallbackPS', (), {'__str__': lambda _: psmiles_string})()
                 canonical_ps = type('FallbackPS', (), {
-                    '__str__': lambda: psmiles_string,
-                    'savefig': lambda path: self._create_fallback_svg(psmiles_string, path)
+                    '__str__': lambda _: psmiles_string,
+                    'savefig': lambda _, path: self._create_fallback_svg(psmiles_string, path)
                 })()
             
             # Generate and save SVG
-            svg_filename = f"psmiles_{session_id}_{len(self.session_psmiles[session_id])}.svg"
+            svg_filename = f"psmiles_{session_id}_{len(self.session_psmiles.get(session_id, []))}.svg"
             svg_path = os.path.join(self.temp_dir, svg_filename)
             
             # Save figure as SVG with error handling for RDKit compatibility issues
@@ -349,7 +350,7 @@ class PSMILESProcessor:
                 'svg_content': svg_content,
                 'svg_filename': svg_filename,
                 'workflow_options': workflow_options,
-                'session_count': len(self.session_psmiles[session_id]),
+                'session_count': len(self.session_psmiles.get(session_id, [])),
                 'step': step,
                 'timestamp': datetime.now().isoformat(),
                 'type': 'organic',
@@ -368,7 +369,8 @@ class PSMILESProcessor:
             return {
                 'success': False,
                 'error': f"PSMILES processing error: {str(e)}",
-                'original_psmiles': psmiles_string
+                'original_psmiles': psmiles_string,
+                'traceback': traceback.format_exc()
             }
     
     def _handle_organometallic_psmiles(self, psmiles_string: str, session_id: str, step: str) -> Dict:
@@ -412,7 +414,7 @@ class PSMILESProcessor:
                 'svg_content': svg_content,
                 'svg_filename': 'organometallic_placeholder.svg',
                 'workflow_options': workflow_options,
-                'session_count': len(self.session_psmiles[session_id]),
+                'session_count': len(self.session_psmiles.get(session_id, [])),
                 'step': step,
                 'timestamp': datetime.now().isoformat(),
                 'type': 'organometallic',
@@ -1491,6 +1493,9 @@ class PSMILESProcessor:
         """
         try:
             print(f"   🔨 Aggressive repair for: {smiles}")
+            
+            # **Define ring_to_break before the loop**
+            ring_to_break = None
             
             # Common problematic patterns and their fixes
             repair_patterns = [

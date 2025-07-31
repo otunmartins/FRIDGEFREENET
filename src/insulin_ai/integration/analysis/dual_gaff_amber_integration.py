@@ -431,7 +431,7 @@ class DualGaffAmberIntegration:
                     
                     # Perform random walk until we find a clash-free position
                     current_pos = start_pos
-                    step_size = 0.3  # 3 Å steps
+                    step_size = 0.5  # 3 Å steps
                     max_steps = 5000  # Maximum steps to prevent infinite loops
                     
                     for step in range(max_steps):
@@ -448,7 +448,7 @@ class DualGaffAmberIntegration:
                         # Check for clashes with existing atoms
                         min_dist = np.min(np.linalg.norm(current_positions[:, np.newaxis, :] - translated_positions[np.newaxis, :, :], axis=2))
                         
-                        if min_dist > 0.3:  # If minimum distance is > 3 Å, we accept the position
+                        if min_dist > 0.5:  # If minimum distance is > 3 Å, we accept the position
                             log_callback(f"   ✅ Found clash-free position for polymer {i+1} after {step+1} random walk steps.")
                             break
                     else:

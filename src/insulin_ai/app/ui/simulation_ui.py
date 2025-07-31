@@ -3311,8 +3311,9 @@ def generate_psmiles_svg(psmiles: str) -> Optional[str]:
     if not RDKIT_AVAILABLE:
         return None
     try:
-        # Replace polymer connection points for visualization
-        mol = Chem.MolFromSmiles(psmiles.replace("[*]", "[R]"))
+        # Replace polymer connection points for visualization.
+        # Using '*' (a dummy atom) is more standard for RDKit than '[R]'.
+        mol = Chem.MolFromSmiles(psmiles.replace("[*]", "*"))
         if mol is None:
             return None
         
