@@ -20,8 +20,10 @@ import sys
 import time
 from pathlib import Path
 
-# Set up OpenAI API key
-OPENAI_API_KEY = "**REMOVED**"
+# Set up OpenAI API key from environment
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+if not OPENAI_API_KEY:
+    raise ValueError("OPENAI_API_KEY environment variable is required")
 
 def setup_environment():
     """Set up the demonstration environment"""

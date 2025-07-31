@@ -154,6 +154,13 @@ Thumbs.db
 *.key
 secrets.toml
 
+# API Keys and sensitive data (multiple patterns)
+sk-*
+*api_key*
+*API_KEY*
+openai_key*
+*secret*
+
 # Simulation outputs and temporary files
 *.pdb
 *.dcd
