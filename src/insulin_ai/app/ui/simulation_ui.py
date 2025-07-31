@@ -23,6 +23,14 @@ import contextlib
 import traceback
 import base64
 
+# Import PDB visualizer component
+try:
+    from .pdb_visualizer import render_pdb_visualizer, render_trajectory_info
+    PDB_VISUALIZER_AVAILABLE = True
+except ImportError:
+    PDB_VISUALIZER_AVAILABLE = False
+    print("Warning: PDB visualizer not available")
+
 # --- Constants ---
 CANDIDATES_FILE = "enhanced_candidates.json"
 
@@ -564,9 +572,15 @@ def _run_dual_gaff_amber_simulation_direct(psmiles: str, simulation_params: Dict
         st.session_state.md_integration and 
         st.session_state.get('md_system_type') == 'dual_gaff_amber'):
         
+        # Get console capture object to stream logs to the UI
+        initialize_simulation_session_state()
+        console_capture_ref = create_console_capture()
+        
         # Create thread-safe console callback for progress tracking
         def dual_console_callback(message: str):
-            # Thread-safe: Just print to console, don't try to use Streamlit from thread
+            # Thread-safe: Write to the console capture for UI and print for debugging
+            if console_capture_ref:
+                console_capture_ref.write(message)
             print(f"[DUAL_GAFF_AMBER] {message}")
         
         # Display simulation approach
@@ -1761,9 +1775,119 @@ def create_console_capture():
 
 
 def render_results_analysis_tab():
-    """Render the results analysis tab"""
-    st.markdown("### Results Analysis")
-    st.info("Results analysis functionality will be implemented in future versions.")
+    """Render the results analysis tab with 3D visualization capabilities"""
+    
+    # Check if user wants to view 3D visualization
+    if st.session_state.get('show_results_3d_visualization'):
+        viz_data = st.session_state.show_results_3d_visualization
+        
+        # Back button
+        if st.button("⬅️ Back to Results Analysis", type="secondary"):
+            del st.session_state.show_results_3d_visualization
+            st.rerun()
+        
+        # Show 3D visualization
+        st.markdown("### 🧬 3D Molecular Trajectory Analysis")
+        st.markdown(f"**Simulation:** {viz_data['simulation_id']}")
+        
+        try:
+            if PDB_VISUALIZER_AVAILABLE:
+                render_pdb_visualizer(viz_data['trajectory_file'], viz_data['simulation_id'])
+            else:
+                st.error("❌ 3D visualizer not available. Please check dependencies.")
+        except Exception as e:
+            st.error(f"❌ Error rendering 3D visualization: {str(e)}")
+            with st.expander("Error Details"):
+                st.exception(e)
+        
+        return
+    
+    st.markdown("### 📊 Results Analysis")
+    st.markdown("*Analyze and visualize molecular dynamics simulation results*")
+    
+    # Show PDB visualizer status
+    if PDB_VISUALIZER_AVAILABLE:
+        st.info("🧬 **3D Molecular Visualization Available** - Click 'View 3D' buttons to explore trajectories interactively")
+    else:
+        st.warning("⚠️ 3D molecular visualization unavailable - install required dependencies for interactive trajectory viewing")
+    
+    # Get available simulations
+    try:
+        available_simulations = st.session_state.md_integration.get_available_simulations()
+        
+        if available_simulations:
+            st.success(f"✅ Found {len(available_simulations)} completed simulations")
+            
+            # Filter successful simulations
+            successful_sims = [sim for sim in available_simulations if sim.get('success', False)]
+            
+            if successful_sims:
+                st.markdown("#### 🎬 3D Molecular Visualization")
+                st.markdown("*Interactive visualization of molecular dynamics trajectories*")
+                
+                # Show simulations in a grid
+                cols_per_row = 2
+                for i in range(0, len(successful_sims), cols_per_row):
+                    cols = st.columns(cols_per_row)
+                    
+                    for j, col in enumerate(cols):
+                        if i + j < len(successful_sims):
+                            sim = successful_sims[i + j]
+                            
+                            with col:
+                                with st.container(border=True):
+                                    st.markdown(f"**{sim['id']}**")
+                                    st.caption(f"⚛️ {sim['total_atoms']:,} atoms")
+                                    st.caption(f"🚀 {sim['performance']:.1f} ns/day")
+                                    
+                                    # Get simulation files to check for trajectory
+                                    try:
+                                        sim_files = st.session_state.md_integration.get_simulation_files(sim['id'])
+                                        trajectory_file = None
+                                        
+                                        if sim_files['success']:
+                                            for file_type, file_path in sim_files['files'].items():
+                                                if ('trajectory' in file_type.lower() or 
+                                                    'frames' in file_type.lower() or 
+                                                    file_path.endswith('.pdb')):
+                                                    if os.path.exists(file_path):
+                                                        trajectory_file = file_path
+                                                        break
+                                        
+                                        if PDB_VISUALIZER_AVAILABLE and trajectory_file:
+                                            if st.button(f"🧬 View 3D", key=f"view_results_3d_{sim['id']}", 
+                                                       help="Interactive 3D molecular visualization"):
+                                                st.session_state.show_results_3d_visualization = {
+                                                    'simulation_id': sim['id'],
+                                                    'trajectory_file': trajectory_file
+                                                }
+                                                st.rerun()
+                                        else:
+                                            if not PDB_VISUALIZER_AVAILABLE:
+                                                st.caption("❌ Visualizer unavailable")
+                                            else:
+                                                st.caption("❌ No trajectory file")
+                                    
+                                    except Exception as e:
+                                        st.caption(f"❌ Error: {str(e)}")
+            else:
+                st.warning("⚠️ No successful simulations found for analysis")
+                
+        else:
+            st.info("📭 No simulation results found")
+            st.markdown("""
+            **💡 To analyze results:**
+            1. Run simulations in the **MD Simulation** tab
+            2. Wait for simulations to complete successfully  
+            3. Return here to visualize and analyze results
+            """)
+            
+    except Exception as e:
+        st.error(f"❌ Error accessing simulation results: {str(e)}")
+        st.markdown("**Troubleshooting:**")
+        st.markdown("- Check if simulations have been run")
+        st.markdown("- Verify MD integration is properly initialized")
+        st.markdown("- Try refreshing the page")
 
 
 def render_postprocessing_tab():
@@ -2242,7 +2366,7 @@ def start_postprocessing_analysis(selected_sim: Dict[str, Any], analysis_options
         
         # Start analysis
         simulation_id = selected_sim['id']
-        simulation_dir = Path(selected_sim['path']).parent
+        simulation_dir = Path(selected_sim['path']) # Corrected path
         trajectory_file = selected_sim.get('trajectory_file')
         structure_type = selected_sim.get('structure_type', 'simple')
         
@@ -2302,6 +2426,10 @@ def start_postprocessing_analysis(selected_sim: Dict[str, Any], analysis_options
         st.session_state.show_postprocessing_results = simulation_id
         st.success("📊 Click 'View Results' below to see detailed analysis!")
         
+        # Add a button to explicitly view results
+        if st.button("📊 View Results", key=f"view_results_button_{simulation_id}"):
+            st.rerun()
+
     except Exception as e:
         st.error(f"❌ Failed to start post-processing analysis: {str(e)}")
         print(f"❌ Post-processing startup error: {str(e)}")
@@ -2537,6 +2665,15 @@ def render_postprocessing_results_dashboard(simulation_id: str):
             analysis_tabs.append("Swelling")
             tab_data["Swelling"] = results_data['swelling_response']
         
+        # Add 3D visualization tab if PDB visualizer is available and trajectory exists
+        trajectory_file = find_trajectory_file(results)
+        if PDB_VISUALIZER_AVAILABLE and trajectory_file:
+            analysis_tabs.append("3D Visualization")
+            tab_data["3D Visualization"] = {
+                'trajectory_file': trajectory_file,
+                'simulation_id': simulation_id,
+                'success': True
+            }
 
         
         if analysis_tabs:
@@ -2658,6 +2795,8 @@ def render_analysis_results_section(analysis_name: str, analysis_data: Dict[str,
         render_interactions_results(analysis_data)
     elif "Swelling" in analysis_name:
         render_swelling_results(analysis_data)
+    elif "3D Visualization" in analysis_name:
+        render_3d_visualization_results(analysis_data)
     else:
         # Generic results display
         st.json(analysis_data)
@@ -2924,6 +3063,107 @@ def render_basic_stats_results(data: Dict[str, Any]):
             st.metric("Radius of Gyration", f"{rg:.2f} Å")
 
 
+def find_trajectory_file(results: Dict[str, Any]) -> Optional[str]:
+    """
+    Find trajectory file from post-processing results
+    
+    Args:
+        results: Post-processing results dictionary
+        
+    Returns:
+        Path to trajectory file if found, None otherwise
+    """
+    
+    try:
+        output_files = results.get('output_files', {})
+        
+        # Look for common trajectory file names
+        trajectory_patterns = [
+            'frames.pdb',
+            'trajectory.pdb',
+            'production/frames.pdb',
+            'output.pdb'
+        ]
+        
+        for pattern in trajectory_patterns:
+            for rel_path, full_path in output_files.items():
+                if pattern in rel_path.lower():
+                    trajectory_path = Path(full_path)
+                    if trajectory_path.exists():
+                        return str(trajectory_path)
+        
+        # If not found in output_files, try to infer from analysis directory
+        analysis_dir = results.get('analysis_dir')
+        if analysis_dir:
+            analysis_path = Path(analysis_dir)
+            
+            # Look in parent directories for trajectory files
+            for pattern in ['frames.pdb', 'trajectory.pdb']:
+                possible_paths = [
+                    analysis_path.parent / pattern,  # Look in simulation directory
+                    analysis_path.parent / 'production' / pattern,  # Look in production subdirectory
+                    analysis_path.parent.parent / pattern,  # Look one level up
+                ]
+                
+                for path in possible_paths:
+                    if path.exists():
+                        return str(path)
+        
+        return None
+    
+    except Exception as e:
+        print(f"Error finding trajectory file: {e}")
+        return None
+
+
+def render_3d_visualization_results(analysis_data: Dict[str, Any]):
+    """Render 3D visualization section"""
+    
+    if not PDB_VISUALIZER_AVAILABLE:
+        st.error("❌ 3D visualizer not available. Please check dependencies.")
+        return
+    
+    trajectory_file = analysis_data.get('trajectory_file')
+    simulation_id = analysis_data.get('simulation_id', 'unknown')
+    
+    if not trajectory_file:
+        st.error("❌ No trajectory file found for 3D visualization")
+        return
+    
+    trajectory_path = Path(trajectory_file)
+    if not trajectory_path.exists():
+        st.error(f"❌ Trajectory file not found: {trajectory_file}")
+        return
+    
+    # Show trajectory information first
+    trajectory_info = render_trajectory_info(trajectory_path)
+    
+    if trajectory_info.get('success'):
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("📊 Total Frames", trajectory_info['total_frames'])
+        
+        with col2:
+            st.metric("🔬 Atoms", f"{trajectory_info['total_atoms']:,}")
+        
+        with col3:
+            st.metric("⏱️ Simulation Time", f"{trajectory_info['simulation_time_ps']:.1f} ps")
+        
+        with col4:
+            st.metric("📁 File Size", f"{trajectory_info['file_size_mb']:.1f} MB")
+        
+        st.markdown("---")
+    
+    # Render the PDB visualizer
+    try:
+        render_pdb_visualizer(trajectory_file, simulation_id)
+    except Exception as e:
+        st.error(f"❌ Error rendering 3D visualization: {str(e)}")
+        with st.expander("Error Details"):
+            st.exception(e)
+
+
 def render_results_export_section(results: Dict[str, Any], simulation_id: str):
     """Render results export and download section"""
     
@@ -2981,7 +3221,40 @@ def render_results_export_section(results: Dict[str, Any], simulation_id: str):
 
 def render_file_management_tab():
     """Render the file management tab"""
+    
+    # Check if user wants to view 3D visualization
+    if st.session_state.get('show_md_3d_visualization'):
+        viz_data = st.session_state.show_md_3d_visualization
+        
+        # Back button
+        if st.button("⬅️ Back to File Management", type="secondary"):
+            del st.session_state.show_md_3d_visualization
+            st.rerun()
+        
+        # Show 3D visualization
+        st.markdown("### 🧬 3D Molecular Trajectory Visualization")
+        st.markdown(f"**Simulation:** {viz_data['simulation_id']}")
+        
+        try:
+            if PDB_VISUALIZER_AVAILABLE:
+                render_pdb_visualizer(viz_data['trajectory_file'], viz_data['simulation_id'])
+            else:
+                st.error("❌ 3D visualizer not available. Please check dependencies.")
+        except Exception as e:
+            st.error(f"❌ Error rendering 3D visualization: {str(e)}")
+            with st.expander("Error Details"):
+                st.exception(e)
+        
+        return
+    
     st.markdown("### File Management")
+    st.markdown("*Browse and manage simulation output files*")
+    
+    # Show PDB visualizer status
+    if PDB_VISUALIZER_AVAILABLE:
+        st.info("🧬 **3D Trajectory Visualization Available** - View molecular dynamics in interactive 3D")
+    else:
+        st.warning("⚠️ 3D visualization unavailable - missing dependencies")
     
     # Get simulation files if available
     try:
@@ -3002,10 +3275,32 @@ def render_file_management_tab():
                     
                     if sim_files['success']:
                         st.write("**Available Files:**")
+                        trajectory_file = None
+                        
                         for file_type, file_path in sim_files['files'].items():
                             if os.path.exists(file_path):
                                 file_size = os.path.getsize(file_path) / (1024 * 1024)  # MB
                                 st.write(f"- {file_type}: {file_size:.1f} MB")
+                                
+                                # Check if this is a trajectory file
+                                if ('trajectory' in file_type.lower() or 
+                                    'frames' in file_type.lower() or 
+                                    file_path.endswith('.pdb')):
+                                    trajectory_file = file_path
+                        
+                        # Add 3D visualization option if trajectory file exists and PDB visualizer is available
+                        if PDB_VISUALIZER_AVAILABLE and trajectory_file:
+                            st.markdown("---")
+                            st.markdown("**🧬 3D Molecular Visualization:**")
+                            
+                            if st.button(f"🎬 View 3D Trajectory", key=f"view_3d_{sim['id']}", 
+                                       help="View molecular dynamics trajectory in 3D"):
+                                # Set session state to show 3D visualizer for this simulation
+                                st.session_state.show_md_3d_visualization = {
+                                    'simulation_id': sim['id'],
+                                    'trajectory_file': trajectory_file
+                                }
+                                st.rerun()
         else:
             st.info("No simulation files found.")
     except Exception as e:

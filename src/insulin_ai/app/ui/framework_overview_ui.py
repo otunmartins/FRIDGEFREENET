@@ -1,296 +1,319 @@
 """
-Framework Overview UI Module for Insulin-AI Application
-
-This module handles the main dashboard/overview page that displays
-system metrics, component status, and framework architecture.
+Codebase Understanding Chatbot for Insulin AI Framework
+Provides an interactive chatbot to help understand the codebase structure and functionality
 """
 
 import streamlit as st
-import pandas as pd
-import numpy as np
+import os
+import sys
+from pathlib import Path
+from typing import List, Dict, Any, Optional
+import tempfile
+import uuid
 from datetime import datetime
-from typing import Dict, Any, List, Optional
 
+# LangChain imports for RAG
+try:
+    from langchain_community.document_loaders import DirectoryLoader, TextLoader
+    from langchain_community.document_loaders.parsers import LanguageParser
+    from langchain_text_splitters import RecursiveCharacterTextSplitter, Language
+    from langchain_community.vectorstores import FAISS
+    from langchain_openai import OpenAIEmbeddings, ChatOpenAI
+    from langchain.chains import ConversationalRetrievalChain
+    from langchain.memory import ConversationBufferWindowMemory
+    from langchain.prompts import PromptTemplate
+    from langchain_core.messages import HumanMessage, AIMessage
+    from langchain.schema import Document
+    LANGCHAIN_AVAILABLE = True
+except ImportError as e:
+    LANGCHAIN_AVAILABLE = False
+    print(f"LangChain not available: {e}")
 
-def render_framework_metrics():
-    """Render the main framework metrics in a dashboard style"""
-    col1, col2, col3, col4 = st.columns(4)
+def get_project_root() -> Path:
+    """Get the project root directory"""
+    return Path(__file__).parent.parent.parent.parent.parent
+
+def scan_codebase_files(project_root: Path) -> List[Path]:
+    """Scan for relevant codebase files"""
+    relevant_extensions = {'.py', '.md', '.txt', '.yaml', '.yml', '.json', '.toml'}
+    exclude_dirs = {'__pycache__', '.git', 'node_modules', '.venv', 'venv', '.pytest_cache', 'output'}
     
-    with col1:
-        iterations_count = len(st.session_state.literature_iterations)
-        st.markdown(
-            f'<div class="metric-insulin"><h3>{iterations_count}</h3><p>Literature Iterations</p></div>',
-            unsafe_allow_html=True
+    files = []
+    for file_path in project_root.rglob('*'):
+        if (file_path.is_file() and 
+            file_path.suffix in relevant_extensions and
+            not any(exclude_dir in file_path.parts for exclude_dir in exclude_dirs) and
+            file_path.stat().st_size < 1024 * 1024):  # Skip files larger than 1MB
+            files.append(file_path)
+    
+    return files[:500]  # Limit to first 500 files for performance
+
+@st.cache_resource
+def initialize_codebase_chatbot():
+    """Initialize the codebase understanding chatbot with RAG"""
+    if not LANGCHAIN_AVAILABLE:
+        return None, "LangChain dependencies not available. Please install: pip install langchain langchain-community langchain-openai"
+    
+    try:
+        project_root = get_project_root()
+        
+        # Load codebase documents
+        st.info("🔍 Scanning codebase files...")
+        files = scan_codebase_files(project_root)
+        
+        documents = []
+        for file_path in files:
+            try:
+                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read()
+                    if content.strip():  # Only include non-empty files
+                        relative_path = file_path.relative_to(project_root)
+                        doc = Document(
+                            page_content=content,
+                            metadata={
+                                "source": str(relative_path),
+                                "file_type": file_path.suffix,
+                                "file_name": file_path.name,
+                                "directory": str(relative_path.parent),
+                                "size": len(content)
+                            }
+                        )
+                        documents.append(doc)
+            except Exception as e:
+                print(f"Error reading {file_path}: {e}")
+                continue
+        
+        if not documents:
+            return None, "No documents found in codebase"
+        
+        st.info(f"📚 Loaded {len(documents)} files from codebase")
+        
+        # Split documents into chunks
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1000,
+            chunk_overlap=200,
+            length_function=len,
+            separators=["\n\n", "\n", " ", ""]
         )
-    
-    with col2:
-        psmiles_count = len(st.session_state.psmiles_candidates)
-        st.markdown(
-            f'<div class="metric-insulin"><h3>{psmiles_count}</h3><p>PSMILES Generated</p></div>',
-            unsafe_allow_html=True
+        
+        splits = text_splitter.split_documents(documents)
+        st.info(f"✂️ Created {len(splits)} text chunks")
+        
+        # Create embeddings and vector store
+        embeddings = OpenAIEmbeddings()
+        vectorstore = FAISS.from_documents(splits, embeddings)
+        
+        # Create retriever
+        retriever = vectorstore.as_retriever(
+            search_type="similarity",
+            search_kwargs={"k": 6}
         )
-    
-    with col3:
-        if len(st.session_state.material_library) > 0:
-            high_scoring = (st.session_state.material_library['insulin_stability_score'] > 0.7).sum()
-        else:
-            high_scoring = 0
-        st.markdown(
-            f'<div class="metric-insulin"><h3>{high_scoring}</h3><p>High-Performance Materials</p></div>',
-            unsafe_allow_html=True
+        
+        # Create custom prompt for codebase understanding
+        custom_prompt = PromptTemplate(
+            input_variables=["chat_history", "question", "context"],
+            template="""You are an expert software engineer and code analyst helping developers understand the Insulin AI codebase. 
+            You have access to the complete codebase including Python files, configuration files, and documentation.
+
+Your role is to:
+- Explain code structure, patterns, and architecture
+- Help locate specific functionality 
+- Suggest best practices and improvements
+- Answer questions about implementation details
+- Trace data flow and dependencies
+
+Context from codebase:
+{context}
+
+Chat History:
+{chat_history}
+
+Current Question: {question}
+
+Instructions:
+1. Provide clear, technical explanations suitable for developers
+2. Reference specific files and line numbers when relevant
+3. Include code snippets to illustrate points
+4. If you don't know something, say so - don't make up code that doesn't exist
+5. Suggest related files or functions that might be useful
+6. Be helpful for both newcomers and experienced developers
+
+Answer:"""
         )
-    
-    with col4:
-        queue_count = len(st.session_state.active_learning_queue)
-        st.markdown(
-            f'<div class="metric-insulin"><h3>{queue_count}</h3><p>Active Learning Queue</p></div>',
-            unsafe_allow_html=True
+        
+        # Create LLM
+        llm = ChatOpenAI(
+            model_name="gpt-4o",
+            temperature=0.1,
+            max_tokens=2000
         )
-
-
-def render_framework_components():
-    """Render the framework components overview"""
-    st.subheader("🧬 Framework Components")
-    
-    framework_components = [
-        {
-            'name': 'Literature Mining (LLM Analysis)',
-            'description': 'Ollama-based semantic analysis of scientific literature for insulin stabilization mechanisms',
-            'status': 'Active' if st.session_state.systems_initialized else 'Offline',
-            'color': '#4CAF50' if st.session_state.systems_initialized else '#f44336'
-        },
-        {
-            'name': 'PSMILES Generation',
-            'description': 'AI-driven polymer structure generation with multi-validation pipeline',
-            'status': 'Active' if st.session_state.systems_initialized else 'Offline',
-            'color': '#4CAF50' if st.session_state.systems_initialized else '#f44336'
-        },
-        {
-            'name': 'Active Learning',
-            'description': 'Uncertainty-driven material discovery with iterative feedback loops',
-            'status': 'Active',
-            'color': '#4CAF50'
-        },
-        {
-            'name': 'Material Evaluation',
-            'description': 'Multi-criteria assessment: thermal stability, biocompatibility, insulin interaction',
-            'status': 'Active',
-            'color': '#4CAF50'
-        },
-        {
-            'name': 'MD Simulation',
-            'description': 'OpenMM-based molecular dynamics for insulin-polymer interaction analysis',
-            'status': 'Active',
-            'color': '#4CAF50'
-        }
-    ]
-    
-    for component in framework_components:
-        st.markdown(f"""
-        <div style="border-left: 4px solid {component['color']}; padding: 15px; margin: 10px 0; background-color: #f8f9fa;">
-            <h4 style="color: {component['color']}; margin-bottom: 5px;">{component['name']}</h4>
-            <p style="margin-bottom: 5px;">{component['description']}</p>
-            <small style="color: {component['color']};">Status: {component['status']}</small>
-        </div>
-        """, unsafe_allow_html=True)
-
-
-def render_active_learning_cycle():
-    """Render the active learning cycle visualization"""
-    st.subheader("🔄 Active Learning Cycle")
-    
-    # Create a visual representation of the active learning cycle
-    cycle_steps = [
-        "📚 Literature Mining",
-        "🧪 PSMILES Generation", 
-        "🔬 Material Evaluation",
-        "📊 Uncertainty Analysis",
-        "🎯 Next Iteration Planning"
-    ]
-    
-    st.markdown("**Current Active Learning Pipeline:**")
-    
-    cols = st.columns(len(cycle_steps))
-    for i, (step, col) in enumerate(zip(cycle_steps, cols)):
-        with col:
-            if i < len(st.session_state.literature_iterations):
-                st.markdown(f"✅ **{step}**")
-            else:
-                st.markdown(f"⏳ **{step}**")
-
-
-def render_recent_activity():
-    """Render recent system activity"""
-    st.subheader("📈 Recent Activity")
-    
-    # Combine different types of activities
-    activities = []
-    
-    # Literature iterations
-    for iteration in st.session_state.literature_iterations[-3:]:
-        activities.append({
-            'type': 'Literature Mining',
-            'timestamp': iteration.get('timestamp', datetime.now().isoformat()),
-            'description': f"Query: {iteration['query'][:50]}...",
-            'icon': '📚'
-        })
-    
-    # PSMILES candidates
-    for candidate in st.session_state.psmiles_candidates[-3:]:
-        activities.append({
-            'type': 'PSMILES Generation',
-            'timestamp': candidate.get('timestamp', datetime.now().isoformat()),
-            'description': f"Generated: {candidate.get('psmiles', 'Unknown')}",
-            'icon': '🧪'
-        })
-    
-    # Sort by timestamp
-    activities.sort(key=lambda x: x['timestamp'], reverse=True)
-    
-    if activities:
-        for activity in activities[:5]:  # Show last 5 activities
-            st.markdown(f"""
-            <div style="padding: 10px; margin: 5px 0; border-radius: 5px; background-color: #f0f2f6;">
-                {activity['icon']} **{activity['type']}** - {activity['description']}
-                <br><small style="color: #666;">
-                    {datetime.fromisoformat(activity['timestamp']).strftime('%Y-%m-%d %H:%M:%S')}
-                </small>
-            </div>
-            """, unsafe_allow_html=True)
-    else:
-        st.info("No recent activity. Start by running Literature Mining or PSMILES Generation.")
-
-
-def render_material_library_overview():
-    """Render overview of the current material library"""
-    st.subheader("🗃️ Material Library Overview")
-    
-    if len(st.session_state.material_library) > 0:
-        df = st.session_state.material_library
         
-        # Summary statistics
-        col1, col2, col3 = st.columns(3)
+        # Create conversational retrieval chain
+        qa_chain = ConversationalRetrievalChain.from_llm(
+            llm=llm,
+            retriever=retriever,
+            combine_docs_chain_kwargs={"prompt": custom_prompt},
+            return_source_documents=True,
+            verbose=True
+        )
         
-        with col1:
-            avg_thermal = df['thermal_stability'].mean()
-            st.metric("Avg Thermal Stability", f"{avg_thermal:.2f}")
+        return qa_chain, None
         
-        with col2:
-            avg_biocompat = df['biocompatibility'].mean()
-            st.metric("Avg Biocompatibility", f"{avg_biocompat:.2f}")
-        
-        with col3:
-            avg_insulin = df['insulin_stability_score'].mean()
-            st.metric("Avg Insulin Stability", f"{avg_insulin:.2f}")
-        
-        # Recent materials
-        st.markdown("**Recent Materials:**")
-        recent_materials = df.tail(5)
-        for _, material in recent_materials.iterrows():
-            st.markdown(f"""
-            <div style="padding: 8px; margin: 4px 0; border-radius: 4px; background-color: #e8f4fd;">
-                **ID:** {material['material_id']} | 
-                **PSMILES:** {material['psmiles']} | 
-                **Insulin Score:** {material['insulin_stability_score']:.2f}
-            </div>
-            """, unsafe_allow_html=True)
-    else:
-        st.info("Material library is empty. Generate materials using Literature Mining and PSMILES Generation.")
-
-
-def render_system_health():
-    """Render system health indicators"""
-    st.subheader("🏥 System Health")
-    
-    # Check various system components
-    health_indicators = []
-    
-    # Systems initialization
-    if st.session_state.systems_initialized:
-        health_indicators.append(("AI Systems", "✅ Initialized", "#4CAF50"))
-    else:
-        health_indicators.append(("AI Systems", "❌ Not Initialized", "#f44336"))
-    
-    # Session state components
-    required_components = [
-        'literature_iterations', 'psmiles_candidates', 
-        'active_learning_queue', 'material_library'
-    ]
-    
-    for component in required_components:
-        if component in st.session_state:
-            health_indicators.append((component.replace('_', ' ').title(), "✅ Available", "#4CAF50"))
-        else:
-            health_indicators.append((component.replace('_', ' ').title(), "❌ Missing", "#f44336"))
-    
-    # Display health indicators
-    for name, status, color in health_indicators:
-        st.markdown(f"""
-        <div style="padding: 8px; margin: 4px 0; border-left: 4px solid {color};">
-            **{name}:** <span style="color: {color};">{status}</span>
-        </div>
-        """, unsafe_allow_html=True)
-
-
-def render_quick_actions():
-    """Render quick action buttons for common tasks"""
-    st.subheader("⚡ Quick Actions")
-    
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        if st.button("🚀 Start Literature Mining", type="primary"):
-            st.switch_page("Literature Mining (LLM)")
-    
-    with col2:
-        if st.button("🧪 Generate PSMILES", type="primary"):
-            st.switch_page("PSMILES Generation")
-    
-    with col3:
-        if st.button("🔬 Run MD Simulation", type="primary"):
-            st.switch_page("MD Simulation")
-
+    except Exception as e:
+        return None, f"Error initializing chatbot: {str(e)}"
 
 def render_framework_overview():
-    """
-    Render the complete framework overview page
-    
-    This is the main dashboard that provides an overview of the entire
-    insulin-AI discovery framework.
-    """
-    st.subheader("🔄 Active Learning Framework Architecture")
-    
-    # Main metrics dashboard
-    render_framework_metrics()
-    
-    st.markdown("---")
-    
-    # Framework components overview
-    render_framework_components()
-    
-    st.markdown("---")
-    
-    # Active learning cycle visualization
-    render_active_learning_cycle()
-    
-    st.markdown("---")
-    
-    # Two-column layout for detailed sections
-    col1, col2 = st.columns([1, 1])
-    
-    with col1:
-        render_recent_activity()
-        render_system_health()
-    
-    with col2:
-        render_material_library_overview()
-        render_quick_actions()
-    
-    # Footer information
-    st.markdown("---")
+    """Render the codebase understanding chatbot interface"""
+    st.header("🧬 Insulin AI Codebase Assistant")
     st.markdown("""
-    <div style="text-align: center; color: #666; font-size: 14px;">
-        <p>🧬 <strong>Insulin-AI Framework</strong> - AI-Powered Drug Delivery System Discovery</p>
-        <p>Integrating LLM-based literature mining, PSMILES generation, and MD simulation for insulin stabilization</p>
-    </div>
-    """, unsafe_allow_html=True) 
+    Welcome to the **Insulin AI Codebase Understanding Assistant**! This AI-powered chatbot has been trained on the 
+    entire codebase and can help you understand the framework architecture, locate specific functionality, 
+    and navigate the code structure.
+    
+    **What you can ask:**
+    - "How does the PSMILES generation work?"
+    - "Where is the molecular dynamics simulation implemented?"
+    - "Show me the main entry points of the application"
+    - "How do the UI modules work together?"
+    - "What are the key classes and their relationships?"
+    - "How is the literature mining integrated?"
+    """)
+    
+    # Check if LangChain is available
+    if not LANGCHAIN_AVAILABLE:
+        st.error("🚫 **LangChain Required**: This chatbot requires LangChain to be installed.")
+        st.code("pip install langchain langchain-community langchain-openai", language="bash")
+        return
+    
+    # Check OpenAI API key
+    if not os.getenv("OPENAI_API_KEY"):
+        st.error("🔑 **OpenAI API Key Required**: Please set your OpenAI API key to use this chatbot.")
+        return
+    
+    # Initialize chatbot
+    with st.spinner("🤖 Initializing codebase assistant..."):
+        qa_chain, error = initialize_codebase_chatbot()
+    
+    if error:
+        st.error(f"❌ **Initialization Error**: {error}")
+        return
+    
+    if qa_chain is None:
+        st.error("❌ **Failed to initialize chatbot**")
+        return
+    
+    st.success("✅ **Codebase Assistant Ready!** Ask me anything about the Insulin AI framework.")
+    
+    # Initialize chat history
+    if "codebase_chat_history" not in st.session_state:
+        st.session_state.codebase_chat_history = []
+    
+    if "codebase_messages" not in st.session_state:
+        st.session_state.codebase_messages = [
+            {"role": "assistant", "content": "Hello! I'm your Insulin AI codebase assistant. I can help you understand the framework architecture, locate specific functionality, and navigate the code. What would you like to know?"}
+        ]
+    
+    # Display chat history
+    for message in st.session_state.codebase_messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+            
+            # Show sources for assistant messages if available
+            if message["role"] == "assistant" and "sources" in message:
+                with st.expander("📁 Source Files Referenced"):
+                    for source in message["sources"]:
+                        st.code(source, language="text")
+    
+    # Chat input
+    if prompt := st.chat_input("Ask about the codebase..."):
+        # Add user message
+        st.session_state.codebase_messages.append({"role": "user", "content": prompt})
+        
+        with st.chat_message("user"):
+            st.markdown(prompt)
+        
+        # Generate response
+        with st.chat_message("assistant"):
+            with st.spinner("🔍 Analyzing codebase..."):
+                try:
+                    # Get response from chain
+                    result = qa_chain({
+                        "question": prompt,
+                        "chat_history": st.session_state.codebase_chat_history
+                    })
+                    
+                    response = result["answer"]
+                    source_docs = result.get("source_documents", [])
+                    
+                    # Display response
+                    st.markdown(response)
+                    
+                    # Show source files
+                    if source_docs:
+                        sources = [doc.metadata.get("source", "Unknown") for doc in source_docs]
+                        unique_sources = list(set(sources))
+                        
+                        with st.expander(f"📁 Referenced {len(unique_sources)} source files"):
+                            for source in unique_sources:
+                                st.code(source, language="text")
+                        
+                        # Add to assistant message
+                        assistant_message = {
+                            "role": "assistant", 
+                            "content": response,
+                            "sources": unique_sources
+                        }
+                    else:
+                        assistant_message = {"role": "assistant", "content": response}
+                    
+                    st.session_state.codebase_messages.append(assistant_message)
+                    
+                    # Update chat history for chain
+                    st.session_state.codebase_chat_history.append((prompt, response))
+                    
+                    # Keep only last 10 exchanges to manage memory
+                    if len(st.session_state.codebase_chat_history) > 10:
+                        st.session_state.codebase_chat_history = st.session_state.codebase_chat_history[-10:]
+                
+                except Exception as e:
+                    error_msg = f"❌ **Error processing question**: {str(e)}"
+                    st.error(error_msg)
+                    st.session_state.codebase_messages.append({"role": "assistant", "content": error_msg})
+    
+    # Sidebar with quick help
+    with st.sidebar:
+        st.subheader("💡 Quick Help")
+        st.markdown("""
+        **Example Questions:**
+        
+        🏗️ **Architecture**
+        - "What's the overall structure of the app?"
+        - "How are the modules organized?"
+        
+        🧪 **Functionality**  
+        - "How does PSMILES generation work?"
+        - "Where is MD simulation implemented?"
+        
+        🔧 **Implementation**
+        - "Show me the main classes"
+        - "How do I add a new UI component?"
+        
+        📊 **Data Flow**
+        - "How does data move between components?"
+        - "What's the integration workflow?"
+        """)
+        
+        if st.button("🗑️ Clear Chat History"):
+            st.session_state.codebase_chat_history = []
+            st.session_state.codebase_messages = [
+                {"role": "assistant", "content": "Hello! I'm your Insulin AI codebase assistant. I can help you understand the framework architecture, locate specific functionality, and navigate the code. What would you like to know?"}
+            ]
+            st.rerun()
+        
+        # Stats
+        if qa_chain:
+            st.subheader("📊 Codebase Stats")
+            project_root = get_project_root()
+            files = scan_codebase_files(project_root)
+            st.metric("Files Indexed", len(files))
+            st.metric("Chat Exchanges", len(st.session_state.codebase_chat_history)) 

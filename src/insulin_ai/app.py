@@ -104,9 +104,7 @@ from app.ui import (
     render_literature_mining_ui,
     render_psmiles_generation,
     render_active_learning,
-    render_material_evaluation_ui,
-    render_simulation_ui,
-    render_comprehensive_analysis
+    render_simulation_ui
 )
 
 from app.utils.session_utils import initialize_session_state, safe_get_session_object
@@ -632,14 +630,8 @@ def main():
     elif page == "Active Learning":
         render_active_learning()
         
-    elif page == "Material Evaluation":
-        render_material_evaluation_ui()
-        
     elif page == "MD Simulation":
         render_simulation_ui()
-        
-    elif page == "Comprehensive Analysis":
-        render_comprehensive_analysis()
 
 # ==================================================
 # RUN APP

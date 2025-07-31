@@ -161,9 +161,12 @@ class EnhancedStateReporter:
             
             # Real-time console output
             if step % (self._reportInterval * 10) == 0:
-                print(f"📊 Step {step:6d}: PE={self._energies[-1] if self._energies else 'N/A':8.1f} kJ/mol, "
-                      f"T={self._temperatures[-1] if self._temperatures else 'N/A':6.1f} K, "
-                      f"V={self._volumes[-1] if self._volumes else 'N/A':6.2f} nm^3")
+                pe_str = f"{self._energies[-1]:8.1f}" if self._energies else "     N/A"
+                temp_str = f"{self._temperatures[-1]:6.1f}" if self._temperatures else "   N/A"
+                vol_str = f"{self._volumes[-1]:6.2f}" if self._volumes else "   N/A"
+                print(f"📊 Step {step:6d}: PE={pe_str} kJ/mol, "
+                      f"T={temp_str} K, "
+                      f"V={vol_str} nm^3")
     
     def get_statistics(self):
         """Get simulation statistics"""

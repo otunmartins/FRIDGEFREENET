@@ -381,19 +381,35 @@ class InsulinDeliveryAnalysisIntegration:
                 
                 if 'binding_energy' in findings:
                     be = findings['binding_energy']
-                    f.write(f"🧮 Binding Energy: {be.get('value_kcal_mol', 'N/A'):.2f} kcal/mol ({be.get('stability', 'unknown')})\n")
+                    binding_energy = be.get('value_kcal_mol')
+                    if binding_energy is not None:
+                        f.write(f"🧮 Binding Energy: {binding_energy:.2f} kcal/mol ({be.get('stability', 'unknown')})\n")
+                    else:
+                        f.write(f"🧮 Binding Energy: N/A ({be.get('stability', 'unknown')})\n")
                 
                 if 'insulin_stability' in findings:
                     ins = findings['insulin_stability']
-                    f.write(f"🧪 Insulin Stability: {ins.get('assessment', 'unknown')} (RMSD: {ins.get('rmsd_mean_A', 'N/A'):.2f} Å)\n")
+                    rmsd_mean = ins.get('rmsd_mean_A')
+                    if rmsd_mean is not None:
+                        f.write(f"🧪 Insulin Stability: {ins.get('assessment', 'unknown')} (RMSD: {rmsd_mean:.2f} Å)\n")
+                    else:
+                        f.write(f"🧪 Insulin Stability: {ins.get('assessment', 'unknown')} (RMSD: N/A)\n")
                 
                 if 'diffusion' in findings:
                     diff = findings['diffusion']
-                    f.write(f"🚶 Diffusion: {diff.get('coefficient_cm2_s', 'N/A'):.2e} cm²/s ({diff.get('assessment', 'unknown')})\n")
+                    diff_coef = diff.get('coefficient_cm2_s')
+                    if diff_coef is not None:
+                        f.write(f"🚶 Diffusion: {diff_coef:.2e} cm²/s ({diff.get('assessment', 'unknown')})\n")
+                    else:
+                        f.write(f"🚶 Diffusion: N/A ({diff.get('assessment', 'unknown')})\n")
                 
                 if 'hydrogel_properties' in findings:
                     hg = findings['hydrogel_properties']
-                    f.write(f"🕸️ Mesh Size: {hg.get('mesh_size_A', 'N/A'):.1f} Å ({hg.get('network_quality', 'unknown')} network)\n")
+                    mesh_size = hg.get('mesh_size_A')
+                    if mesh_size is not None:
+                        f.write(f"🕸️ Mesh Size: {mesh_size:.1f} Å ({hg.get('network_quality', 'unknown')} network)\n")
+                    else:
+                        f.write(f"🕸️ Mesh Size: N/A ({hg.get('network_quality', 'unknown')} network)\n")
                 
                 f.write(f"\n🎯 OVERALL ASSESSMENT: {integrated_report.get('overall_assessment', 'Incomplete analysis')}\n")
             

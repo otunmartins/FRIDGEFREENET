@@ -60,9 +60,10 @@ def run_simple_insulin_simulation(pdb_file: str):
         0.002*picoseconds  # Time step (2 fs)
     )
     
-    # Create simulation
+    # Create simulation with CUDA platform
     print("🎬 Creating simulation...")
-    simulation = Simulation(modeller.topology, system, integrator)
+    platform = Platform.getPlatformByName('CUDA')
+    simulation = Simulation(modeller.topology, system, integrator, platform)
     simulation.context.setPositions(modeller.positions)
     
     # Minimize energy

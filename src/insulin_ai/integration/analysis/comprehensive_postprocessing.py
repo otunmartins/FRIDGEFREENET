@@ -51,6 +51,13 @@ except ImportError:
     BASIC_ANALYZER_AVAILABLE = False
     logging.warning("Basic analyzer not available")
 
+try:
+    from ..rag_literature_mining import RAGLiteratureMiningSystem
+    RAG_LITERATURE_AVAILABLE = True
+except ImportError:
+    RAG_LITERATURE_AVAILABLE = False
+    logging.warning("RAG Literature Mining system not available")
+
 class ComprehensivePostProcessor:
     """
     Comprehensive post-processing system for insulin-AI MD simulations
@@ -92,6 +99,12 @@ class ComprehensivePostProcessor:
         else:
             self.basic_analyzer = None
         
+        if RAG_LITERATURE_AVAILABLE:
+            rag_output = self.output_dir / "literature_analysis"
+            self.rag_system = RAGLiteratureMiningSystem(str(rag_output))
+        else:
+            self.rag_system = None
+        
         # Progress tracking
         self.processing_thread = None
         self.processing_running = False
@@ -102,13 +115,15 @@ class ComprehensivePostProcessor:
         print(f"🧮 MM-GBSA: {'✅ Available' if self.mmgbsa_calculator else '❌ Not Available'}")
         print(f"🧪 Comprehensive Analysis: {'✅ Available' if self.comprehensive_analyzer else '❌ Not Available'}")
         print(f"📊 Basic Analysis: {'✅ Available' if self.basic_analyzer else '❌ Not Available'}")
+        print(f"📚 RAG Literature Mining: {'✅ Available' if self.rag_system else '❌ Not Available'}")
     
     def _check_dependencies(self) -> Dict[str, bool]:
         """Check availability of analysis dependencies"""
         deps = {
             'comprehensive_analyzer': COMPREHENSIVE_ANALYZER_AVAILABLE,
             'mmgbsa_calculator': MMGBSA_AVAILABLE,
-            'basic_analyzer': BASIC_ANALYZER_AVAILABLE
+            'basic_analyzer': BASIC_ANALYZER_AVAILABLE,
+            'rag_literature_mining': RAG_LITERATURE_AVAILABLE
         }
         
         # At least one analyzer must be available
@@ -128,7 +143,9 @@ class ComprehensivePostProcessor:
                 'hydrogel_dynamics': COMPREHENSIVE_ANALYZER_AVAILABLE,
                 'interaction_energies': COMPREHENSIVE_ANALYZER_AVAILABLE,
                 'swelling_response': COMPREHENSIVE_ANALYZER_AVAILABLE,
-                'basic_trajectory_stats': BASIC_ANALYZER_AVAILABLE
+                'basic_trajectory_stats': BASIC_ANALYZER_AVAILABLE,
+                'literature_analysis': RAG_LITERATURE_AVAILABLE,
+                'material_recommendations': RAG_LITERATURE_AVAILABLE
             },
             'recommendation': self._get_capability_recommendation()
         }
@@ -136,13 +153,21 @@ class ComprehensivePostProcessor:
     def _get_capability_recommendation(self) -> str:
         """Get recommendation based on available capabilities"""
         if self.dependencies_available['all_available']:
-            return "🎉 All analysis capabilities available! Full comprehensive post-processing enabled."
-        elif self.dependencies_available['comprehensive_analyzer']:
-            return "🔬 Comprehensive analysis available. Missing MM-GBSA for binding energy calculations."
-        elif self.dependencies_available['mmgbsa_calculator']:
-            return "🧮 MM-GBSA available. Missing comprehensive analyzer for detailed property calculations."
-        elif self.dependencies_available['basic_analyzer']:
-            return "📊 Basic analysis available. Consider installing comprehensive modules for full capabilities."
+            return "🎉 All analysis capabilities available! Full comprehensive post-processing enabled including AI-powered literature insights."
+        
+        available_systems = []
+        if self.dependencies_available['comprehensive_analyzer']:
+            available_systems.append("🔬 Comprehensive analysis")
+        if self.dependencies_available['mmgbsa_calculator']:
+            available_systems.append("🧮 MM-GBSA binding energy")
+        if self.dependencies_available['rag_literature_mining']:
+            available_systems.append("📚 AI literature mining")
+        if self.dependencies_available['basic_analyzer']:
+            available_systems.append("📊 Basic trajectory analysis")
+        
+        if available_systems:
+            systems_text = ", ".join(available_systems)
+            return f"✅ Available: {systems_text}. Consider installing all modules for maximum capability."
         else:
             return "❌ No analysis capabilities available. Please check dependencies."
     
@@ -153,7 +178,8 @@ class ComprehensivePostProcessor:
         # Check multiple simulation directories
         simulation_dirs = [
             simulation_output_dir,  # Default integrated simulations
-            "simple_md_simulations"  # Simple MD simulations
+            "simple_md_simulations",  # Simple MD simulations
+            "dual_gaff_amber_simulations", # Dual GAFF+AMBER simulations
         ]
         
         for dir_path in simulation_dirs:
@@ -203,7 +229,34 @@ class ComprehensivePostProcessor:
     def _analyze_simulation_directory(self, sim_dir: Path) -> Optional[Dict[str, Any]]:
         """Analyze a simulation directory to extract simulation info"""
         
-        # Method 1: Check for integrated MD simulation structure (sim_*/production/frames.pdb)
+        # Method 1: Check for dual GAFF+AMBER simulation structure
+        if "dual_gaff_amber" in str(sim_dir.parent) or sim_dir.name.startswith("enhanced_dual"):
+            trajectory_file = sim_dir / "trajectory.pdb"
+            log_file = sim_dir / "simulation.log"
+
+            if trajectory_file.exists():
+                sim_info = {
+                    'id': sim_dir.name,
+                    'path': str(sim_dir),
+                    'has_trajectory': True,
+                    'has_report': log_file.exists(),
+                    'trajectory_file': str(trajectory_file),
+                    'ready_for_processing': True,
+                    'structure_type': 'dual_gaff_amber'
+                }
+                
+                # Get basic trajectory info
+                traj_info = self._estimate_trajectory_info(trajectory_file)
+                sim_info.update(traj_info)
+
+                if log_file.exists():
+                    log_info = self._parse_simple_log_file(log_file)
+                    sim_info.update(log_info)
+
+                sim_info['success'] = True
+                return sim_info
+
+        # Method 2: Check for integrated MD simulation structure (sim_*/production/frames.pdb)
         if sim_dir.name.startswith('sim_'):
             production_dir = sim_dir / "production"
             frames_file = production_dir / "frames.pdb"
@@ -248,6 +301,11 @@ class ComprehensivePostProcessor:
         trajectory_files = list(sim_dir.glob("*_trajectory.pdb"))
         log_files = list(sim_dir.glob("*_log.txt"))
         
+        # Add check for trajectory.pdb
+        if not trajectory_files:
+            if (sim_dir / "trajectory.pdb").exists():
+                trajectory_files = [sim_dir / "trajectory.pdb"]
+
         if trajectory_files:
             trajectory_file = trajectory_files[0]  # Use first trajectory file found
             log_file = log_files[0] if log_files else None
@@ -473,7 +531,9 @@ class ComprehensivePostProcessor:
                 'hydrogel_dynamics': self.comprehensive_analyzer is not None,
                 'interaction_energies': self.comprehensive_analyzer is not None,
                 'swelling_response': self.comprehensive_analyzer is not None,
-                'basic_trajectory_stats': True  # Basic stats always available
+                'basic_trajectory_stats': True,  # Basic stats always available
+                'literature_analysis': self.rag_system is not None,
+                'material_recommendations': self.rag_system is not None
             }
         
         # Store analysis parameters
@@ -570,6 +630,11 @@ class ComprehensivePostProcessor:
                         comp_results = self.comprehensive_analyzer.analyze_trajectory_file(
                             trajectory_file, simulation_id, comp_options, log_output
                         )
+                    elif simulation_structure_type == 'dual_gaff_amber' and trajectory_file:
+                        log_output(f"🔬 Using dual GAFF+AMBER simulation structure from: {simulation_dir}")
+                        comp_results = self.comprehensive_analyzer.analyze_complete_system(
+                            simulation_dir, simulation_id, comp_options, log_output
+                        )
                     else:
                         log_output(f"🔬 Using integrated simulation structure from: {simulation_dir}")
                         comp_results = self.comprehensive_analyzer.analyze_complete_system(
@@ -580,7 +645,7 @@ class ComprehensivePostProcessor:
                     # Merge comprehensive results - FIXED: Filter out metadata fields
                     if comp_results.get('success'):
                         # Filter out metadata fields that should not be in results section
-                        metadata_fields = {'simulation_id', 'timestamp', 'analysis_options', 'trajectory_info', 'success', 'processing_time'}
+                        metadata_fields = {'simulation_id', 'timestamp', 'analysis_options', 'trajectory_info', 'success', 'processing_time', 'analysis_completed'}
                         
                         # Only add actual analysis results (dictionaries with success field)
                         for key, value in comp_results.items():
@@ -676,7 +741,100 @@ class ComprehensivePostProcessor:
                 comprehensive_results['processing_time']['basic_analysis'] = time.time() - start_time
                 self.current_analysis['steps_completed'].append('basic_trajectory_stats')
             
-            # 3. Generate Comprehensive Report
+            # 3. Literature Analysis (if available and requested)
+            if (analysis_options.get('literature_analysis', False) or 
+                analysis_options.get('material_recommendations', False)) and self.rag_system:
+                
+                step_count += 1
+                log_output(f"\n📚 Step {step_count}/{total_steps}: AI-Powered Literature Analysis")
+                self.current_analysis['current_step'] = f"Literature Analysis ({step_count}/{total_steps})"
+                self.current_analysis['progress'] = (step_count - 1) / total_steps * 100
+                
+                start_time = time.time()
+                try:
+                    # Generate research questions based on simulation results
+                    research_questions = []
+                    
+                    # Add questions based on available simulation results
+                    if 'insulin_stability' in comprehensive_results['results']:
+                        research_questions.append(
+                            "What are the latest developments in materials that enhance insulin stability in hydrogel delivery systems?"
+                        )
+                    
+                    if 'hydrogel_dynamics' in comprehensive_results['results']:
+                        research_questions.append(
+                            "What are the optimal hydrogel mesh properties for sustained insulin release in subcutaneous applications?"
+                        )
+                    
+                    # Default research question
+                    if not research_questions:
+                        research_questions.append(
+                            "What are the most promising biocompatible materials for insulin delivery systems with controlled release properties?"
+                        )
+                    
+                    # Perform literature analysis
+                    literature_results = {}
+                    
+                    for i, question in enumerate(research_questions):
+                        log_output(f"   🔍 Analyzing: {question[:60]}...")
+                        
+                        try:
+                            result = self.rag_system.analyze_literature(question)
+                            literature_results[f'research_query_{i+1}'] = {
+                                'question': question,
+                                'analysis': result,
+                                'success': result.get('success', False)
+                            }
+                        except Exception as e:
+                            literature_results[f'research_query_{i+1}'] = {
+                                'question': question,
+                                'analysis': {'error': str(e)},
+                                'success': False
+                            }
+                    
+                    # Get material recommendations if requested
+                    if analysis_options.get('material_recommendations', False):
+                        log_output(f"   🧬 Generating material recommendations...")
+                        try:
+                            recommendations = self.rag_system.get_material_recommendations(
+                                application="insulin delivery systems"
+                            )
+                            literature_results['material_recommendations'] = {
+                                'recommendations': recommendations,
+                                'success': True
+                            }
+                        except Exception as e:
+                            literature_results['material_recommendations'] = {
+                                'recommendations': [],
+                                'success': False,
+                                'error': str(e)
+                            }
+                    
+                    # Add literature results to comprehensive results
+                    comprehensive_results['results']['literature_analysis'] = literature_results
+                    
+                    # Extract key literature insights for summary
+                    if literature_results:
+                        comprehensive_results['summary_metrics']['literature_queries_performed'] = len([
+                            k for k in literature_results.keys() if k.startswith('research_query')
+                        ])
+                        
+                        successful_queries = len([
+                            r for r in literature_results.values() 
+                            if isinstance(r, dict) and r.get('success', False)
+                        ])
+                        comprehensive_results['summary_metrics']['literature_insights_generated'] = successful_queries
+                    
+                    log_output(f"✅ Literature analysis completed successfully")
+                    
+                except Exception as e:
+                    log_output(f"❌ Literature analysis failed: {str(e)}")
+                    comprehensive_results['results']['literature_analysis'] = {'success': False, 'error': str(e)}
+                
+                comprehensive_results['processing_time']['literature_analysis'] = time.time() - start_time
+                self.current_analysis['steps_completed'].extend(['literature_analysis'])
+            
+            # 4. Generate Comprehensive Report
             log_output(f"\n📊 Generating comprehensive post-processing report...")
             self.current_analysis['current_step'] = 'Generating final report...'
             self.current_analysis['progress'] = 95
@@ -786,6 +944,10 @@ class ComprehensivePostProcessor:
                     f.write(f"📊 TRAJECTORY: {metrics['trajectory_frames']} frames, ")
                     f.write(f"{metrics.get('total_atoms', 0)} atoms, ")
                     f.write(f"{metrics.get('simulation_time_ps', 0):.1f} ps\n")
+                
+                if 'literature_queries_performed' in metrics:
+                    f.write(f"📚 LITERATURE ANALYSIS: {metrics['literature_queries_performed']} research queries performed, ")
+                    f.write(f"{metrics.get('literature_insights_generated', 0)} insights generated\n")
                 
                 f.write(f"\n📁 Detailed results available in: {analysis_output_dir}\n")
             

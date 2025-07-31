@@ -343,7 +343,6 @@ class InsulinComprehensiveAnalyzer:
             
             log_output(f"\n✅ Comprehensive analysis completed for simple trajectory")
             comprehensive_results['success'] = True
-            comprehensive_results['processing_time'] = time.time() - start_time if 'start_time' in locals() else 0
             
             return comprehensive_results
             
@@ -399,9 +398,14 @@ class InsulinComprehensiveAnalyzer:
             # Create analysis output directory
             analysis_dir = self.output_dir / simulation_id
             analysis_dir.mkdir(exist_ok=True)
+            log_output(f"   Created analysis directory: {analysis_dir}")
             
             # Load trajectory once for all analyses (PROVEN APPROACH)
             log_output(f"📽️ Loading trajectory for comprehensive analysis...")
+            log_output(f"   Simulation directory: {simulation_dir}")
+            log_output(f"   Simulation ID: {simulation_id}")
+            log_output(f"   Analysis directory: {analysis_dir}")
+            
             trajectory, topology_data = self._load_trajectory_and_topology(
                 simulation_dir, simulation_id, analysis_dir, log_output
             )
@@ -437,7 +441,11 @@ class InsulinComprehensiveAnalyzer:
                     trajectory, topology_data, analysis_dir, log_output
                 )
                 comprehensive_results['insulin_stability'] = stability_results
-                log_output(f"✅ Insulin RMSD: {stability_results.get('rmsd_mean', 'N/A'):.2f} Å")
+                rmsd_mean = stability_results.get('rmsd', {}).get('mean')
+                if rmsd_mean is not None:
+                    log_output(f"✅ Insulin RMSD: {rmsd_mean:.2f} Å")
+                else:
+                    log_output(f"✅ Insulin RMSD: N/A")
             
             # 3. 🔄 Partitioning & Transfer Free Energy
             if analysis_options.get('partitioning', True):
@@ -446,7 +454,11 @@ class InsulinComprehensiveAnalyzer:
                     trajectory, topology_data, analysis_dir, log_output
                 )
                 comprehensive_results['partitioning'] = partitioning_results
-                log_output(f"✅ Transfer free energy: {partitioning_results.get('transfer_free_energy', 'N/A'):.2f} kcal/mol")
+                transfer_energy = partitioning_results.get('transfer_free_energy')
+                if transfer_energy is not None:
+                    log_output(f"✅ Transfer free energy: {transfer_energy:.2f} kcal/mol")
+                else:
+                    log_output(f"✅ Transfer free energy: N/A")
             
             # 4. 🚶 Diffusion Coefficient Analysis
             if analysis_options.get('diffusion', True):
@@ -455,7 +467,11 @@ class InsulinComprehensiveAnalyzer:
                     trajectory, topology_data, analysis_dir, log_output
                 )
                 comprehensive_results['diffusion'] = diffusion_results
-                log_output(f"✅ Diffusion coefficient: {diffusion_results.get('diffusion_coefficient', 'N/A'):.2e} cm²/s")
+                diffusion_coef = diffusion_results.get('msd_analysis', {}).get('diffusion_coefficient')
+                if diffusion_coef is not None:
+                    log_output(f"✅ Diffusion coefficient: {diffusion_coef:.2e} cm²/s")
+                else:
+                    log_output(f"✅ Diffusion coefficient: N/A")
             
             # 5. 🕸️ Hydrogel Mesh Size & Dynamics
             if analysis_options.get('hydrogel_dynamics', True):
@@ -464,7 +480,11 @@ class InsulinComprehensiveAnalyzer:
                     trajectory, topology_data, analysis_dir, log_output
                 )
                 comprehensive_results['hydrogel_dynamics'] = hydrogel_results
-                log_output(f"✅ Average mesh size: {hydrogel_results.get('average_mesh_size', 'N/A'):.2f} nm")
+                mesh_size = hydrogel_results.get('mesh_size_analysis', {}).get('average_mesh_size')
+                if mesh_size is not None:
+                    log_output(f"✅ Average mesh size: {mesh_size:.2f} Å")
+                else:
+                    log_output(f"✅ Average mesh size: N/A")
             
             # 6. ⚡ Interaction Energy Decomposition
             if analysis_options.get('interaction_energies', True):
@@ -473,7 +493,11 @@ class InsulinComprehensiveAnalyzer:
                     trajectory, topology_data, analysis_dir, log_output
                 )
                 comprehensive_results['interaction_energies'] = interaction_results
-                log_output(f"✅ Total interaction energy: {interaction_results.get('total_interaction', 'N/A'):.2f} kcal/mol")
+                total_interaction = interaction_results.get('total_interaction')
+                if total_interaction is not None:
+                    log_output(f"✅ Total interaction energy: {total_interaction:.2f} kcal/mol")
+                else:
+                    log_output(f"✅ Total interaction energy: N/A")
             
             # 7. 💧 Swelling & Poroelastic Response
             if analysis_options.get('swelling_response', True):
@@ -482,7 +506,11 @@ class InsulinComprehensiveAnalyzer:
                     trajectory, topology_data, analysis_dir, log_output
                 )
                 comprehensive_results['swelling_response'] = swelling_results
-                log_output(f"✅ Swelling ratio: {swelling_results.get('swelling_ratio', 'N/A'):.2f}")
+                swelling_ratio = swelling_results.get('swelling_ratio')
+                if swelling_ratio is not None:
+                    log_output(f"✅ Swelling ratio: {swelling_ratio:.2f}")
+                else:
+                    log_output(f"✅ Swelling ratio: N/A")
             
             # 8. 🎛️ Stimuli-Responsive Behavior (Optional)
             if analysis_options.get('stimuli_response', False):
@@ -575,23 +603,46 @@ class InsulinComprehensiveAnalyzer:
         
         return trajectory, topology_data
     
-    def _load_trajectory_and_topology(self, simulation_dir: str, simulation_id: str,
-                                     analysis_dir: Path, log_output: Callable) -> Tuple[Any, Dict]:
-        """Load trajectory and extract topology data (PROVEN METHOD)"""
+    def _load_trajectory_and_topology(self, sim_dir: str, simulation_id: str, analysis_dir: Path,
+                                      log_output: Callable) -> Tuple[Any, Dict[str, Any]]:
+        """Load trajectory and topology files"""
         
-        sim_path = Path(simulation_dir) / simulation_id
-        production_dir = sim_path / "production"
-        frames_file = production_dir / "frames.pdb"
+        # Debug: Check all parameters are received correctly
+        log_output(f"   _load_trajectory_and_topology called with:")
+        log_output(f"     sim_dir: {sim_dir} (type: {type(sim_dir)})")
+        log_output(f"     simulation_id: {simulation_id} (type: {type(simulation_id)})")
+        log_output(f"     analysis_dir: {analysis_dir} (type: {type(analysis_dir)})")
         
-        if not frames_file.exists():
-            raise FileNotFoundError(f"Frames file not found: {frames_file}")
+        # Ensure analysis_dir is properly handled
+        if analysis_dir is None:
+            raise ValueError("analysis_dir cannot be None")
+        if not isinstance(analysis_dir, Path):
+            analysis_dir = Path(analysis_dir)
+        
+        sim_path = Path(sim_dir)
+        
+        # Try different possible locations for trajectory files
+        possible_frames_files = [
+            sim_path / "trajectory.pdb",  # Dual GAFF+AMBER structure
+            Path(sim_dir) / "trajectory.pdb" # Alternate dual GAFF+AMBER
+        ]
+        
+        frames_file = None
+        for possible_file in possible_frames_files:
+            if possible_file.exists():
+                frames_file = possible_file
+                log_output(f"   Found trajectory file: {frames_file}")
+                break
+        
+        if not frames_file:
+            raise FileNotFoundError(f"Frames file not found in any of the expected locations for {sim_dir}")
         
         # Load trajectory with MDTraj (PROVEN: Much more efficient)
         trajectory = md.load(str(frames_file))
         log_output(f"✅ Loaded {trajectory.n_frames} frames ({trajectory.n_atoms} atoms per frame)")
         
         # Extract topology data using proven approach
-        first_frame_file = str(analysis_dir / f"{simulation_id}_frame0.pdb")
+        first_frame_file = str(analysis_dir / f"frame0.pdb")
         trajectory[0].save_pdb(first_frame_file)
         
         # Load first frame and create topology data
@@ -618,7 +669,8 @@ class InsulinComprehensiveAnalyzer:
             'water_indices': np.array(water_indices),
             'n_insulin_atoms': len(insulin_indices),
             'n_polymer_atoms': len(polymer_indices),
-            'n_water_atoms': len(water_indices)
+            'n_water_atoms': len(water_indices),
+            'total_atoms': trajectory.n_atoms
         }
         
         log_output(f"   Insulin atoms: {len(insulin_indices)}")

@@ -420,9 +420,8 @@ class DualGaffAmberIntegration:
                     current_positions = np.array([v.value_in_unit(unit.nanometer) for v in modeller.positions])
                     
                     # Find a new position using random walk
-                    # Start from the center of mass of the current system
-                    center_of_mass = np.mean(current_positions, axis=0)  # Assuming uniform mass for simplicity
-                    start_pos = center_of_mass
+                    # Start from the insulin positions
+                    start_pos = insulin_positions[0]  # Use first insulin position as starting point
 
                     # Initialize polymer position with random rotation
                     rotation_matrix = np.random.rand(3, 3)
@@ -519,10 +518,16 @@ class DualGaffAmberIntegration:
 
                 log_file = output_dir / "simulation.log"
                 trajectory_file = output_dir / "trajectory.pdb"
+                
+                # Add StateDataReporter to report simulation stats every 100 ps
+                # Timestep is 2 fs, so 100 ps = 50,000 steps
+                report_interval = 50000 
                 simulation.reporters.append(StateDataReporter(
-                    str(log_file), save_interval, step=True, time=True, 
-                    potentialEnergy=True, temperature=True, speed=True
+                    str(log_file), report_interval, step=True, time=True, 
+                    potentialEnergy=True, temperature=True, speed=True,
+                    separator='\t'
                 ))
+                
                 simulation.reporters.append(PDBReporter(str(trajectory_file), save_interval))
                 log_callback(f"📊 Reporters configured (log, trajectory).")
 
@@ -657,4 +662,131 @@ class DualGaffAmberIntegration:
             return False
         except Exception as e:
             print(f"❌ Error stopping simulation: {e}")
-            return False 
+            return False
+    
+    def get_available_simulations(self) -> List[Dict[str, Any]]:
+        """Get list of available completed simulations"""
+        simulations = []
+        
+        try:
+            # Look for simulation directories in the output directory
+            if not self.output_dir.exists():
+                return []
+            
+            for sim_dir in self.output_dir.iterdir():
+                if sim_dir.is_dir():
+                    # Look for trajectory file to confirm it's a completed simulation
+                    trajectory_file = sim_dir / 'trajectory.pdb'
+                    log_file = sim_dir / 'simulation.log'
+                    
+                    if trajectory_file.exists():
+                        # Extract simulation info
+                        sim_info = {
+                            'id': sim_dir.name,
+                            'timestamp': datetime.fromtimestamp(sim_dir.stat().st_mtime).isoformat(),
+                            'input_file': 'dual_gaff_amber_system',
+                            'total_atoms': self._estimate_atoms_from_trajectory(trajectory_file),
+                            'performance': 1.0,  # Default value
+                            'success': True,
+                            'force_field': 'Dual GAFF+AMBER'
+                        }
+                        
+                        # Try to get more info from log file if available
+                        if log_file.exists():
+                            log_info = self._parse_simulation_log(log_file)
+                            sim_info.update(log_info)
+                        
+                        simulations.append(sim_info)
+            
+            # Sort by timestamp (newest first)
+            simulations.sort(key=lambda x: x['timestamp'], reverse=True)
+            
+        except Exception as e:
+            print(f"Error getting available simulations: {e}")
+        
+        return simulations
+    
+    def get_simulation_files(self, simulation_id: str) -> Dict[str, Any]:
+        """Get files for a specific simulation"""
+        try:
+            sim_dir = self.output_dir / simulation_id
+            
+            if not sim_dir.exists():
+                return {'success': False, 'error': f'Simulation directory not found: {sim_dir}'}
+            
+            # Look for simulation files
+            files = {}
+            
+            # Common dual GAFF+AMBER output files
+            file_patterns = {
+                'trajectory.pdb': 'trajectory',
+                'simulation.log': 'log',
+                'final_system.pdb': 'final_structure',
+                'equilibration.pdb': 'equilibration',
+                'production.pdb': 'production'
+            }
+            
+            for filename, file_type in file_patterns.items():
+                file_path = sim_dir / filename
+                if file_path.exists():
+                    files[file_type] = str(file_path)
+            
+            # Also scan for any additional PDB or log files
+            for file_path in sim_dir.glob('*.pdb'):
+                if file_path.name not in file_patterns:
+                    files[f'pdb_{file_path.stem}'] = str(file_path)
+            
+            for file_path in sim_dir.glob('*.log'):
+                if file_path.name not in file_patterns:
+                    files[f'log_{file_path.stem}'] = str(file_path)
+            
+            return {
+                'success': True,
+                'files': files,
+                'simulation_dir': str(sim_dir)
+            }
+            
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+    
+    def _estimate_atoms_from_trajectory(self, trajectory_file: Path) -> int:
+        """Estimate number of atoms from trajectory file"""
+        try:
+            with open(trajectory_file, 'r') as f:
+                lines = f.readlines()
+            
+            atom_count = 0
+            for line in lines:
+                if line.startswith(('ATOM', 'HETATM')):
+                    atom_count += 1
+                elif line.startswith('ENDMDL'):
+                    break  # Only count first frame
+            
+            return atom_count
+        except:
+            return 0
+    
+    def _parse_simulation_log(self, log_file: Path) -> Dict[str, Any]:
+        """Parse simulation log file for additional info"""
+        try:
+            with open(log_file, 'r') as f:
+                content = f.read()
+            
+            info = {}
+            
+            # Try to extract performance info
+            lines = content.split('\n')
+            for line in lines:
+                if 'performance' in line.lower() or 'ns/day' in line.lower():
+                    try:
+                        # Try to extract numerical value
+                        import re
+                        numbers = re.findall(r'\d+\.?\d*', line)
+                        if numbers:
+                            info['performance'] = float(numbers[0])
+                    except:
+                        pass
+            
+            return info
+        except:
+            return {} 

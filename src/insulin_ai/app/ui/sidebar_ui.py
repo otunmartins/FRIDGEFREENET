@@ -141,12 +141,10 @@ def render_navigation():
         "Select Component",
         [
             "Framework Overview", 
+            "Active Learning",
             "Literature Mining (LLM)", 
             "PSMILES Generation", 
-            "Active Learning", 
-            "Material Evaluation", 
-            "MD Simulation", 
-            "Comprehensive Analysis"
+            "MD Simulation"
         ]
     )
     

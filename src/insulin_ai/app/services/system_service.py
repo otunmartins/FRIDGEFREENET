@@ -20,7 +20,8 @@ def initialize_systems() -> Dict[str, Any]:
     """
     try:
         # Import core systems
-        from insulin_ai import InsulinAIChatbot, MaterialsLiteratureMiner, PSMILESGenerator, PSMILESProcessor
+        from insulin_ai import InsulinAIChatbot, PSMILESGenerator, PSMILESProcessor
+        from insulin_ai.integration.rag_literature_mining import RAGLiteratureMiningSystem
         
         # Get OpenAI configuration
         api_key = os.environ.get('OPENAI_API_KEY')
@@ -43,10 +44,8 @@ def initialize_systems() -> Dict[str, Any]:
             memory_dir="chat_memory"
         )
         
-        # Initialize literature mining system with OpenAI
-        literature_miner = MaterialsLiteratureMiner(
-            semantic_scholar_api_key=os.environ.get('SEMANTIC_SCHOLAR_API_KEY'),
-            model_type="openai",
+        # Initialize RAG literature mining system
+        literature_miner = RAGLiteratureMiningSystem(
             openai_model=openai_model,
             temperature=temperature
         )
@@ -246,4 +245,17 @@ def check_system_health() -> Dict[str, Any]:
             'error': str(e),
             'systems_initialized': False,
             'components': {}
-        } 
+        }
+
+
+def check_systems_initialized() -> bool:
+    """
+    Check if systems are properly initialized
+    
+    Returns:
+        bool: True if systems are initialized, False otherwise
+    """
+    try:
+        return st.session_state.get('systems_initialized', False)
+    except:
+        return False 
