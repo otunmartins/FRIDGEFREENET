@@ -707,69 +707,82 @@ Keep technical but accessible for researchers.
     
     def _generate_psmiles_prompt(self, analysis_results: Dict[str, Any]) -> str:
         """
-        Generate a targeted PSMILES prompt for MONOMER generation based on literature analysis.
+        Generate a simple natural language prompt for PSMILES generation based on literature analysis.
         
         Args:
             analysis_results: Results from literature analysis
             
         Returns:
-            Formatted prompt specifically for MONOMER PSMILES generation
+            Simple natural language description for the PSMILES generation system
         """
         
-        # Extract key information from analysis
-        final_answer = analysis_results.get("final_answer", "")
-        papers_found = analysis_results.get("papers_found", 0)
+        # Extract key materials and mechanisms from analysis
+        materials_found = analysis_results.get("materials_found", [])
+        mechanisms = analysis_results.get("stabilization_mechanisms", [])
         research_question = analysis_results.get("research_question", "")
         
-        # Extract synthesis information if available
-        synthesis = analysis_results.get("synthesis", {})
-        key_properties = synthesis.get("key_properties", [])
+        # Build a concise, natural language description
+        prompt_parts = []
         
-        # Create targeted prompt for MONOMER PSMILES generation
-        prompt = f"""Design a MONOMER unit for insulin delivery applications.
-
-LITERATURE CONTEXT: Analysis of {papers_found} research papers investigating "{research_question}" revealed:
-{final_answer}
-
-TASK: Generate a MONOMER PSMILES string [*]monomer[*] with these requirements:
-
-MONOMER DESIGN CRITERIA:
-• Biocompatible functional groups only
-• Suitable for insulin protection and delivery
-• Polymerizable structure (contains reactive sites)
-• Molecular weight: 50-500 Da (typical monomer range)
-• Must have exactly TWO [*] connection points
-
-KEY FUNCTIONAL GROUPS TO CONSIDER:
-• Hydroxyl groups (-OH) for hydrogen bonding with insulin
-• Ether linkages (-O-) for flexibility and biocompatibility  
-• Amide groups (-CONH-) for protein interactions
-• Ester groups (-COO-) for controlled degradation
-• Aromatic rings for π-π interactions with insulin"""
-
-        # Add specific material targets if available
-        if key_properties:
-            prompt += "\n\nLITERATURE-SUGGESTED MONOMER FEATURES:\n"
-            for prop in key_properties[:3]:  # Limit to top 3 properties
-                if isinstance(prop, dict):
-                    name = prop.get("name", "Unknown")
-                    value = prop.get("value", "")
-                    unit = prop.get("unit", "")
-                    prompt += f"• {name}: {value} {unit}\n"
-
-        prompt += """
-
-MONOMER EXAMPLES (for reference):
-• PEG-like monomer: [*]OCCO[*]
-• Acrylate monomer: [*]C=CC(=O)O[*]
-• Amide monomer: [*]CC(=O)NC[*]
-• Aromatic monomer: [*]c1ccccc1[*]
-• Vinyl monomer: [*]C=CC[*]
-
-GENERATE: One specific MONOMER PSMILES string [*]monomer[*] that can polymerize to form a material suitable for insulin delivery based on the literature insights above.
-
-OUTPUT: Only the PSMILES string in format [*]monomer[*] - no explanations or additional text."""
-
+        # Start with base description
+        prompt_parts.append("biocompatible polymer for insulin delivery")
+        
+        # Add key functional groups from materials found
+        functional_groups = []
+        for material in materials_found[:3]:  # Use top 3 materials
+            material_lower = material.lower()
+            if "trehalose" in material_lower or "hydroxyl" in material_lower:
+                functional_groups.append("hydroxyl groups")
+            if "peg" in material_lower or "ether" in material_lower:
+                functional_groups.append("ether linkages")
+            if "amide" in material_lower or "protein" in material_lower:
+                functional_groups.append("amide groups")
+            if "chitosan" in material_lower or "amino" in material_lower:
+                functional_groups.append("amino groups")
+            if "plga" in material_lower or "ester" in material_lower:
+                functional_groups.append("ester groups")
+            if "aromatic" in material_lower or "benzyl" in material_lower:
+                functional_groups.append("aromatic rings")
+        
+        # Add mechanisms-based features
+        for mechanism in mechanisms[:2]:  # Use top 2 mechanisms
+            mechanism_lower = mechanism.lower()
+            if "hydrogen" in mechanism_lower and "hydroxyl groups" not in functional_groups:
+                functional_groups.append("hydroxyl groups")
+            if "hydrophobic" in mechanism_lower and "aromatic rings" not in functional_groups:
+                functional_groups.append("hydrophobic segments")
+            if "thermal" in mechanism_lower and "ester groups" not in functional_groups:
+                functional_groups.append("thermal-stable bonds")
+        
+        # Combine functional groups naturally
+        if functional_groups:
+            unique_groups = list(dict.fromkeys(functional_groups))[:3]  # Remove duplicates, max 3
+            if len(unique_groups) == 1:
+                prompt_parts.append(f"with {unique_groups[0]}")
+            elif len(unique_groups) == 2:
+                prompt_parts.append(f"with {unique_groups[0]} and {unique_groups[1]}")
+            else:
+                prompt_parts.append(f"with {', '.join(unique_groups[:-1])}, and {unique_groups[-1]}")
+        
+        # Add application-specific properties
+        if "thermal" in research_question.lower() or any("thermal" in m.lower() for m in mechanisms):
+            prompt_parts.append("for thermal stability")
+        elif "transdermal" in research_question.lower() or "patch" in research_question.lower():
+            prompt_parts.append("for transdermal delivery")
+        elif "controlled" in research_question.lower() or any("controlled" in m.lower() for m in mechanisms):
+            prompt_parts.append("with controlled release properties")
+        
+        # Combine into natural language description
+        prompt = " ".join(prompt_parts)
+        
+        # Ensure it's not too long (PSMILES system expects concise descriptions)
+        if len(prompt) > 150:
+            # Fallback to shorter version
+            if functional_groups:
+                prompt = f"biocompatible polymer for insulin delivery with {functional_groups[0]}"
+            else:
+                prompt = "biocompatible polymer for insulin delivery with thermal stability"
+        
         return prompt
     
     def get_material_recommendations(self, 

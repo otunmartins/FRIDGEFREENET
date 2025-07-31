@@ -886,102 +886,60 @@ def render_material_generation_tab():
     """Render the simplified material generation tab with focus on visualization"""
     st.markdown("### AI-Powered Polymer Structure Generation")
     
-    generation_mode = st.radio(
-        "Generation Mode:",
-        ["Automated Pipeline"],
-        horizontal=True
-    )
+    # **Enhanced generation options with simulation automation**
+    (material_request, num_candidates, auto_functionalize, 
+     auto_create_polymer_boxes, auto_create_insulin_systems,
+     polymer_length, num_polymer_molecules, density, 
+     tolerance_distance, timeout_minutes,
+     num_insulin_molecules, box_size_nm) = render_advanced_generation_options()
     
-    # **Simplified pipeline health check**
-    render_comprehensive_pipeline_health_check()
-    
-    if generation_mode == "Automated Pipeline":
-        # **Enhanced generation options with simulation automation**
-        (material_request, num_candidates, auto_functionalize, 
-         auto_create_polymer_boxes, auto_create_insulin_systems,
-         polymer_length, num_polymer_molecules, density, 
-         tolerance_distance, timeout_minutes,
-         num_insulin_molecules, box_size_nm) = render_advanced_generation_options()
+    # **Simplified hybrid approach info**
+    with st.expander("🔬 Generation Approach", expanded=False):
+        st.markdown("""
+        **Our system uses a 3-tier approach with automatic repair:**
         
-        # **Simplified hybrid approach info**
-        with st.expander("🔬 Generation Approach", expanded=False):
-            st.markdown("""
-            **Our system uses a 3-tier approach with automatic repair:**
-            
-            1. **🎯 Direct PSMILES Generation** - Creative structures from LLM
-            2. **✅ Chemical Validation + Repair** - Multi-layer SMILES repair  
-            3. **🧪 SMILES→PSMILES Conversion** - Generate SMILES, then `[*]SMILES[*]`
-            
-            **Auto-Repair Features:**
-            - 🔧 Basic syntax fixes
-            - 🧬 SELFIES format autocorrection  
-            - 🛡️ Pattern-based molecular recognition
-            """)
+        1. **🎯 Direct PSMILES Generation** - Creative structures from LLM
+        2. **✅ Chemical Validation + Repair** - Multi-layer SMILES repair  
+        3. **🧪 SMILES→PSMILES Conversion** - Generate SMILES, then `[*]SMILES[*]`
         
-        # **Generation button and workflow**
-        if st.button("🚀 Run Automated Pipeline", type="primary", disabled=not material_request):
-            if not st.session_state.systems_initialized:
-                st.error("⚠️ AI systems not initialized. Please restart the application.")
-                return
+        **Auto-Repair Features:**
+        - 🔧 Basic syntax fixes
+        - 🧬 SELFIES format autocorrection  
+        - 🛡️ Pattern-based molecular recognition
+        """)
+    
+    # **Generation button and workflow**
+    if st.button("🚀 Generate Materials", type="primary", disabled=not material_request):
+        if not st.session_state.systems_initialized:
+            st.error("⚠️ AI systems not initialized. Please restart the application.")
+            return
+        
+        if not material_request.strip():
+            st.warning("⚠️ Please provide a material description")
+            return
+        
+        # **Start generation workflow with progress tracking**
+        simulation_params = {
+            'auto_create_polymer_boxes': auto_create_polymer_boxes,
+            'auto_create_insulin_systems': auto_create_insulin_systems,
+            'polymer_length': polymer_length,
+            'num_polymer_molecules': num_polymer_molecules,
+            'density': density,
+            'tolerance_distance': tolerance_distance,
+            'timeout_minutes': timeout_minutes,
+            'num_insulin_molecules': num_insulin_molecules,
+            'box_size_nm': box_size_nm
+        }
+        
+        with st.spinner("Running automated PSMILES generation and simulation setup..."):
+            results = execute_automated_pipeline_with_progress(
+                material_request, num_candidates, auto_functionalize, simulation_params)
             
-            if not material_request.strip():
-                st.warning("⚠️ Please provide a material description")
-                return
-            
-            # **Start generation workflow with progress tracking**
-            simulation_params = {
-                'auto_create_polymer_boxes': auto_create_polymer_boxes,
-                'auto_create_insulin_systems': auto_create_insulin_systems,
-                'polymer_length': polymer_length,
-                'num_polymer_molecules': num_polymer_molecules,
-                'density': density,
-                'tolerance_distance': tolerance_distance,
-                'timeout_minutes': timeout_minutes,
-                'num_insulin_molecules': num_insulin_molecules,
-                'box_size_nm': box_size_nm
-            }
-            
-            with st.spinner("Running automated PSMILES generation and simulation setup..."):
-                results = execute_automated_pipeline_with_progress(
-                    material_request, num_candidates, auto_functionalize, simulation_params)
-                
-                if results:
-                    render_enhanced_generation_results(results)
-                else:
-                    st.error("❌ Generation failed. Please try again.")
+            if results:
+                render_enhanced_generation_results(results)
+            else:
+                st.error("❌ Generation failed. Please try again.")
 
-
-def render_insulin_embedding_tab():
-    """Render insulin embedding tab (placeholder for now)"""
-    st.markdown("### 🧬 Insulin Embedding in Polymer Matrix")
-    st.info("🚧 This feature will be enhanced to match the comprehensive embedding workflow from the original app.")
-    
-    # Basic placeholder implementation
-    st.markdown("#### Embedding Options")
-    
-    polymer_source = st.radio(
-        "Polymer Source:",
-        ["Use Generated Structure", "Upload PDB File"],
-        help="Choose the polymer structure for insulin embedding"
-    )
-    
-    if polymer_source == "Upload PDB File":
-        uploaded_file = st.file_uploader("Upload Polymer PDB File", type=['pdb'])
-        if uploaded_file:
-            st.success("✅ PDB file uploaded successfully!")
-    
-    # Embedding parameters
-    col1, col2 = st.columns(2)
-    with col1:
-        num_insulin_molecules = st.number_input("Number of insulin molecules:", min_value=1, max_value=20, value=5)
-        buffer_distance = st.number_input("Buffer distance (Å):", min_value=1.0, max_value=10.0, value=3.0, step=0.5)
-    
-    with col2:
-        max_atoms = st.number_input("Maximum atoms:", min_value=1000, max_value=100000, value=50000, step=1000)
-        manual_box_size = st.number_input("Box size (nm):", min_value=1.0, max_value=20.0, value=10.0, step=0.5)
-    
-    if st.button("🧬 Embed Insulin in Polymer", type="primary"):
-        st.info("🚧 Embedding functionality will be implemented to match the original app's comprehensive workflow.")
 
 
 # **NEW: Add SMILES enhancement for existing candidates**
@@ -1026,14 +984,8 @@ def render_psmiles_generation():
     # Enhance existing candidates with SMILES data
     enhance_existing_candidates_with_smiles()
 
-    # **ENHANCED**: Main tabs with enhanced functionality
-    tab1, tab2 = st.tabs(["Material Generation", "Insulin Embedding"])
-    
-    with tab1:
-        render_material_generation_tab()
-    
-    with tab2:
-        render_insulin_embedding_tab()
+    # **ENHANCED**: Material Generation
+    render_material_generation_tab()
     
     # **ENHANCED**: Instant corrections section (if available)
     if AUTOCORRECTOR_AVAILABLE and st.session_state.psmiles_candidates:

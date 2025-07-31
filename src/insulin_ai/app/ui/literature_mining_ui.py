@@ -80,11 +80,25 @@ def render_query_generation_interface():
          "Protein Aggregation Prevention", "Glass Transition Optimization"]
     )
     
+    # Initialize the text area key for suggested queries
+    if 'research_query_text' not in st.session_state:
+        st.session_state.research_query_text = ""
+    
+    # Check if an example query was clicked
+    if st.session_state.get('example_query'):
+        st.session_state.research_query_text = st.session_state.example_query
+        st.session_state.example_query = None
+    
     user_query = st.text_area(
         "Research Query",
+        value=st.session_state.research_query_text,
         placeholder="e.g., polymer matrices for insulin thermal stabilization at ambient temperature",
-        height=100
+        height=100,
+        key="research_query_input"
     )
+    
+    # Update the session state with current text area value
+    st.session_state.research_query_text = user_query
     
     # Advanced search parameters
     with st.expander("Search Parameters"):
@@ -99,9 +113,14 @@ def render_query_generation_interface():
     # Mining execution
     if st.button("🔍 Mine Literature", type="primary"):
         if user_query:
+            # Clear previous results when starting new mining
+            st.session_state.current_mining_result = None
             execute_literature_mining(user_query, query_type, search_strategy)
         else:
             st.warning("Please enter a research query.")
+    
+    # Display persistent results section
+    render_persistent_results()
 
 
 def execute_literature_mining(user_query: str, query_type: str, search_strategy: str):
@@ -124,21 +143,24 @@ def execute_literature_mining(user_query: str, query_type: str, search_strategy:
             if 'literature_iterations' not in st.session_state:
                 st.session_state.literature_iterations = []
             
-            st.session_state.literature_iterations.append({
+            iteration_data = {
                 'query': user_query,
                 'result': mining_result,
                 'timestamp': datetime.now().isoformat(),
-                'iteration': len(st.session_state.literature_iterations) + 1
-            })
+                'iteration': len(st.session_state.literature_iterations) + 1,
+                'query_type': query_type,
+                'search_strategy': search_strategy
+            }
             
-            # Display results
-            display_mining_results(mining_result)
+            st.session_state.literature_iterations.append(iteration_data)
+            
+            # Store current result for persistent display
+            st.session_state.current_mining_result = iteration_data
             
             # Add materials to library
             process_mining_candidates(mining_result)
             
-            # Render action buttons
-            render_mining_action_buttons(mining_result)
+            st.success("✅ Literature mining completed! Results are now persistent and can be viewed below.")
             
         except Exception as e:
             st.error(f"Literature mining failed: {str(e)}")
@@ -244,20 +266,65 @@ def render_mining_action_buttons(mining_result: Dict[str, Any]):
             st.success("Feedback updated!")
 
 
+def render_persistent_results():
+    """Render persistent literature mining results"""
+    
+    if st.session_state.get('current_mining_result'):
+        # Header with clear option
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.markdown("### 📚 Current Literature Mining Results")
+        with col2:
+            if st.button("🗑️ Clear Results", help="Clear current results to start fresh"):
+                st.session_state.current_mining_result = None
+                st.rerun()
+        
+        current_result = st.session_state.current_mining_result
+        if current_result:  # Check again after potential clearing
+            mining_result = current_result['result']
+            
+            # Display the results persistently
+            display_mining_results(mining_result)
+            
+            # Render action buttons
+            render_mining_action_buttons(mining_result)
+            
+            # Add metadata about the query
+            with st.expander("📋 Query Details"):
+                st.write(f"**Query:** {current_result['query']}")
+                st.write(f"**Focus:** {current_result.get('query_type', 'N/A')}")
+                st.write(f"**Strategy:** {current_result.get('search_strategy', 'N/A')}")
+                st.write(f"**Timestamp:** {current_result['timestamp']}")
+                st.write(f"**Iteration:** {current_result['iteration']}")
+    else:
+        st.info("🔍 Run literature mining to see persistent results here.")
+
+
 def render_iteration_history():
-    """Render the literature iteration history sidebar"""
+    """Render the literature iteration history sidebar with clickable results"""
     
     st.markdown("### Literature Iteration History")
     
     if st.session_state.get('literature_iterations'):
-        for iteration in st.session_state.literature_iterations[-3:]:
-            st.markdown(f"""
-            <div class="iteration-card">
-                <strong>Iteration {iteration['iteration']}</strong><br>
-                <small>Query: {iteration['query'][:50]}...</small><br>
-                <small>Found: {len(iteration['result']['materials_found'])} materials</small>
-            </div>
-            """, unsafe_allow_html=True)
+        st.info("💡 Click on any iteration to view those results")
+        
+        for i, iteration in enumerate(st.session_state.literature_iterations[-5:]):  # Show last 5
+            col1, col2 = st.columns([3, 1])
+            
+            with col1:
+                st.markdown(f"""
+                <div class="iteration-card">
+                    <strong>Iteration {iteration['iteration']}</strong><br>
+                    <small>Query: {iteration['query'][:50]}...</small><br>
+                    <small>Found: {len(iteration['result']['materials_found'])} materials</small><br>
+                    <small>Time: {iteration['timestamp'][:16]}</small>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            with col2:
+                if st.button("📖 View", key=f"view_iteration_{iteration['iteration']}"):
+                    st.session_state.current_mining_result = iteration
+                    st.rerun()
     else:
         st.info("No iterations yet. Start mining literature!")
 

@@ -306,18 +306,14 @@ pip install openmm-setup pdbfixer openmmforcefields mdtraj
     
     if dependencies_available:
         # Tabs for different simulation workflows (Enhanced MD functionality now integrated into MD Simulation tab)
-        tab1, tab2, tab3, tab4, tab5 = st.tabs(["MD Simulation", "Simulation Automation", "Results Analysis", "Post-Processing", "File Management"])
+        tab1, tab2, tab3 = st.tabs(["MD Simulation", "Visualization", "Post-Processing"])
         
         with tab1:
             render_md_simulation_tab()
         with tab2:
-            render_simulation_automation_tab()
-        with tab3:
             render_results_analysis_tab()
-        with tab4:
+        with tab3:
             render_postprocessing_tab()
-        with tab5:
-            render_file_management_tab()
     else:
         render_dependency_errors(dependency_status)
 

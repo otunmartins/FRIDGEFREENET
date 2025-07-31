@@ -311,7 +311,7 @@ def render_framework_overview():
             st.rerun()
         
         # Stats
-        if qa_chain:
+        if 'qa_chain' in locals():
             st.subheader("📊 Codebase Stats")
             project_root = get_project_root()
             files = scan_codebase_files(project_root)

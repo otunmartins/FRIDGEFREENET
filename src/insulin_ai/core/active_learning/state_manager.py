@@ -35,12 +35,34 @@ class IterationStatus(Enum):
 @dataclass
 class LiteratureResults:
     """Results from literature mining stage"""
-    query: str
     papers_found: int
     relevant_papers: int
-    key_insights: List[str]
-    material_suggestions: List[str]
-    execution_time: float
+    extracted_properties: Dict[str, List[float]]
+    synthesis_routes: List[str]
+    query_used: str
+    material_candidates: Optional[List[str]] = None
+    extraction_strategy: Optional[str] = None
+    papers_analyzed: Optional[List[Dict[str, Any]]] = None
+    execution_time: Optional[float] = None
+    
+    # Legacy fields for backward compatibility
+    query: Optional[str] = None
+    key_insights: Optional[List[str]] = None
+    material_suggestions: Optional[List[str]] = None
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        return {
+            "papers_found": self.papers_found,
+            "relevant_papers": self.relevant_papers,
+            "extracted_properties": self.extracted_properties,
+            "synthesis_routes": self.synthesis_routes,
+            "query_used": self.query_used,
+            "material_candidates": self.material_candidates or [],
+            "extraction_strategy": self.extraction_strategy,
+            "papers_analyzed": self.papers_analyzed or [],
+            "execution_time": self.execution_time
+        }
 
 
 @dataclass
@@ -52,6 +74,10 @@ class GeneratedMolecules:
     diversity_score: float
     validity_score: float
     execution_time: float
+    # Additional Phase 2 fields
+    molecules: Optional[List[Dict[str, Any]]] = None
+    generation_parameters: Optional[Dict[str, Any]] = None
+    success_rate: Optional[float] = None
 
 
 @dataclass
@@ -67,36 +93,61 @@ class SimulationResults:
     execution_time: float
     # Raw MD properties for property scoring
     md_properties: Optional[MDSimulationProperties] = None
+    # Additional Phase 2 fields
+    simulation_files: Optional[List[str]] = None
+    energy_data: Optional[Dict[str, List[float]]] = None
+    trajectory_length: Optional[float] = None
+    force_field_used: Optional[str] = None
+    convergence_achieved: Optional[bool] = None
 
 
 @dataclass 
 class ComputedProperties:
     """Computed material properties from post-processing"""
     # Raw MD simulation properties
-    md_properties: MDSimulationProperties
+    md_properties: Optional[MDSimulationProperties]
     
     # Target property scores (0-1 scale)
-    target_scores: TargetPropertyScores
+    target_scores: Optional[TargetPropertyScores]
     
-    # Individual property details
-    property_details: Dict[str, Any]
+    # Specific property categories
+    mechanical_properties: Dict[str, float]
+    thermal_properties: Dict[str, float]
+    transport_properties: Dict[str, float]
+    stability_metrics: Dict[str, float]
+    performance_score: float
     
-    # Computation metadata
-    computation_method: str
-    execution_time: float
-    confidence_score: float
+    # Additional Phase 2 fields
+    analysis_summary: Optional[str] = None
+    recommendations: Optional[List[str]] = None
+    confidence_level: Optional[float] = None
+    processing_method: Optional[str] = None
+    execution_time: Optional[float] = None
+    
+    # Legacy fields for backward compatibility
+    property_details: Optional[Dict[str, Any]] = None
+    computation_method: Optional[str] = None
+    confidence_score: Optional[float] = None
 
 
 @dataclass
 class RAGAnalysis:
     """Results from RAG analysis and feedback generation"""
     property_analysis: str
+    similar_materials: List[Dict[str, Any]]
     improvement_suggestions: List[str]
     next_iteration_prompt: str
     confidence_score: float
-    online_search_results: List[str]
-    reasoning_chain: List[str]
-    execution_time: float
+    # Additional Phase 2 fields
+    benchmark_comparison: Optional[str] = None
+    research_insights: Optional[List[Dict[str, Any]]] = None
+    iteration_strategy: Optional[str] = None
+    expected_improvements: Optional[Dict[str, float]] = None
+    competitive_analysis: Optional[Dict[str, Any]] = None
+    # Legacy fields for backward compatibility
+    online_search_results: Optional[List[str]] = None
+    reasoning_chain: Optional[List[str]] = None
+    execution_time: Optional[float] = None
 
 
 @dataclass
