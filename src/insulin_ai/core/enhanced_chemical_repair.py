@@ -44,17 +44,17 @@ except ImportError:
     logger.warning("SELFIES not available - install with 'pip install selfies'")
 
 try:
-    from utils.natural_language_smiles import ChemicalValidator, clean_malformed_smiles, autocorrect_selfies
+    from insulin_ai.utils.natural_language_smiles import ChemicalValidator, clean_malformed_smiles, autocorrect_selfies
     NL_SMILES_AVAILABLE = True
 except ImportError:
     # Try adding parent directory to path (for when running from subdirectories)
     try:
         import sys
         from pathlib import Path
-        project_root = Path(__file__).parent.parent
+        project_root = Path(__file__).parent.parent.parent  # Go up to src/ directory
         if str(project_root) not in sys.path:
             sys.path.insert(0, str(project_root))
-        from utils.natural_language_smiles import ChemicalValidator, clean_malformed_smiles, autocorrect_selfies
+        from insulin_ai.utils.natural_language_smiles import ChemicalValidator, clean_malformed_smiles, autocorrect_selfies
         NL_SMILES_AVAILABLE = True
     except ImportError:
         NL_SMILES_AVAILABLE = False

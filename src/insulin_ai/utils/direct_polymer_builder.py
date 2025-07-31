@@ -22,7 +22,7 @@ from pathlib import Path
 from datetime import datetime
 
 # Import our PSMILES converter
-from utils.psmiles_to_smiles_converter import PSMILESConverter
+from .psmiles_to_smiles_converter import PSMILESConverter
 
 # Streamlit for session state storage
 try:

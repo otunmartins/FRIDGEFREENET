@@ -183,121 +183,16 @@ def render_advanced_generation_options():
             st.info("🔄 Systems will reinitialize with the working SMILES→PSMILES pipeline on next refresh.")
             st.rerun()
     
-    # **NEW: Simulation automation options**
-            st.markdown("#### Simulation Automation")
-    
-    sim_col1, sim_col2 = st.columns(2)
-    with sim_col1:
-        auto_create_polymer_boxes = st.checkbox(
-            "Auto-create polymer simulation boxes (PSP)", 
-            value=True,
-            help="Automatically create simulation boxes filled with polymers using PSP package"
-        )
-        auto_create_insulin_systems = st.checkbox(
-            "Auto-create insulin-flanked systems", 
-            value=True,
-            help="Automatically create systems where insulin is flanked by polymer boxes with PDBFixer cleaning"
-        )
-    
-    with sim_col2:
-        if auto_create_polymer_boxes or auto_create_insulin_systems:
-            st.info("🔬 Will automatically create simulation boxes for all candidates")
-            
-            # Initialize defaults before expander
-            default_length, default_molecules, default_density, default_tolerance, default_timeout = 5, 8, 0.3, 3.5, 15
-            
-            # Enhanced simulation parameters with density-based calculation
-            with st.expander("Enhanced Simulation Parameters", expanded=True):
-                st.info("💡 **Enhanced Features**: Density-based box calculation with molecular weight estimation")
-                
-                # Import and initialize the density calculator UI
-                try:
-                    from app.ui.components.density_box_calculator import DensityBoxCalculatorUI
-                    
-                    if 'density_calculator_ui' not in st.session_state:
-                        st.session_state.density_calculator_ui = DensityBoxCalculatorUI()
-                    
-                    # Use the enhanced interface
-                    enhanced_params = st.session_state.density_calculator_ui.render_enhanced_simulation_parameters(
-                        auto_create_polymer_boxes=auto_create_polymer_boxes,
-                        auto_create_insulin_systems=auto_create_insulin_systems,
-                        default_polymer_length=default_length,
-                        default_num_molecules=default_molecules,
-                        default_density=default_density,
-                        default_tolerance=default_tolerance,
-                        default_timeout=default_timeout,
-                        default_insulin_molecules=1,
-                        default_box_size=3.0
-                    )
-                    
-                    # Extract parameters
-                    polymer_length = enhanced_params['polymer_length']
-                    num_polymer_molecules = enhanced_params['num_polymer_molecules']
-                    density = enhanced_params['density']
-                    tolerance_distance = enhanced_params['tolerance_distance']
-                    timeout_minutes = enhanced_params['timeout_minutes']
-                    num_insulin_molecules = enhanced_params['num_insulin_molecules']
-                    box_size_nm = enhanced_params['box_size_nm']
-                    
-                    # Store enhanced calculation info for later use
-                    if enhanced_params.get('calculation_method') == 'density_based':
-                        st.session_state.enhanced_simulation_info = {
-                            'method': 'density_based',
-                            'molecular_weight': enhanced_params.get('molecular_weight'),
-                            'system_composition': enhanced_params.get('system_composition'),
-                            'box_calculation_result': enhanced_params.get('box_calculation_result')
-                        }
-                        st.success("✅ Using density-based box calculation with molecular weight estimation")
-                    else:
-                        st.session_state.enhanced_simulation_info = {'method': enhanced_params.get('calculation_method', 'manual')}
-                        if enhanced_params.get('calculation_method') == 'manual_override':
-                            st.info("ℹ️ Using manual parameter override")
-                
-                except ImportError as e:
-                    # Fallback to original interface if new component is not available
-                    st.warning("⚠️ Enhanced density calculator not available. Using original interface.")
-                    st.error(f"Import error: {str(e)}")
-                    
-                    # Original parameter interface as fallback
-                    # Preset configurations
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        if st.button("🚀 Fast Build", help="Quick setup for testing"):
-                            default_length, default_molecules, default_density, default_tolerance, default_timeout = 3, 5, 0.2, 4.0, 10
-                    with col2:
-                        if st.button("⚖️ Balanced", help="Good balance of speed and realism"):
-                            default_length, default_molecules, default_density, default_tolerance, default_timeout = 5, 8, 0.3, 3.5, 20
-                    with col3:
-                        if st.button("🎯 Realistic", help="More accurate but slower"):
-                            default_length, default_molecules, default_density, default_tolerance, default_timeout = 15, 25, 0.8, 2.5, 45
-                
-                    # Original parameter sliders
-                    polymer_length = st.slider("Polymer chain length:", 3, 50, default_length, 
-                                              help="Shorter chains pack faster")
-                    num_polymer_molecules = st.slider("Number of polymer molecules:", 5, 100, default_molecules,
-                                                     help="Fewer molecules pack faster") 
-                    density = st.slider("Packing density (g/cm³):", 0.2, 1.5, default_density, step=0.1,
-                                       help="Lower density packs faster")
-                    tolerance_distance = st.slider("Tolerance distance (Å):", 2.0, 5.0, default_tolerance, step=0.1,
-                                                  help="Higher tolerance packs faster")
-                    timeout_minutes = st.slider("Timeout (minutes):", 1, 60, default_timeout,
-                                               help="Maximum time to spend building each box (up to 1 hour)")
-                    
-                    if auto_create_insulin_systems:
-                        num_insulin_molecules = st.slider("Number of insulin molecules:", 1, 10, 1)
-                        box_size_nm = st.slider("Box size (nm):", 1.0, 10.0, 3.0, step=0.5)
-                    else:
-                        num_insulin_molecules = 1
-                        box_size_nm = 3.0
-        else:
-            st.info("🚫 Simulation automation disabled")
-            polymer_length = 5
-            num_polymer_molecules = 8
-            density = 0.3
-            tolerance_distance = 3.5
-            timeout_minutes = 15
-            num_insulin_molecules = 1
-            box_size_nm = 3.0
+    # Set default values for the simulation parameters that are no longer part of this UI
+    auto_create_polymer_boxes = False
+    auto_create_insulin_systems = False
+    polymer_length = 5
+    num_polymer_molecules = 8
+    density = 0.3
+    tolerance_distance = 3.5
+    timeout_minutes = 15
+    num_insulin_molecules = 1
+    box_size_nm = 3.0
     
     return (material_request, num_candidates, auto_functionalize, 
             auto_create_polymer_boxes, auto_create_insulin_systems,

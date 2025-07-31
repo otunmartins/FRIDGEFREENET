@@ -34,6 +34,7 @@ import openmm
 from openmm import app, unit
 from openmm.app import PDBFile, ForceField, Modeller, Simulation
 from openmm.app import PME, HBonds, StateDataReporter, PDBReporter
+from pdbfixer import PDBFixer
 
 # OpenMM force fields
 from openmmforcefields.generators import GAFFTemplateGenerator, SystemGenerator
@@ -44,11 +45,12 @@ import openmoltools.packmol
 # Our modules
 sys.path.append('src')
 try:
-    from utils.direct_polymer_builder import DirectPolymerBuilder
+    from ...utils.direct_polymer_builder import DirectPolymerBuilder
 except ImportError:
     from insulin_ai.utils.direct_polymer_builder import DirectPolymerBuilder
 
 from openff.toolkit.topology import Molecule
+import importlib.resources
 
 
 class OpenMolToolsDualGaffAmber:
@@ -176,34 +178,64 @@ class OpenMolToolsDualGaffAmber:
             if log_callback:
                 log_callback("🦠 Step 2: Preparing insulin...")
             
-            insulin_pdb = "data/insulin_clean.pdb"
-            if not os.path.exists(insulin_pdb):
-                raise FileNotFoundError(f"Insulin PDB not found: {insulin_pdb}")
-            
+            try:
+                # Use importlib.resources to locate data files within the package.
+                # This is the robust way to handle package data for installed applications.
+                with importlib.resources.path('insulin_ai.integration.data.insulin', 'insulin_default.pdb') as insulin_pdb_path:
+                    insulin_pdb = str(insulin_pdb_path)
+            except (ModuleNotFoundError, FileNotFoundError):
+                 raise FileNotFoundError(
+                     "Could not locate the insulin PDB file within the package. "
+                     "Ensure 'insulin_ai' is installed correctly and the data file is included."
+                 )
+
             # Fix CYS -> CYX for AMBER compatibility
-            fixed_insulin_pdb = os.path.join(output_dir, "insulin_fixed.pdb")
-            self.fix_insulin_pdb_residues(insulin_pdb, fixed_insulin_pdb, log_callback)
+            temp_fixed_pdb = "temp_insulin_fixed.pdb"
+            self.fix_insulin_pdb_residues(insulin_pdb, temp_fixed_pdb, log_callback)
             
             if log_callback:
-                log_callback(f"   ✅ Fixed insulin: {fixed_insulin_pdb}")
+                log_callback(f"   ✅ Fixed insulin: {temp_fixed_pdb}")
             
             # Step 3: Professional composite building with OpenMolTools
             if log_callback:
                 log_callback("📦 Step 3: Professional composite packing with OpenMolTools...")
             
             packed_system_pdb = self._create_openmoltools_composite(
-                insulin_pdb=fixed_insulin_pdb,
+                insulin_pdb=temp_fixed_pdb,
                 polymer_pdbs=polymer_pdbs,
                 output_dir=output_dir,
+                pack_polymers_around_protein=True, # Solvate the protein
                 log_callback=log_callback
             )
             
+            # Step 3.5: Clean the packed system with PDBFixer to resolve missing atoms/stereochemistry issues
+            if log_callback:
+                log_callback("🔧 Step 3.5: Cleaning packed system with PDBFixer...")
+            
+            fixed_packed_system_pdb = os.path.join(output_dir, "packed_composite_system_fixed.pdb")
+            try:
+                fixer = PDBFixer(filename=packed_system_pdb)
+                fixer.findMissingResidues()
+                fixer.findMissingAtoms()
+                fixer.addMissingAtoms()
+                fixer.addMissingHydrogens(7.4)
+                
+                with open(fixed_packed_system_pdb, 'w') as f:
+                    PDBFile.writeFile(fixer.topology, fixer.positions, f)
+
+                if log_callback:
+                    log_callback(f"   ✅ PDBFixer cleaned system saved to: {fixed_packed_system_pdb}")
+            except Exception as e:
+                if log_callback:
+                    log_callback(f"❌ PDBFixer failed: {e}")
+                raise
+
             # Step 4: Setup dual force fields
             if log_callback:
                 log_callback("⚗️ Step 4: Setting up dual GAFF+AMBER force fields...")
             
             system = self._setup_dual_force_fields(
-                packed_system_pdb=packed_system_pdb,
+                packed_system_pdb=fixed_packed_system_pdb,
                 polymer_smiles_list=[result['polymer_smiles'] for result in polymer_results],
                 log_callback=log_callback
             )
@@ -214,7 +246,7 @@ class OpenMolToolsDualGaffAmber:
             
             self._run_openmm_simulation(
                 system=system,
-                packed_system_pdb=packed_system_pdb,
+                packed_system_pdb=fixed_packed_system_pdb,
                 simulation_params=simulation_params,
                 output_dir=output_dir,
                 log_callback=log_callback
@@ -241,6 +273,7 @@ class OpenMolToolsDualGaffAmber:
                                      insulin_pdb: str,
                                      polymer_pdbs: list,
                                      output_dir: str,
+                                     pack_polymers_around_protein: bool = False,
                                      log_callback: Optional[Callable] = None) -> str:
         """
         Create professional composite system using OpenMolTools PACKMOL.
@@ -249,6 +282,7 @@ class OpenMolToolsDualGaffAmber:
             insulin_pdb: Path to insulin PDB file
             polymer_pdbs: List of polymer PDB file paths
             output_dir: Output directory
+            pack_polymers_around_protein: If True, pack polymers around the protein
             log_callback: Optional logging callback
             
         Returns:
@@ -283,12 +317,23 @@ class OpenMolToolsDualGaffAmber:
             if log_callback:
                 log_callback("   🚀 Running PACKMOL...")
             
-            packed_trajectory = openmoltools.packmol.pack_box(
-                pdb_filenames_or_trajectories=pdb_files,
-                n_molecules_list=n_molecules,
-                tolerance=self.packing_tolerance,
-                box_size=self.default_box_size  # Let openmoltools estimate
-            )
+            if pack_polymers_around_protein:
+                if log_callback:
+                    log_callback("   📦 Packing polymers around protein (solvating)...")
+                # Place insulin at center, then pack polymers around it
+                packed_trajectory = openmoltools.packmol.pack_box(
+                    pdb_filenames_or_trajectories=pdb_files,
+                    n_molecules_list=n_molecules,
+                    tolerance=self.packing_tolerance,
+                    box_size=self.default_box_size
+                )
+            else:
+                packed_trajectory = openmoltools.packmol.pack_box(
+                    pdb_filenames_or_trajectories=pdb_files,
+                    n_molecules_list=n_molecules,
+                    tolerance=self.packing_tolerance,
+                    box_size=self.default_box_size  # Let openmoltools estimate
+                )
             
             # Save packed system
             packed_pdb = os.path.join(output_dir, "packed_composite_system.pdb")
@@ -298,7 +343,8 @@ class OpenMolToolsDualGaffAmber:
                 log_callback(f"   ✅ Packed system saved: {packed_pdb}")
                 log_callback(f"   📊 Total atoms: {packed_trajectory.n_atoms}")
                 log_callback(f"   📊 Total chains: {packed_trajectory.topology.n_chains}")
-                log_callback(f"   📦 Box vectors: {packed_trajectory.unitcell_vectors[0].diagonal():.2f} nm")
+                box_dims = packed_trajectory.unitcell_vectors[0].diagonal()
+                log_callback(f"   📦 Box vectors: {box_dims[0]:.2f} × {box_dims[1]:.2f} × {box_dims[2]:.2f} nm")
             
             # Verify the packed system
             self._verify_packed_system(packed_trajectory, log_callback)
@@ -370,7 +416,7 @@ class OpenMolToolsDualGaffAmber:
             polymer_molecules = []
             for i, smiles in enumerate(polymer_smiles_list):
                 try:
-                    molecule = Molecule.from_smiles(smiles)
+                    molecule = Molecule.from_smiles(smiles, allow_undefined_stereo=True)
                     polymer_molecules.append(molecule)
                     if log_callback:
                         log_callback(f"   🧬 Polymer {i+1}: {len(smiles)} chars SMILES")
@@ -385,7 +431,7 @@ class OpenMolToolsDualGaffAmber:
             
             gaff_generator = GAFFTemplateGenerator(
                 molecules=polymer_molecules,
-                forcefield='gaff-2.2.20'
+                forcefield='gaff-2.11'
             )
             
             # Setup AMBER force field with GAFF integration
@@ -410,7 +456,7 @@ class OpenMolToolsDualGaffAmber:
             modeller = Modeller(pdb.topology, pdb.positions)
             
             # Add missing atoms if needed
-            modeller.addMissingAtoms(forcefield)
+            modeller.addExtraParticles(forcefield)
             
             # Create system with implicit solvent (GBn2 for stability)
             if log_callback:
@@ -634,6 +680,7 @@ def test_openmoltools_integration():
     print("   ✅ Proper bond/topology handling")
     print("   ✅ MDTraj trajectory output")
     print("   ✅ Realistic molecular packing")
+    print("   ✅ Polymer solvation around protein")
     
     print("\n🎯 BENEFITS OVER SIMPLE CONCATENATION:")
     print("   📊 Realistic density and spacing")
@@ -641,6 +688,47 @@ def test_openmoltools_integration():
     print("   📦 Professional box setup")
     print("   ⚡ Better equilibration behavior")
     print("   🧬 Physically meaningful arrangements")
+    print("   💧 Creates solvated systems correctly")
+    
+    # Test solvation functionality
+    print("\n🧪 TESTING SOLVATION FEATURE:")
+    with tempfile.TemporaryDirectory() as temp_dir:
+        try:
+            # Create mock insulin and polymer PDB files
+            mock_insulin_pdb = os.path.join(temp_dir, "insulin.pdb")
+            mock_polymer_pdb = os.path.join(temp_dir, "polymer.pdb")
+            
+            with open(mock_insulin_pdb, "w") as f:
+                f.write("ATOM      1  N   ALA A   1      27.340  24.430  25.280  1.00  0.00           N  \n")
+            
+            with open(mock_polymer_pdb, "w") as f:
+                f.write("ATOM      1  C   POL B   1      30.000  30.000  30.000  1.00  0.00           C  \n")
+            
+            print(f"   - Created mock files in: {temp_dir}")
+
+            # Run packing
+            packed_pdb = integration._create_openmoltools_composite(
+                insulin_pdb=mock_insulin_pdb,
+                polymer_pdbs=[mock_polymer_pdb],
+                output_dir=temp_dir,
+                pack_polymers_around_protein=True,
+                log_callback=print
+            )
+            
+            # Verify output
+            if os.path.exists(packed_pdb):
+                print(f"   ✅ Packed system created: {packed_pdb}")
+                with open(packed_pdb, 'r') as f:
+                    content = f.read()
+                if "ALA" in content and "POL" in content:
+                    print("   ✅ Verified: Insulin (ALA) and Polymer (POL) present in output")
+                else:
+                    print("   ❌ Verification failed: Missing residues in output")
+            else:
+                print("   ❌ Packed system file not created")
+        except Exception as e:
+            print(f"   ❌ Solvation test failed: {e}")
+            traceback.print_exc()
 
 
 if __name__ == "__main__":

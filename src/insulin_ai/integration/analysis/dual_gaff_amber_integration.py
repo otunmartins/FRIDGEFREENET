@@ -18,6 +18,7 @@ import threading
 import uuid
 import tempfile
 import shutil
+import importlib.resources
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple, Any, Callable
@@ -33,10 +34,11 @@ try:
         StateDataReporter, PDBReporter,
         NoCutoff, HBonds,
     )
-    from openmm import LangevinIntegrator, Platform, unit, LangevinMiddleIntegrator
+    from openmm import BrownianIntegrator, Platform, unit, LangevinMiddleIntegrator
     from openmm.app import Topology
     from openmmforcefields.generators import GAFFTemplateGenerator
     from openff.toolkit.topology import Molecule
+    from pdbfixer import PDBFixer
     OPENMM_AVAILABLE = True
 except ImportError as e:
     OPENMM_AVAILABLE = False
@@ -73,6 +75,10 @@ class DualGaffAmberIntegration:
         
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(exist_ok=True)
+        
+        # Also ensure the automated simulations directory exists, as it's scanned by the UI
+        self.automated_simulations_dir = Path("automated_simulations")
+        self.automated_simulations_dir.mkdir(exist_ok=True)
         
         # Initialize components
         self.polymer_builder = DirectPolymerBuilder() if POLYMER_BUILDER_AVAILABLE else None
@@ -320,174 +326,221 @@ class DualGaffAmberIntegration:
             
             output_dir = self.output_dir / simulation_id
             output_dir.mkdir(exist_ok=True)
-            
-            log_callback("🚀 DUAL GAFF+AMBER MD SIMULATION (REFACTORED V2)")
-            log_callback("=" * 80)
-            log_callback(f"📅 Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-            log_callback(f"📁 Output directory: {output_dir}")
 
-            # --- Step 1: Create Polymer from PSMILES ---
-            log_callback("\n🔗 STEP 1: Creating Polymer Structure from PSMILES")
-            log_callback("-" * 40)
-            psmiles = pdb_file # Assume pdb_file is the PSMILES string
-            log_callback(f"🧬 Using PSMILES: {psmiles}")
+            with tempfile.TemporaryDirectory() as temp_dir:
+                log_callback("🚀 DUAL GAFF+AMBER MD SIMULATION (REFACTORED V2)")
+                log_callback("=" * 80)
+                log_callback(f"📅 Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+                log_callback(f"📁 Output directory: {output_dir}")
 
-            polymer_chain_length = kwargs.get('polymer_chain_length', 15)
-            
-            # This method returns a dictionary containing the polymer_smiles
-            polymer_result = self.polymer_builder.build_polymer_chain(
-                psmiles_str=psmiles,
-                chain_length=polymer_chain_length,
-                output_dir=str(output_dir / "polymer_build"),
-            )
-            
-            if not polymer_result or not polymer_result.get('success'):
-                raise RuntimeError(f"Failed to build polymer: {polymer_result.get('error', 'Unknown error')}")
+                # --- Step 1: Create Polymer from PSMILES ---
+                log_callback("\n🔗 STEP 1: Creating Polymer Structure from PSMILES")
+                log_callback("-" * 40)
+                psmiles = pdb_file # Assume pdb_file is the PSMILES string
+                log_callback(f"🧬 Using PSMILES: {psmiles}")
 
-            polymer_smiles = polymer_result['polymer_smiles']
-            log_callback(f"✅ Polymer SMILES generated: {polymer_smiles}")
-
-            # --- Step 2: Generate Polymer Topology and Coordinates from SMILES ---
-            log_callback("\n🔗 STEP 2: Generating Polymer 3D Structure from SMILES")
-            log_callback("-" * 40)
-            polymer_molecule = Molecule.from_smiles(polymer_smiles, allow_undefined_stereo=True)
-            log_callback("✅ OpenFF Molecule created from SMILES.")
-            
-            log_callback("🧮 Pre-computing Gasteiger partial charges for the polymer...")
-            polymer_molecule.assign_partial_charges("gasteiger")
-            log_callback("✅ Gasteiger charges computed and assigned.")
-            
-            log_callback("🔄 Generating 3D conformer for the polymer...")
-            polymer_molecule.generate_conformers(n_conformers=1)
-            polymer_topology = polymer_molecule.to_topology().to_openmm()
-            
-            # CORRECTED: Convert OpenFF Quantity to OpenMM Quantity.
-            # The .magnitude attribute gives the raw numpy array, which we then correctly
-            # associate with OpenMM's angstrom unit.
-            polymer_positions = polymer_molecule.conformers[0].magnitude * unit.angstrom
-            log_callback("✅ Polymer OpenMM Topology and Positions created from SMILES.")
-
-            # --- Step 3: Prepare Insulin Structure ---
-            log_callback("\n🧬 STEP 3: Preparing Insulin Structure")
-            log_callback("-" * 40)
-            insulin_pdb_path = self.find_insulin_file()
-            log_callback(f"📁 Using insulin PDB: {insulin_pdb_path}")
-            
-            pdb = PDBFile(insulin_pdb_path)
-            insulin_modeller = Modeller(pdb.topology, pdb.positions)
-            insulin_modeller.deleteWater()
-            insulin_modeller.addHydrogens()
-            
-            cleaned_insulin_pdb_path = output_dir / "cleaned_insulin.pdb"
-            with open(cleaned_insulin_pdb_path, 'w') as f:
-                PDBFile.writeFile(insulin_modeller.topology, insulin_modeller.positions, f)
-            log_callback(f"✅ Cleaned insulin saved: {cleaned_insulin_pdb_path}")
-
-            # --- Step 4: Creating Composite System ---
-            log_callback("\n🔗 STEP 4: Creating Composite System")
-            log_callback("----------------------------------------")
-            
-            num_polymer_chains = kwargs.get('num_polymer_chains', 1)
-            log_callback(f"🧬 Adding {num_polymer_chains} polymer chain(s) to the modeller.")
-
-            modeller = Modeller(insulin_modeller.topology, insulin_modeller.positions)
-            
-            # Get the size of the insulin molecule to create a reasonable packing box
-            insulin_positions = np.array([v.value_in_unit(unit.nanometer) for v in insulin_modeller.positions])
-            box_size = np.max(insulin_positions, axis=0) - np.min(insulin_positions, axis=0)
-            
-            for i in range(num_polymer_chains):
-                # Create a copy of the polymer positions to modify
-                new_polymer_positions = np.copy(polymer_positions.value_in_unit(unit.nanometer))
+                polymer_chain_length = kwargs.get('polymer_chain_length', 15)
                 
-                # 1. Randomly rotate the polymer
-                rotation_matrix = np.random.rand(3, 3)
-                q, r = np.linalg.qr(rotation_matrix)
-                rotated_positions = np.dot(new_polymer_positions, q)
+                # This method returns a dictionary containing the polymer_smiles
+                polymer_result = self.polymer_builder.build_polymer_chain(
+                    psmiles_str=psmiles,
+                    chain_length=polymer_chain_length,
+                    output_dir=str(output_dir / "polymer_build"),
+                )
                 
-                # 2. Randomly translate it within a box around the insulin
-                translation_vector = np.random.rand(3) * box_size + np.min(insulin_positions, axis=0)
-                translated_positions = rotated_positions + translation_vector
+                if not polymer_result or not polymer_result.get('success'):
+                    raise RuntimeError(f"Failed to build polymer: {polymer_result.get('error', 'Unknown error')}")
+
+                polymer_smiles = polymer_result['polymer_smiles']
+                log_callback(f"✅ Polymer SMILES generated: {polymer_smiles}")
+
+                # --- Step 2: Generate Polymer Topology and Coordinates from SMILES ---
+                log_callback("\n🔗 STEP 2: Generating Polymer 3D Structure from SMILES")
+                log_callback("-" * 40)
+                polymer_molecule = Molecule.from_smiles(polymer_smiles, allow_undefined_stereo=True)
+                log_callback("✅ OpenFF Molecule created from SMILES.")
                 
-                # Add the transformed polymer to the modeller
-                modeller.add(polymer_topology, translated_positions * unit.nanometer)
-                log_callback(f"  ✅ Added polymer chain {i+1} of {num_polymer_chains} with random packing.")
+                log_callback("🧮 Pre-computing Gasteiger partial charges for the polymer...")
+                polymer_molecule.assign_partial_charges("gasteiger")
+                log_callback("✅ Gasteiger charges computed and assigned.")
+                
+                log_callback("🔄 Generating 3D conformer for the polymer...")
+                polymer_molecule.generate_conformers(n_conformers=1)
+                polymer_topology = polymer_molecule.to_topology().to_openmm()
+                
+                # CORRECTED: Convert OpenFF Quantity to OpenMM Quantity.
+                # The .magnitude attribute gives the raw numpy array, which we then correctly
+                # associate with OpenMM's angstrom unit.
+                polymer_positions = polymer_molecule.conformers[0].magnitude * unit.angstrom
+                log_callback("✅ Polymer OpenMM Topology and Positions created from SMILES.")
 
-            composite_pdb_path = output_dir / "composite_system.pdb"
-            with open(composite_pdb_path, 'w') as f:
-                PDBFile.writeFile(modeller.topology, modeller.positions, f)
-            log_callback(f"✅ Composite system PDB saved: {composite_pdb_path}")
-            log_callback(f"   Total atoms: {modeller.topology.getNumAtoms()}")
+                # --- Step 3: Prepare Insulin Structure ---
+                log_callback("\n🧬 STEP 3: Preparing Insulin Structure")
+                log_callback("-" * 40)
+                
+                try:
+                    # Use importlib.resources for robust path handling in an installed package
+                    with importlib.resources.path('insulin_ai.integration.data.insulin', 'output.pdb') as insulin_pdb_path:
+                        insulin_pdb_path_str = str(insulin_pdb_path)
+                        
+                    # The PDB file needs to be in the CWD for Modeller, so we copy it to a temporary file
+                    temp_pdb_path = os.path.join(temp_dir, "insulin_for_modeller.pdb")
+                    shutil.copy(insulin_pdb_path_str, temp_pdb_path)
+                    
+                    log_callback(f"🧬 Loading and cleaning insulin from: {insulin_pdb_path_str}")
+                    fixer = PDBFixer(filename=temp_pdb_path)
+                    fixer.findMissingResidues()
+                    fixer.findMissingAtoms()
+                    fixer.addMissingAtoms()
+                    fixer.addMissingHydrogens(7.4)
+                    log_callback("   ✅ Insulin structure cleaned with PDBFixer.")
 
-            # --- Step 5: Set up Dual Force Field and System ---
-            log_callback("\n⚙️ STEP 5: Creating Dual Force Field System")
-            log_callback("-" * 40)
+                except (ModuleNotFoundError, FileNotFoundError):
+                    log_callback("❌ CRITICAL: Could not locate the insulin PDB file within the package.")
+                    raise
 
-            log_callback("🔗 Creating GAFF template generator for the polymer...")
-            # Use the SAME polymer_molecule object to ensure a perfect match.
-            gaff_template_generator = GAFFTemplateGenerator(molecules=[polymer_molecule])
-            log_callback("✅ GAFF template generator created.")
+                modeller = Modeller(fixer.topology, fixer.positions)
+                log_callback(f"   ✅ Loaded {modeller.topology.getNumResidues()} residues.")
 
-            log_callback("🧬 Applying AMBER ff14SB for protein and implicit solvent...")
-            forcefield = ForceField('amber/protein.ff14SB.xml', 'implicit/gbn2.xml')
-            forcefield.registerTemplateGenerator(gaff_template_generator.generator)
-            log_callback("✅ AMBER force field loaded and GAFF generator registered.")
-            
-            log_callback("🔧 Creating OpenMM System...")
-            system = forcefield.createSystem(
-                modeller.topology,
-                nonbondedMethod=NoCutoff,
-                constraints=HBonds
-            )
-            log_callback(f"✅ System created successfully with {system.getNumParticles()} particles.")
+                # --- Step 4: Creating Composite System ---
+                log_callback("\n🔗 STEP 4: Creating Composite System")
+                log_callback("----------------------------------------")
+                
+                num_polymer_chains = kwargs.get('num_polymer_chains', 1)
+                log_callback(f"🧬 Adding {num_polymer_chains} polymer chain(s) to the modeller.")
 
-            # --- Step 6: Run MD Simulation ---
-            log_callback(f"\n🏃 STEP 6: Running MD Simulation")
-            log_callback("-" * 40)
-            
-            integrator = LangevinMiddleIntegrator(
-                temperature * unit.kelvin,
-                1.0 / unit.picosecond,
-                2.0 * unit.femtoseconds
-            )
+                # Get the size of the insulin molecule to create a reasonable packing box
+                insulin_positions = np.array([v.value_in_unit(unit.nanometer) for v in modeller.positions])
+                
+                for i in range(num_polymer_chains):
+                    # Create a copy of the polymer positions to modify
+                    new_polymer_positions = np.copy(polymer_positions.value_in_unit(unit.nanometer))
+                    
+                    # Get current system positions to find a clash-free spot
+                    current_positions = np.array([v.value_in_unit(unit.nanometer) for v in modeller.positions])
+                    
+                    # Find a new position using random walk
+                    # Start from the center of mass of the current system
+                    center_of_mass = np.mean(current_positions, axis=0)  # Assuming uniform mass for simplicity
+                    start_pos = center_of_mass
 
-            platform_names = [Platform.getPlatform(i).getName() for i in range(Platform.getNumPlatforms())]
-            platform_name = 'CUDA' if 'CUDA' in platform_names else ('OpenCL' if 'OpenCL' in platform_names else 'CPU')
-            platform = Platform.getPlatformByName(platform_name)
-            log_callback(f"🖥️ Using platform: {platform.getName()}")
+                    # Initialize polymer position with random rotation
+                    rotation_matrix = np.random.rand(3, 3)
+                    q, r = np.linalg.qr(rotation_matrix)
+                    rotated_positions = np.dot(new_polymer_positions, q)
+                    
+                    # Perform random walk until we find a clash-free position
+                    current_pos = start_pos
+                    step_size = 0.3  # 3 Å steps
+                    max_steps = 5000  # Maximum steps to prevent infinite loops
+                    
+                    for step in range(max_steps):
+                        # Random direction for the step
+                        direction = np.random.randn(3)
+                        direction = direction / np.linalg.norm(direction)  # Normalize
+                        
+                        # Take step
+                        current_pos = current_pos + direction * step_size
+                        
+                        # Apply translation to rotated polymer
+                        translated_positions = rotated_positions + current_pos
+                        
+                        # Check for clashes with existing atoms
+                        min_dist = np.min(np.linalg.norm(current_positions[:, np.newaxis, :] - translated_positions[np.newaxis, :, :], axis=2))
+                        
+                        if min_dist > 0.3:  # If minimum distance is > 3 Å, we accept the position
+                            log_callback(f"   ✅ Found clash-free position for polymer {i+1} after {step+1} random walk steps.")
+                            break
+                    else:
+                        log_callback(f"   ⚠️ Could not find a clash-free position for polymer {i+1} after {max_steps} random walk steps.")
 
-            simulation = Simulation(modeller.topology, system, integrator, platform)
-            simulation.context.setPositions(modeller.positions)
+                    # Add the transformed polymer to the modeller
+                    modeller.add(polymer_topology, translated_positions * unit.nanometer)
+                    log_callback(f"  ✅ Added polymer chain {i+1} of {num_polymer_chains} with random walk positioning.")
 
-            log_callback("⚡ Minimizing energy...")
-            simulation.minimizeEnergy()
-            initial_energy = simulation.context.getState(getEnergy=True).getPotentialEnergy()
-            log_callback(f"   Initial energy: {initial_energy.value_in_unit(unit.kilojoules_per_mole):.2f} kJ/mol")
+                composite_pdb_path = output_dir / "composite_system.pdb"
+                with open(composite_pdb_path, 'w') as f:
+                    PDBFile.writeFile(modeller.topology, modeller.positions, f)
+                log_callback(f"✅ Composite system PDB saved: {composite_pdb_path}")
+                log_callback(f"   Total atoms: {modeller.topology.getNumAtoms()}")
 
-            log_file = output_dir / "simulation.log"
-            trajectory_file = output_dir / "trajectory.pdb"
-            simulation.reporters.append(StateDataReporter(
-                str(log_file), save_interval, step=True, time=True, 
-                potentialEnergy=True, temperature=True, speed=True
-            ))
-            simulation.reporters.append(PDBReporter(str(trajectory_file), save_interval))
-            log_callback(f"📊 Reporters configured (log, trajectory).")
+                # --- Step 5: Set up Dual Force Field and System ---
+                log_callback("\n⚙️ STEP 5: Creating Dual Force Field System")
+                log_callback("-" * 40)
 
-            log_callback(f"🔄 Running equilibration ({equilibration_steps} steps)...")
-            simulation.step(equilibration_steps)
-            
-            log_callback(f"🏃 Running production ({production_steps} steps)...")
-            simulation.step(production_steps)
-            
-            final_energy = simulation.context.getState(getEnergy=True).getPotentialEnergy()
-            log_callback(f"✅ Simulation finished!")
-            log_callback(f"   Final energy: {final_energy.value_in_unit(unit.kilojoules_per_mole):.2f} kJ/mol")
+                log_callback("🔗 Creating GAFF template generator for the polymer...")
+                # Use the SAME polymer_molecule object to ensure a perfect match.
+                gaff_template_generator = GAFFTemplateGenerator(molecules=[polymer_molecule])
+                log_callback("✅ GAFF template generator created.")
 
-            # --- Step 6: Finalize ---
-            self.current_simulation['status'] = 'completed'
-            #... (add more result details if needed)
-            
-            log_callback(f"\n🎉 SIMULATION COMPLETED SUCCESSFULLY!")
+                log_callback("🧬 Applying AMBER ff14SB for protein and implicit solvent...")
+                forcefield = ForceField('amber/protein.ff14SB.xml', 'implicit/gbn2.xml')
+                forcefield.registerTemplateGenerator(gaff_template_generator.generator)
+                log_callback("✅ AMBER force field loaded and GAFF generator registered.")
+                
+                log_callback("🔧 Creating OpenMM System...")
+                system = forcefield.createSystem(
+                    modeller.topology,
+                    nonbondedMethod=NoCutoff,
+                    constraints=HBonds
+                )
+                log_callback(f"✅ System created successfully with {system.getNumParticles()} particles.")
+
+                # --- Step 6: Run MD Simulation ---
+                log_callback(f"\n🏃 STEP 6: Running MD Simulation")
+                log_callback("-" * 40)
+                
+                integrator = LangevinMiddleIntegrator(
+                    temperature * unit.kelvin,
+                    1.0 / unit.picosecond,
+                    2.0 * unit.femtoseconds
+                )
+
+                # Explicitly select OpenCL platform if available, otherwise fall back to CPU
+                platform_names = [Platform.getPlatform(i).getName() for i in range(Platform.getNumPlatforms())]
+                if 'OpenCL' in platform_names:
+                    platform_name = 'OpenCL'
+                else:
+                    log_callback("⚠️ OpenCL platform not found, falling back to CPU.")
+                    platform_name = 'CPU'
+                
+                platform = Platform.getPlatformByName(platform_name)
+                log_callback(f"🖥️ Using platform: {platform.getName()}")
+
+                simulation = Simulation(modeller.topology, system, integrator, platform)
+                simulation.context.setPositions(modeller.positions)
+
+                log_callback("💫 Minimizing energy...")
+                simulation.minimizeEnergy()
+                log_callback("✅ Energy minimization complete.")
+                # End of Selection
+                initial_energy = simulation.context.getState(getEnergy=True).getPotentialEnergy()
+                log_callback(f"   Initial energy: {initial_energy.value_in_unit(unit.kilojoules_per_mole):.2f} kJ/mol")
+
+                log_file = output_dir / "simulation.log"
+                trajectory_file = output_dir / "trajectory.pdb"
+                simulation.reporters.append(StateDataReporter(
+                    str(log_file), save_interval, step=True, time=True, 
+                    potentialEnergy=True, temperature=True, speed=True
+                ))
+                simulation.reporters.append(PDBReporter(str(trajectory_file), save_interval))
+                log_callback(f"📊 Reporters configured (log, trajectory).")
+
+                log_callback(f"🔄 Running equilibration ({equilibration_steps} steps)...")
+                simulation.step(equilibration_steps)
+                
+                log_callback(f"🏃 Running production ({production_steps} steps)...")
+                simulation.step(production_steps)
+                
+                final_energy = simulation.context.getState(getEnergy=True).getPotentialEnergy()
+                log_callback(f"✅ Simulation finished!")
+                log_callback(f"   Final energy: {final_energy.value_in_unit(unit.kilojoules_per_mole):.2f} kJ/mol")
+
+                # --- Step 6: Finalize ---
+                self.current_simulation['status'] = 'completed'
+                #... (add more result details if needed)
+                
+                log_callback(f"\n🎉 SIMULATION COMPLETED SUCCESSFULLY!")
 
         except Exception as e:
             error_msg = f"❌ Dual GAFF+AMBER simulation failed: {str(e)}"

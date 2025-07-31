@@ -1005,6 +1005,10 @@ class SimulationAutomationPipeline:
                 log(f"   💥 Candidate {candidate_id} failed")
         
         # Final summary
+        if not results['total_candidates']:
+            log("⚠️ No candidates were processed!")
+            return results
+
         success_rate = (results['success_count'] / results['total_candidates']) * 100
         log(f"\n🏁 Pipeline completed!")
         log(f"   ✅ Successful: {results['success_count']}/{results['total_candidates']} ({success_rate:.1f}%)")
@@ -1036,6 +1040,17 @@ def run_automated_simulation_pipeline(candidates: List[Dict[str, Any]],
             output_callback(msg)
         else:
             print(msg)
+
+    if not candidates:
+        log("⚠️ No candidates received to process. Aborting pipeline.")
+        return {
+            'success': False,
+            'error': 'No candidates provided to process.',
+            'total_candidates': 0,
+            'success_count': 0,
+            'failed_count': 0,
+            'errors': [{'error': 'No candidates provided.'}]
+        }
     
     try:
         log("🚀 Using enhanced SimulationAutomationPipeline for COMPLETE workflow")

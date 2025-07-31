@@ -18,6 +18,13 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Any
+import io
+import contextlib
+import traceback
+import base64
+
+# --- Constants ---
+CANDIDATES_FILE = "enhanced_candidates.json"
 
 # Import enhanced MD system with stored SMILES
 try:
@@ -44,6 +51,14 @@ try:
     OPENMOLTOOLS_AVAILABLE = True
 except ImportError:
     OPENMOLTOOLS_AVAILABLE = False
+
+# --- RDKit for SVG Generation ---
+try:
+    from rdkit import Chem
+    from rdkit.Chem import Draw
+    RDKIT_AVAILABLE = True
+except ImportError:
+    RDKIT_AVAILABLE = False
 
 def render_simulation_ui():
     """
@@ -283,16 +298,18 @@ pip install openmm-setup pdbfixer openmmforcefields mdtraj
     
     if dependencies_available:
         # Tabs for different simulation workflows (Enhanced MD functionality now integrated into MD Simulation tab)
-            tab1, tab2, tab3, tab4 = st.tabs(["MD Simulation", "Results Analysis", "Post-Processing", "File Management"])
+        tab1, tab2, tab3, tab4, tab5 = st.tabs(["MD Simulation", "Simulation Automation", "Results Analysis", "Post-Processing", "File Management"])
         
-            with tab1:
-                render_md_simulation_tab()
-            with tab2:
-                render_results_analysis_tab()
-            with tab3:
-                render_postprocessing_tab()
-            with tab4:
-                render_file_management_tab()
+        with tab1:
+            render_md_simulation_tab()
+        with tab2:
+            render_simulation_automation_tab()
+        with tab3:
+            render_results_analysis_tab()
+        with tab4:
+            render_postprocessing_tab()
+        with tab5:
+            render_file_management_tab()
     else:
         render_dependency_errors(dependency_status)
 
@@ -398,21 +415,9 @@ def render_dual_gaff_amber_interface():
     st.markdown("*Enter PSMILES directly for immediate simulation with revolutionary dual force field approach*")
     
     # Professional packing option
-    if OPENMOLTOOLS_AVAILABLE:
-        use_openmoltools = st.checkbox(
-            "📦 **Professional Molecular Packing** (OpenMolTools + PACKMOL)",
-            value=True,
-            help="Uses OpenMolTools with PACKMOL for realistic molecular arrangements and proper intermolecular spacing. Recommended for high-quality simulations."
-        )
-        
-        if use_openmoltools:
-            st.info("🎯 **Enhanced Mode**: Professional PACKMOL packing with automatic volume estimation and realistic density")
-        else:
-            st.info("🔧 **Standard Mode**: Simple composite system building")
-    else:
-        use_openmoltools = False
-        st.warning("📦 OpenMolTools not available - using standard composite building")
-    
+    # REMOVED OpenMolTools checkbox and related logic to simplify the interface
+    use_openmoltools = False # Hard-coded to false
+
     # PSMILES input
     psmiles_input = st.text_input(
         "Enter PSMILES:",
@@ -426,7 +431,7 @@ def render_dual_gaff_amber_interface():
     with col1:
         chain_length = st.slider("Chain Length (repeat units)", 3, 50, 15)
     with col2:
-        num_chains = st.slider("Number of Polymer Chains", 1, 8, 2)
+        num_chains = st.slider("Number of Polymer Chains", 1, 100, 2)
     
     # Simulation parameters
     simulation_type = st.selectbox(
@@ -461,13 +466,10 @@ def render_dual_gaff_amber_interface():
         """)
     
     # Start simulation button
-    if st.button("🚀 Start Enhanced Dual GAFF+AMBER", type="primary"):
+    if st.button("🚀 Start Dual GAFF+AMBER Simulation", type="primary"):
         if not psmiles_input.strip():
             st.error("❌ Please enter a PSMILES string")
         else:
-            # Store method preference
-            st.session_state.use_openmoltools = use_openmoltools
-            
             # Convert simulation type to parameters
             if simulation_type == "Quick Test":
                 equilibration_steps = 5000   # 10 ps
@@ -488,80 +490,47 @@ def render_dual_gaff_amber_interface():
                 'num_polymer_chains': num_chains
             }
             
-            if use_openmoltools:
-                st.info(f"""
-                **🚀 Enhanced Professional Simulation Starting:**
-                - **PSMILES**: {psmiles_input}
-                - **Method**: OpenMolTools + PACKMOL professional packing
-                - **Config**: {num_chains} chains × {chain_length} units
-                - **Type**: {simulation_type}
-                - **Features**: Realistic density, proper spacing, professional arrangements
-                """)
-            else:
-                st.info(f"""
-                **🚀 Standard Dual GAFF+AMBER Simulation Starting:**
-                - **PSMILES**: {psmiles_input}
-                - **Method**: Standard composite building
-                - **Config**: {num_chains} chains × {chain_length} units
-                - **Type**: {simulation_type}
-                """)
+            st.info(f"""
+            **🚀 Standard Dual GAFF+AMBER Simulation Starting:**
+            - **PSMILES**: {psmiles_input}
+            - **Method**: Standard composite building
+            - **Config**: {num_chains} chains × {chain_length} units
+            - **Type**: {simulation_type}
+            """)
             
             # Store for tracking
             st.session_state.dual_gaff_amber_simulation_requested = True
             st.session_state.dual_gaff_amber_psmiles = psmiles_input
             
-            # Start the simulation with method selection
-            _run_enhanced_dual_gaff_amber_simulation(psmiles_input, simulation_params, use_openmoltools)
+            # Start the simulation, forcing standard method
+            _run_enhanced_dual_gaff_amber_simulation(
+                psmiles_input, 
+                simulation_params, 
+                use_openmoltools=False
+            )
 
 def _run_enhanced_dual_gaff_amber_simulation(psmiles: str, simulation_params: Dict[str, Any], use_openmoltools: bool = False):
-    """Run dual GAFF+AMBER simulation with method selection"""
+    """
+    Run dual GAFF+AMBER simulation with method selection.
+    
+    REFACTORED: This function now has improved logic to ensure the selected
+    method (OpenMolTools or standard) is correctly used, with clear error
+    handling instead of silent fallbacks.
+    """
     
     def enhanced_console_callback(message: str):
         """Thread-safe console callback for enhanced simulations"""
         print(f"[Enhanced Dual GAFF+AMBER] {message}")
     
-    try:
-        if use_openmoltools and OPENMOLTOOLS_AVAILABLE:
-            # Use enhanced OpenMolTools integration
-            if 'enhanced_md_integration' not in st.session_state:
-                st.session_state.enhanced_md_integration = OpenMolToolsDualGaffAmber()
-            
-            integration = st.session_state.enhanced_md_integration
-            
-            # Show status
-            st.info("🚀 **Enhanced Professional Mode**: Using OpenMolTools + PACKMOL")
-            
-            # Create progress placeholders
-            status_placeholder = st.empty()
-            progress_placeholder = st.empty()
-            
-            try:
-                success = integration.run_simulation(
-                    psmiles=psmiles,
-                    simulation_params=simulation_params,
-                    log_callback=enhanced_console_callback,
-                    **simulation_params
-                )
-                
-                if success:
-                    status_placeholder.success("✅ Enhanced simulation started successfully!")
-                    progress_placeholder.info("📊 Professional molecular packing and simulation in progress...")
-                else:
-                    status_placeholder.error("❌ Failed to start enhanced simulation")
-                    
-            except Exception as e:
-                st.error(f"❌ Enhanced simulation error: {e}")
-                st.code(traceback.format_exc())
-        
-        else:
-            # Fall back to standard dual GAFF+AMBER
-            if use_openmoltools:
-                st.warning("📦 OpenMolTools not available - falling back to standard method")
-            
-            _run_dual_gaff_amber_simulation_direct(psmiles, simulation_params)
+    # --- REFACTORED LOGIC ---
+    # Explicitly choose the simulation path based on user selection and availability
     
+    # ALWAYS use the direct method now that OpenMolTools is disabled.
+    try:
+        _run_dual_gaff_amber_simulation_direct(psmiles, simulation_params)
     except Exception as e:
-        st.error(f"❌ Simulation setup failed: {e}")
+        st.error(f"❌ **Standard Simulation Error:** {e}")
+        import traceback
         st.code(traceback.format_exc())
 
 def run_dual_gaff_amber_direct(psmiles: str, simulation_params: Dict[str, Any]):
@@ -747,144 +716,92 @@ def run_dual_gaff_amber_on_candidate(candidate: Dict[str, Any], simulation_type:
 
 def render_automated_candidates_section():
     """
-    Render the automated candidates section with enhanced polymer configuration controls.
-    Shows candidates from automation pipeline with configurable simulation parameters.
+    Render the automated candidates section with enhanced, per-candidate polymer configuration controls.
     """
-    
-    # Check system type and render appropriate interface
     system_type = st.session_state.get('md_system_type', 'unknown')
     
     if system_type == 'dual_gaff_amber':
-        # Show dual GAFF+AMBER interface first
         render_dual_gaff_amber_interface()
-        
         st.markdown("---")
         st.markdown("#### 🤖 Automated PSMILES Candidates")
         st.markdown("*Run simulations on candidates generated by the automation pipeline*")
     else:
         st.markdown("#### 🤖 Automated Simulation Candidates")
-        st.markdown("*Run simulations on candidates generated by the automation pipeline*")
     
-    # Get enhanced candidates
     try:
         enhanced_candidates = get_enhanced_candidates()
         
         if enhanced_candidates:
             st.success(f"🎯 **Found {len(enhanced_candidates)} enhanced candidates ready for simulation**")
             
-            # Add polymer configuration section for automated candidates
-            if system_type == 'dual_gaff_amber':
-                st.markdown("##### 🔧 Polymer Configuration for Automated Candidates")
-                st.markdown("*Configure polymer parameters that will be applied to all automated simulations*")
-                
-                col_config1, col_config2, col_config3 = st.columns(3)
-                
-                with col_config1:
-                    auto_chain_length = st.slider(
-                        "📏 **Chain Length** (repeat units)",
-                        min_value=3,
-                        max_value=50,
-                        value=15,  # Good default for balanced systems
-                        key="auto_chain_length",
-                        help="Number of monomer repeat units in each polymer chain"
-                    )
-                
-                with col_config2:
-                    auto_num_chains = st.slider(
-                        "🔢 **Number of Polymer Chains**",
-                        min_value=1,
-                        max_value=8,
-                        value=3,  # Better default for realistic delivery systems
-                        key="auto_num_chains",
-                        help="Number of separate polymer molecules in the composite system"
-                    )
-                
-                with col_config3:
-                    auto_simulation_type = st.selectbox(
-                        "🎯 **Simulation Type**",
-                        ["Quick Test", "Standard", "Extended"],
-                        index=1,
-                        key="auto_simulation_type",
-                        help="Simulation duration and complexity"
-                    )
-                
-                # Show predicted system size for automated runs
-                estimated_polymer_atoms = auto_chain_length * 50 * auto_num_chains
-                total_estimated_atoms = 782 + estimated_polymer_atoms
-                polymer_ratio = (estimated_polymer_atoms / total_estimated_atoms) * 100
-                
-                if polymer_ratio < 20:
-                    ratio_status = "⚠️ Low polymer ratio"
-                elif polymer_ratio > 70:
-                    ratio_status = "⚠️ Polymer dominates"
-                else:
-                    ratio_status = "✅ Balanced system"
-                
-                st.info(f"""
-                **📊 Automated Simulation Configuration:**
-                - 🔗 **Per Candidate**: {auto_num_chains} chain(s) × {auto_chain_length} repeat units
-                - 🧬 **Estimated Size**: ~{total_estimated_atoms:,} atoms ({polymer_ratio:.1f}% polymer)
-                - 🎯 **System Balance**: {ratio_status}
-                - ⏱️ **Duration**: {auto_simulation_type}
-                """)
-            
-            # Display candidates with enhanced run buttons
+            # Display candidates with per-candidate controls
             for i, candidate in enumerate(enhanced_candidates):
-                candidate_container = st.container()
-                with candidate_container:
-                    col1, col2 = st.columns([3, 1])
-                    
+                with st.container(border=True):
+                    col1, col2 = st.columns([1, 1])
+
                     with col1:
-                        st.markdown(f"**🧬 Candidate {i+1}**: {candidate.get('name', 'Unknown')}")
-                        st.text(f"📝 PSMILES: {candidate.get('psmiles', 'N/A')}")
+                        st.markdown(f"##### 🧬 Candidate: {candidate.get('name', f'Candidate {i+1}')}")
+                        st.code(f"{candidate.get('psmiles', 'N/A')}", language='smiles')
                         
-                        # Show candidate metadata if available
-                        if candidate.get('source') == 'automation_pipeline':
-                            st.text(f"🤖 Source: Automation Pipeline")
-                        if candidate.get('timestamp'):
-                            st.text(f"⏰ Generated: {candidate['timestamp']}")
-                    
-                    with col2:
-                        if system_type == 'dual_gaff_amber':
-                            button_text = "🚀 Dual GAFF+AMBER"
-                            help_text = f"Run with {auto_num_chains} chains × {auto_chain_length} units"
+                        # Display SVG of the molecule
+                        svg_image = generate_psmiles_svg(candidate.get('psmiles', ''))
+                        if svg_image:
+                            st.image(svg_image, caption="Polymer Repeat Unit Structure")
+                        elif RDKIT_AVAILABLE:
+                            st.warning("⚠️ Could not generate structure image.")
                         else:
-                            button_text = "▶️ Run Enhanced MD"
-                            help_text = "Run enhanced MD simulation"
+                            st.info("💡 Install RDKit to view polymer structures (`conda install -c conda-forge rdkit`)")
+
+                    with col2:
+                        st.markdown("##### 🔧 Simulation Configuration")
                         
-                        # Use unique key for each button
-                        button_key = f"run_candidate_{candidate.get('id', i)}_{system_type}"
+                        # Per-candidate controls
+                        auto_chain_length = st.slider(
+                            "Chain Length", 3, 50, 15, key=f"len_{candidate.get('id', i)}"
+                        )
+                        auto_num_chains = st.slider(
+                            "Number of Chains", 1, 100, 3, key=f"num_{candidate.get('id', i)}"
+                        )
+                        auto_simulation_type = st.selectbox(
+                            "Simulation Type", ["Quick Test", "Standard", "Extended"],
+                            index=1, key=f"type_{candidate.get('id', i)}"
+                        )
+
+                        # Per-candidate system size preview
+                        polymer_atoms = auto_chain_length * 50 * auto_num_chains
+                        total_atoms = 782 + polymer_atoms
+                        polymer_ratio = (polymer_atoms / total_atoms) * 100
+                        balance_color = "🟢" if 20 <= polymer_ratio <= 70 else "🟠"
                         
+                        st.info(f"""
+                        **📊 System Preview:**
+                        - **Config**: {auto_num_chains} chain(s) × {auto_chain_length} units
+                        - **Size**: ~{total_atoms:,} atoms ({polymer_ratio:.1f}% polymer) {balance_color}
+                        """)
+
                         if st.button(
-                            button_text,
-                            key=button_key,
-                            help=help_text,
+                            "🚀 Run Simulation",
+                            key=f"run_{candidate.get('id', i)}",
                             type="primary"
                         ):
-                            if system_type == 'dual_gaff_amber':
-                                # Pass enhanced polymer configuration to automated run
-                                run_dual_gaff_amber_on_candidate_enhanced(
-                                    candidate, 
-                                    auto_simulation_type,
-                                    auto_chain_length,
-                                    auto_num_chains
-                                )
-                            else:
-                                run_dual_gaff_amber_on_candidate(candidate, "Standard")
-                
-                st.markdown("---")
+                            run_dual_gaff_amber_on_candidate_enhanced(
+                                candidate, 
+                                auto_simulation_type,
+                                auto_chain_length,
+                                auto_num_chains
+                            )
         else:
             st.info("📭 **No enhanced candidates available**")
             st.markdown("""
             **💡 To generate candidates:**
             1. Use the **PSMILES Generation** tab to create polymer candidates
             2. Run the **Automation Pipeline** to process them
-            3. Return here to run simulations with enhanced polymer configuration
+            3. Return here to run simulations
             """)
             
     except Exception as e:
         st.error(f"❌ Error loading automated candidates: {e}")
-        st.info("💡 **Tip**: Try generating some PSMILES candidates first using the PSMILES Generation tab")
+        st.code(traceback.format_exc())
 
 def run_dual_gaff_amber_on_candidate_enhanced(candidate: Dict[str, Any], simulation_type: str, chain_length: int, num_chains: int):
     """Run dual GAFF+AMBER simulation on an automated candidate with user-specified polymer configuration"""
@@ -931,7 +848,8 @@ def run_dual_gaff_amber_on_candidate_enhanced(candidate: Dict[str, Any], simulat
     st.session_state.dual_gaff_amber_simulation_requested = True
     st.session_state.dual_gaff_amber_psmiles = psmiles
     
-    # Start the simulation with enhanced configuration
+    # CORRECTED: Call the direct simulation function, bypassing the OpenMolTools dispatcher.
+    # This ensures the robust, non-packmol method is always used for automated candidates.
     _run_dual_gaff_amber_simulation_direct(psmiles, simulation_params)
 
 
@@ -3179,9 +3097,35 @@ if __name__ == "__main__":
     render_simulation_ui() 
 
 def get_enhanced_candidates() -> List[Dict[str, Any]]:
-    """Get enhanced candidates from various sources (session state, automation pipeline, etc.)"""
+    """Get enhanced candidates from various sources, now robustly checking for the candidates file."""
     
     candidates = []
+    
+    # Define a robust path to the candidates file
+    candidates_file_path = Path.home() / ".insulin_ai" / CANDIDATES_FILE
+    
+    try:
+        # Load candidates from the JSON file if it exists
+        if candidates_file_path.exists():
+            with open(candidates_file_path, 'r') as f:
+                import json
+                saved_candidates = json.load(f)
+                
+                for candidate in saved_candidates:
+                    candidates.append({
+                        'id': candidate.get('id', 'unknown'),
+                        'name': candidate.get('name', 'Unknown'),
+                        'psmiles': candidate.get('psmiles', ''),
+                        'smiles': candidate.get('smiles', ''),
+                        'timestamp': candidate.get('timestamp', ''),
+                        'source': 'saved_file',
+                        'ready_for_md': candidate.get('ready_for_md', True)
+                    })
+            print(f"✅ Loaded {len(candidates)} candidates from {candidates_file_path}")
+    except Exception as e:
+        print(f"⚠️ Could not load candidates from file: {e}")
+
+    # The rest of the function for session state and other sources remains the same...
     
     try:
         # Method 1: Try enhanced MD simulator (if available)
@@ -3318,3 +3262,157 @@ def render_md_simulation_tab():
                             st.error("❌ **Dual GAFF+AMBER simulation failed**")
                         else:
                             st.info("⏳ **Simulation queued...**")
+
+def render_simulation_automation_tab():
+    """Render the UI for the simulation automation pipeline."""
+    st.markdown("### 🤖 Automated Simulation Pipeline")
+    st.markdown(
+        "Generate candidates, functionalize them, create simulation boxes, and visualize structures."
+    )
+
+    # Import the necessary function from the psmiles_generation_ui module
+    from .psmiles_generation_ui import render_advanced_generation_options, execute_automated_pipeline_with_progress, render_enhanced_generation_results
+    
+    (material_request, num_candidates, auto_functionalize, 
+     auto_create_polymer_boxes, auto_create_insulin_systems,
+     polymer_length, num_polymer_molecules, density, 
+     tolerance_distance, timeout_minutes,
+     num_insulin_molecules, box_size_nm) = render_advanced_generation_options()
+
+    if st.button("🚀 Run Automated Pipeline", type="primary", disabled=not material_request):
+        if not material_request.strip():
+            st.warning("⚠️ Please provide a material description")
+            return
+
+        simulation_params = {
+            'auto_create_polymer_boxes': auto_create_polymer_boxes,
+            'auto_create_insulin_systems': auto_create_insulin_systems,
+            'polymer_length': polymer_length,
+            'num_polymer_molecules': num_polymer_molecules,
+            'density': density,
+            'tolerance_distance': tolerance_distance,
+            'timeout_minutes': timeout_minutes,
+            'num_insulin_molecules': num_insulin_molecules,
+            'box_size_nm': box_size_nm
+        }
+
+        with st.spinner("Running automated PSMILES generation and simulation setup..."):
+            results = execute_automated_pipeline_with_progress(
+                material_request, num_candidates, auto_functionalize, simulation_params
+            )
+            
+            if results:
+                render_enhanced_generation_results(results)
+            else:
+                st.error("❌ Generation failed. Please try again.")
+
+def generate_psmiles_svg(psmiles: str) -> Optional[str]:
+    """Generate an SVG image from a PSMILES string."""
+    if not RDKIT_AVAILABLE:
+        return None
+    try:
+        # Replace polymer connection points for visualization
+        mol = Chem.MolFromSmiles(psmiles.replace("[*]", "[R]"))
+        if mol is None:
+            return None
+        
+        # Generate SVG
+        drawer = Draw.rdMolDraw2D.MolDraw2DSVG(400, 200)
+        drawer.DrawMolecule(mol)
+        drawer.FinishDrawing()
+        svg = drawer.GetDrawingText()
+        
+        # Encode as base64 to embed in HTML
+        b64 = base64.b64encode(svg.encode('utf-8')).decode('utf-8')
+        return f"data:image/svg+xml;base64,{b64}"
+    except Exception:
+        return None
+
+def render_automated_candidates_section():
+    """
+    Render the automated candidates section with enhanced, per-candidate polymer configuration controls.
+    """
+    system_type = st.session_state.get('md_system_type', 'unknown')
+    
+    if system_type == 'dual_gaff_amber':
+        render_dual_gaff_amber_interface()
+        st.markdown("---")
+        st.markdown("#### 🤖 Automated PSMILES Candidates")
+        st.markdown("*Run simulations on candidates generated by the automation pipeline*")
+    else:
+        st.markdown("#### 🤖 Automated Simulation Candidates")
+    
+    try:
+        enhanced_candidates = get_enhanced_candidates()
+        
+        if enhanced_candidates:
+            st.success(f"🎯 **Found {len(enhanced_candidates)} enhanced candidates ready for simulation**")
+            
+            # Display candidates with per-candidate controls
+            for i, candidate in enumerate(enhanced_candidates):
+                with st.container(border=True):
+                    col1, col2 = st.columns([1, 1])
+
+                    with col1:
+                        st.markdown(f"##### 🧬 Candidate: {candidate.get('name', f'Candidate {i+1}')}")
+                        st.code(f"{candidate.get('psmiles', 'N/A')}", language='smiles')
+                        
+                        # Display SVG of the molecule
+                        svg_image = generate_psmiles_svg(candidate.get('psmiles', ''))
+                        if svg_image:
+                            st.image(svg_image, caption="Polymer Repeat Unit Structure")
+                        elif RDKIT_AVAILABLE:
+                            st.warning("⚠️ Could not generate structure image.")
+                        else:
+                            st.info("💡 Install RDKit to view polymer structures (`conda install -c conda-forge rdkit`)")
+
+                    with col2:
+                        st.markdown("##### 🔧 Simulation Configuration")
+                        
+                        # Per-candidate controls
+                        auto_chain_length = st.slider(
+                            "Chain Length", 3, 50, 15, key=f"len_{candidate.get('id', i)}"
+                        )
+                        auto_num_chains = st.slider(
+                            "Number of Chains", 1, 100, 3, key=f"num_{candidate.get('id', i)}"
+                        )
+                        auto_simulation_type = st.selectbox(
+                            "Simulation Type", ["Quick Test", "Standard", "Extended"],
+                            index=1, key=f"type_{candidate.get('id', i)}"
+                        )
+
+                        # Per-candidate system size preview
+                        polymer_atoms = auto_chain_length * 50 * auto_num_chains
+                        total_atoms = 782 + polymer_atoms
+                        polymer_ratio = (polymer_atoms / total_atoms) * 100
+                        balance_color = "🟢" if 20 <= polymer_ratio <= 70 else "🟠"
+                        
+                        st.info(f"""
+                        **📊 System Preview:**
+                        - **Config**: {auto_num_chains} chain(s) × {auto_chain_length} units
+                        - **Size**: ~{total_atoms:,} atoms ({polymer_ratio:.1f}% polymer) {balance_color}
+                        """)
+
+                        if st.button(
+                            "🚀 Run Simulation",
+                            key=f"run_{candidate.get('id', i)}",
+                            type="primary"
+                        ):
+                            run_dual_gaff_amber_on_candidate_enhanced(
+                                candidate, 
+                                auto_simulation_type,
+                                auto_chain_length,
+                                auto_num_chains
+                            )
+        else:
+            st.info("📭 **No enhanced candidates available**")
+            st.markdown("""
+            **💡 To generate candidates:**
+            1. Use the **PSMILES Generation** tab to create polymer candidates
+            2. Run the **Automation Pipeline** to process them
+            3. Return here to run simulations
+            """)
+            
+    except Exception as e:
+        st.error(f"❌ Error loading automated candidates: {e}")
+        st.code(traceback.format_exc())

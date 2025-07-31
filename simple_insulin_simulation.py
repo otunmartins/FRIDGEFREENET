@@ -79,7 +79,10 @@ def run_simple_insulin_simulation(pdb_file: str):
     
     # Run short simulation
     print("🏃 Running simulation (100 ps)...")
-    simulation.step(50000)  # 100 ps
+    # Log the chosen platform
+    platform_name = simulation.context.getPlatform().getName()
+    print(f"💻 Using platform: {platform_name}")
+    simulation.step(5000000)  # 100 ps
     
     final_energy = simulation.context.getState(getEnergy=True).getPotentialEnergy()
     print(f"✅ Simulation complete! Final energy: {final_energy}")

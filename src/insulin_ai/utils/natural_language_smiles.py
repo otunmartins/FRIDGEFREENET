@@ -53,6 +53,21 @@ except ImportError as e:
     print(f"⚠️ SELFIES not available: {e}")
     SELFIES_AVAILABLE = False
 
+from transformers import T5ForConditionalGeneration, T5Tokenizer
+
+class NaturalLanguageSMILES:
+    def __init__(self):
+        self.model_name = "t5-small"
+        self.tokenizer = T5Tokenizer.from_pretrained(self.model_name)
+        self.model = T5ForConditionalGeneration.from_pretrained(self.model_name)
+
+    def to_natural_language(self, smiles_string):
+        """Converts a SMILES string to a natural language description."""
+        input_text = f"translate SMILES to English: {smiles_string}"
+        input_ids = self.tokenizer.encode(input_text, return_tensors="pt")
+        outputs = self.model.generate(input_ids, max_length=128, num_beams=4, early_stopping=True)
+        return self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+
 logger = logging.getLogger(__name__)
 
 
@@ -721,7 +736,7 @@ BRANCHING:
 
 STEREOCHEMISTRY:
 - Tetrahedral centers: @ (counter-clockwise), @@ (clockwise)
-- Double bonds: / and \ for E/Z geometry
+- Double bonds: / and \\ for E/Z geometry
 
 CRITICAL REQUIREMENTS:
 - ALL brackets must be balanced: ( ) [ ]

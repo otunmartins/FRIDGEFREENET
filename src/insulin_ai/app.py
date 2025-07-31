@@ -105,7 +105,7 @@ from app.ui import (
     render_psmiles_generation,
     render_active_learning,
     render_material_evaluation_ui,
-    render_simulation_interface,
+    render_simulation_ui,
     render_comprehensive_analysis
 )
 
@@ -636,7 +636,7 @@ def main():
         render_material_evaluation_ui()
         
     elif page == "MD Simulation":
-        render_simulation_interface()
+        render_simulation_ui()
         
     elif page == "Comprehensive Analysis":
         render_comprehensive_analysis()

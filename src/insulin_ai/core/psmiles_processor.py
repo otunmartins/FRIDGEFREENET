@@ -218,7 +218,7 @@ class PSMILESProcessor:
             # Quick chemistry check to prevent RDKit parse errors
             try:
                 from rdkit import Chem
-                from utils.natural_language_smiles import ChemicalValidator
+                from insulin_ai.utils.natural_language_smiles import ChemicalValidator
                 
                 validator = ChemicalValidator()
                 is_valid, mol, validation_msg = validator.validate_smiles(smiles_for_validation, debug=False)
@@ -295,8 +295,18 @@ class PSMILESProcessor:
             svg_filename = f"psmiles_{session_id}_{len(self.session_psmiles[session_id])}.svg"
             svg_path = os.path.join(self.temp_dir, svg_filename)
             
-            # Save figure as SVG
-            canonical_ps.savefig(svg_path)
+            # Save figure as SVG with error handling for RDKit compatibility issues
+            try:
+                canonical_ps.savefig(svg_path)
+                print(f"   ✅ SVG saved successfully: {svg_path}")
+            except Exception as svg_error:
+                print(f"   ⚠️ SVG generation failed: {svg_error}")
+                print(f"   🔧 Creating fallback SVG with RDKit...")
+                
+                # Try RDKit fallback first
+                if not self._create_fallback_svg_with_rdkit(psmiles_string, svg_path):
+                    print(f"   🔧 RDKit fallback failed, creating text-based SVG...")
+                    self._create_fallback_svg(psmiles_string, svg_path)
             
             # Read SVG content
             svg_content = ""
@@ -1316,7 +1326,7 @@ class PSMILESProcessor:
                 
                 # Import our SMILES repair system
                 try:
-                    from utils.natural_language_smiles import clean_malformed_smiles, autocorrect_selfies
+                    from insulin_ai.utils.natural_language_smiles import clean_malformed_smiles, autocorrect_selfies
                     
                     # Attempt repair with multiple strategies
                     for attempt in range(max_attempts):
@@ -1660,3 +1670,41 @@ class PSMILESProcessor:
                 'error': f'Enhanced processing failed: {str(e)}',
                 'original_psmiles': psmiles
             } 
+
+    def _create_fallback_svg_with_rdkit(self, psmiles_string: str, svg_path: str) -> bool:
+        """
+        Create a fallback SVG using RDKit directly.
+        
+        Args:
+            psmiles_string (str): The PSMILES string to visualize
+            svg_path (str): Path where to save the SVG
+            
+        Returns:
+            bool: True if SVG was created, False otherwise
+        """
+        try:
+            from rdkit import Chem
+            from rdkit.Chem.Draw import rdMolDraw2D
+
+            # Convert PSMILES to a viewable SMILES (replace [*] with something visual)
+            smiles_for_drawing = psmiles_string.replace('[*]', '[He]') # Use Helium to mark ends
+            
+            mol = Chem.MolFromSmiles(smiles_for_drawing)
+            if not mol:
+                return False
+
+            # Generate SVG
+            drawer = rdMolDraw2D.MolDraw2DSVG(400, 300)
+            drawer.DrawMolecule(mol)
+            drawer.FinishDrawing()
+            svg_content = drawer.GetDrawingText()
+            
+            with open(svg_path, 'w') as f:
+                f.write(svg_content)
+            
+            print(f"   ✅ RDKit fallback SVG created successfully")
+            return True
+            
+        except Exception as e:
+            print(f"   ⚠️ RDKit fallback SVG failed: {e}")
+            return False
