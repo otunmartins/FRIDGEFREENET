@@ -618,7 +618,7 @@ class StreamlinedMDIntegration:
                             # Look for polymer box PDB files (check multiple locations)
                             polymer_pdb = None
                             
-                            # 1. Check in molecules subdirectory (PSP standard location)
+                            # 1. Check in molecules subdirectory (standard location)
                             molecules_dir = candidate_dir / 'molecules'
                             if molecules_dir.exists():
                                 for pdb_file in molecules_dir.glob("*.pdb"):

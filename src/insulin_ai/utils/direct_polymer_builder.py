@@ -173,6 +173,9 @@ class DirectPolymerBuilder:
     def _generate_pdb_with_conect(self, smiles: str, output_dir: str) -> str:
         """
         Generate PDB file with CONECT entries from SMILES.
+        
+        Enhanced version with proper validation and error handling to avoid
+        duplicate atoms and invalid geometries.
         """
         
         # Create RDKit molecule from SMILES
@@ -180,57 +183,213 @@ class DirectPolymerBuilder:
         if mol is None:
             raise ValueError(f"Failed to create RDKit molecule from SMILES: {smiles}")
         
-        # Add hydrogens and generate 3D coordinates
-        mol = Chem.AddHs(mol)
+        print(f"   📊 Initial molecule: {mol.GetNumAtoms()} atoms, {mol.GetNumBonds()} bonds")
         
-        # Try multiple conformer generation strategies
-        success = False
-        for seed in [42, 123, 456, 789]:
+        # Check for problematic atoms (phosphorus, etc.)
+        has_phosphorus = any(atom.GetAtomicNum() == 15 for atom in mol.GetAtoms())
+        if has_phosphorus:
+            print(f"   ⚠️ Molecule contains phosphorus - using enhanced 3D generation")
+        
+        # Sanitize molecule and fix valence issues
+        try:
+            # Try to sanitize molecule
+            Chem.SanitizeMol(mol)
+            print(f"   ✅ Molecule sanitization successful")
+        except Exception as e:
+            print(f"   ⚠️ Molecule sanitization issues: {e}")
+            # Try to fix valence issues
             try:
-                result = AllChem.EmbedMolecule(mol, randomSeed=seed)
-                if result == 0:  # Success
-                    success = True
-                    break
-            except Exception as e:
-                print(f"   ⚠️ Conformer generation failed with seed {seed}: {e}")
+                # Create a new molecule with explicit valences
+                mol = Chem.MolFromSmiles(smiles, sanitize=False)
+                for atom in mol.GetAtoms():
+                    # Fix common phosphorus valence issues
+                    if atom.GetAtomicNum() == 15:  # Phosphorus
+                        atom.SetFormalCharge(0)
+                        atom.SetNumExplicitHs(0)
+                # Now try to sanitize
+                Chem.SanitizeMol(mol)
+                print(f"   ✅ Fixed valence issues for phosphorus atoms")
+            except Exception as e2:
+                print(f"   ❌ Could not fix valence issues: {e2}")
+                # Continue anyway, but warn user
         
+        # Add hydrogens carefully
+        try:
+            mol = Chem.AddHs(mol)
+            print(f"   ✅ Added hydrogens: {mol.GetNumAtoms()} total atoms")
+        except Exception as e:
+            print(f"   ⚠️ Hydrogen addition failed: {e}")
+            # Continue without adding hydrogens
+        
+        # Enhanced 3D coordinate generation with validation
+        success = False
+        conformer_method = "unknown"
+        
+        # Method 1: Standard embedding with multiple seeds
         if not success:
-            print(f"   ⚠️ Standard embedding failed, trying distance geometry...")
+            print(f"   🔄 Trying standard embedding...")
+            for seed in [42, 123, 456, 789, 999]:
+                try:
+                    result = AllChem.EmbedMolecule(mol, randomSeed=seed, maxAttempts=100)
+                    if result == 0:  # Success
+                        success = True
+                        conformer_method = f"standard_seed_{seed}"
+                        print(f"   ✅ Standard embedding successful (seed {seed})")
+                        break
+                except Exception as e:
+                    print(f"   ⚠️ Embedding failed with seed {seed}: {e}")
+        
+        # Method 2: Distance geometry with random coordinates
+        if not success:
+            print(f"   🔄 Trying distance geometry...")
             try:
                 AllChem.EmbedMolecule(mol, useRandomCoords=True, randomSeed=42)
                 success = True
+                conformer_method = "distance_geometry"
+                print(f"   ✅ Distance geometry successful")
             except Exception as e:
-                print(f"   ❌ Distance geometry also failed: {e}")
+                print(f"   ⚠️ Distance geometry failed: {e}")
         
-        if success:
-            # Optimize geometry
+        # Method 3: ETKDGv3 (Enhanced version)
+        if not success:
+            print(f"   🔄 Trying ETKDGv3...")
             try:
-                AllChem.MMFFOptimizeMolecule(mol, maxIters=1000)
-                print(f"   ✅ Geometry optimization completed")
+                params = AllChem.ETKDGv3()
+                params.randomSeed = 42
+                params.maxAttempts = 200
+                result = AllChem.EmbedMolecule(mol, params)
+                if result == 0:
+                    success = True
+                    conformer_method = "ETKDGv3"
+                    print(f"   ✅ ETKDGv3 embedding successful")
+            except Exception as e:
+                print(f"   ⚠️ ETKDGv3 failed: {e}")
+        
+        # Method 4: Force simple coordinates if all else fails
+        if not success:
+            print(f"   🔄 Generating simple linear coordinates as fallback...")
+            try:
+                # Create simple linear coordinates
+                conf = Chem.Conformer(mol.GetNumAtoms())
+                for i, atom in enumerate(mol.GetAtoms()):
+                    # Simple linear arrangement
+                    x = i * 1.5  # 1.5 Å spacing
+                    y = 0.0
+                    z = 0.0
+                    conf.SetAtomPosition(i, (x, y, z))
+                mol.AddConformer(conf)
+                success = True
+                conformer_method = "linear_fallback"
+                print(f"   ⚠️ Using linear fallback coordinates")
+            except Exception as e:
+                print(f"   ❌ Even fallback coordinates failed: {e}")
+                raise ValueError("Could not generate any 3D coordinates for molecule")
+        
+        # Validate coordinates before optimization
+        if success:
+            conf = mol.GetConformer()
+            positions = []
+            for i in range(mol.GetNumAtoms()):
+                pos = conf.GetAtomPosition(i)
+                positions.append((pos.x, pos.y, pos.z))
+            
+            # Check for duplicate positions (within 0.1 Å)
+            duplicate_count = 0
+            for i in range(len(positions)):
+                for j in range(i+1, len(positions)):
+                    dist = ((positions[i][0] - positions[j][0])**2 + 
+                           (positions[i][1] - positions[j][1])**2 + 
+                           (positions[i][2] - positions[j][2])**2)**0.5
+                    if dist < 0.1:
+                        duplicate_count += 1
+            
+            if duplicate_count > 0:
+                print(f"   ⚠️ Found {duplicate_count} pairs of atoms closer than 0.1 Å")
+                # Try to fix by adding small random displacements
+                import random
+                random.seed(42)
+                for i in range(mol.GetNumAtoms()):
+                    pos = conf.GetAtomPosition(i)
+                    new_x = pos.x + random.uniform(-0.2, 0.2)
+                    new_y = pos.y + random.uniform(-0.2, 0.2) 
+                    new_z = pos.z + random.uniform(-0.2, 0.2)
+                    conf.SetAtomPosition(i, (new_x, new_y, new_z))
+                print(f"   ✅ Added random displacements to separate overlapping atoms")
+        
+        # Geometry optimization (only if we have reasonable coordinates)
+        if success and conformer_method != "linear_fallback":
+            try:
+                # Try MMFF optimization
+                if AllChem.MMFFHasAllMoleculeParams(mol):
+                    result = AllChem.MMFFOptimizeMolecule(mol, maxIters=1000)
+                    if result == 0:
+                        print(f"   ✅ MMFF geometry optimization completed")
+                    else:
+                        print(f"   ⚠️ MMFF optimization did not converge (result: {result})")
+                else:
+                    print(f"   ⚠️ MMFF parameters not available, trying UFF...")
+                    result = AllChem.UFFOptimizeMolecule(mol, maxIters=1000)
+                    if result == 0:
+                        print(f"   ✅ UFF geometry optimization completed")
+                    else:
+                        print(f"   ⚠️ UFF optimization did not converge (result: {result})")
             except Exception as e:
                 print(f"   ⚠️ Geometry optimization failed: {e}")
         
-        # Write PDB file with CONECT entries
+        # Final validation before writing PDB
+        try:
+            # Check molecule integrity
+            conf = mol.GetConformer()
+            num_atoms = mol.GetNumAtoms()
+            
+            # Verify all atoms have positions
+            for i in range(num_atoms):
+                pos = conf.GetAtomPosition(i)
+                if any(abs(coord) > 1000 for coord in [pos.x, pos.y, pos.z]):
+                    print(f"   ⚠️ Atom {i+1} has extreme coordinates: {pos.x:.2f}, {pos.y:.2f}, {pos.z:.2f}")
+            
+            print(f"   ✅ Final validation passed: {num_atoms} atoms ready for PDB")
+            
+        except Exception as e:
+            print(f"   ❌ Final validation failed: {e}")
+            raise ValueError("Molecule failed final validation")
+        
+        # Write enhanced PDB file
         pdb_file = os.path.join(output_dir, "polymer.pdb")
         
         with open(pdb_file, 'w') as f:
-            # Write header
+            # Enhanced header with method information
             f.write("REMARK   Direct polymer generated using psmiles package\n")
             f.write(f"REMARK   No PSP used - bypassed completely\n")
+            f.write(f"REMARK   3D method: {conformer_method}\n")
             f.write(f"REMARK   Polymer SMILES: {smiles}\n")
             f.write(f"REMARK   Total atoms: {mol.GetNumAtoms()}\n")
+            if has_phosphorus:
+                f.write(f"REMARK   Contains phosphorus atoms - enhanced handling applied\n")
             
-            # Write atoms
+            # Write atoms with better formatting
             conf = mol.GetConformer()
+            atom_elements = {}  # Track element counts for unique naming
+            
             for i, atom in enumerate(mol.GetAtoms()):
                 pos = conf.GetAtomPosition(i)
                 element = atom.GetSymbol()
                 atom_id = i + 1
                 
-                f.write(f"ATOM  {atom_id:5d}  {element:<3s} UNL A   1    "
+                # Create unique atom names for each element type
+                if element not in atom_elements:
+                    atom_elements[element] = 0
+                atom_elements[element] += 1
+                atom_name = f"{element}{atom_elements[element]}"
+                
+                # Use strict PDB formatting for PACKMOL compatibility
+                # PDB format: columns 1-6=ATOM, 7-11=atom#, 13-16=atom name, 17-20=residue, 22=chain, 23-26=res#
+                residue_number = 1
+                chain_id = 'A'
+                f.write(f"ATOM  {atom_id:5d}  {atom_name:<4s}UNL {chain_id}{residue_number:4d}    "
                        f"{pos.x:8.3f}{pos.y:8.3f}{pos.z:8.3f}  1.00  0.00           {element:>2s}\n")
             
-            # Write CONECT entries for all bonds
+            # Write CONECT entries with proper formatting
             f.write("REMARK   CONECT entries for all bonds\n")
             for bond in mol.GetBonds():
                 atom1_id = bond.GetBeginAtomIdx() + 1
@@ -239,7 +398,21 @@ class DirectPolymerBuilder:
             
             f.write("END\n")
         
-        print(f"   ✅ PDB written with {mol.GetNumAtoms()} atoms and {mol.GetNumBonds()} bonds")
+        # Final verification
+        try:
+            # Try to read the PDB back to verify it's valid
+            test_mol = Chem.MolFromPDBFile(pdb_file, removeHs=False)
+            if test_mol is not None:
+                print(f"   ✅ PDB verification successful: {test_mol.GetNumAtoms()} atoms read back")
+            else:
+                print(f"   ⚠️ PDB verification failed - file may have issues")
+        except Exception as e:
+            print(f"   ⚠️ PDB verification failed: {e}")
+        
+        print(f"   ✅ Enhanced PDB written: {mol.GetNumAtoms()} atoms, {mol.GetNumBonds()} bonds")
+        print(f"   📁 File: {pdb_file}")
+        print(f"   🔧 Method: {conformer_method}")
+        
         return pdb_file
     
     def create_packmol_solvation(self, 

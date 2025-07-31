@@ -1,0 +1,291 @@
+
+################################################################################
+
+ PACKMOL - Packing optimization for the automated generation of
+ starting configurations for molecular dynamics simulations.
+ 
+                                                             Version 21.0.3 
+
+################################################################################
+
+  Packmol must be run with: packmol < inputfile.inp 
+
+  Userguide at: http://m3g.iqm.unicamp.br/packmol 
+
+  Reading input file... (Control-C aborts)
+  Types of coordinate files specified: pdb
+  Seed for random number generator:      1234567
+  Output file: insulin_polymer_output_7db03461/packmol/packmol.pdb
+  Reading coordinate file: insulin_polymer_output_7db03461/molecules/polymer_N15_C1.pdb
+  Number of independent structures:            1
+  The structures are: 
+  Structure            1 :insulin_polymer_output_7db03461/molecules/polymer_N15_C1.pdb(         272  atoms)
+  Maximum number of GENCAN loops for all molecule packing:          200
+  Distance tolerance:    2.0000000000000000     
+  Warning: Type of residue numbering not set for structure            1
+  Residue numbering set for structure            1 :           0
+  Swap chains of molecules of structure            1 : F
+  Number of molecules of type            1 :           25
+  Total number of restrictions:            1
+  Total number of atoms:         6800
+  Total number of molecules:           25
+  Number of fixed molecules:            0
+  Number of free molecules:           25
+  Number of variables:          150
+  Total number of fixed atoms:            0
+  Maximum internal distance of type            1 :    91.898557627418711     
+  All atoms must be within these coordinates: 
+   x: [   -976.26551254990954      ,    1023.7344874500905       ] 
+   y: [   -974.53700042510468      ,    1025.4629995748953       ] 
+   z: [   -987.16186244754135      ,    1012.8381375524586       ] 
+  If the system is larger than this, increase the sidemax parameter. 
+
+################################################################################
+
+  Building initial approximation ... 
+
+################################################################################
+
+  Adjusting initial point to fit the constraints 
+
+--------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+
+  Molecules of type:            1
+
+  Packing:|0                                                        100%|
+          |*************************************************************|
+  Fixing bad orientations ...      1 of     20
+  Moving worst molecules ... 
+  Function value before moving molecules:   141571.14225474445     
+  Type         1 molecules with non-zero contributions:  100.00%
+  Moving         1 molecules of type         1
+  New positions will be based on good molecules (movebadrandom is not set) 
+   Moving:|0                                                        100%|
+          |*************************************************************|
+  Function value after moving molecules:   126173.15412797795     
+  Packing:|0                                                        100%|
+          |*************************************************************|
+  Fixing bad orientations ...      2 of     20
+  Moving worst molecules ... 
+  Function value before moving molecules:   26529.917839306050     
+  Type         1 molecules with non-zero contributions:  100.00%
+  Moving         1 molecules of type         1
+  New positions will be based on good molecules (movebadrandom is not set) 
+   Moving:|0                                                        100%|
+          |*************************************************************|
+  Function value after moving molecules:   23390.018764210970     
+  Packing:|0                                                        100%|
+          |*************************************************************|
+  Fixing bad orientations ...      3 of     20
+  Moving worst molecules ... 
+  Function value before moving molecules:   8384.0895143979014     
+  Type         1 molecules with non-zero contributions:  100.00%
+  Moving         1 molecules of type         1
+  New positions will be based on good molecules (movebadrandom is not set) 
+   Moving:|0                                                        100%|
+          |*************************************************************|
+  Function value after moving molecules:   6139.9504166794932     
+  Packing:|0                                                        100%|
+          |*************************************************************|
+  Fixing bad orientations ...      4 of     20
+  Moving worst molecules ... 
+  Function value before moving molecules:   4222.4897958566926     
+  Type         1 molecules with non-zero contributions:  100.00%
+  Moving         1 molecules of type         1
+  New positions will be based on good molecules (movebadrandom is not set) 
+   Moving:|0                                                        100%|
+          |*************************************************************|
+  Function value after moving molecules:   4222.4897958457914     
+  Packing:|0                                                        100%|
+          |*************************************************************|
+  Fixing bad orientations ...      5 of     20
+  Moving worst molecules ... 
+  Function value before moving molecules:   4222.4897958385263     
+  Type         1 molecules with non-zero contributions:  100.00%
+  Moving         1 molecules of type         1
+  New positions will be based on good molecules (movebadrandom is not set) 
+   Moving:|0                                                        100%|
+          |*************************************************************|
+  Function value after moving molecules:   4222.4897958385272     
+  Packing:|0                                                        100%|
+          |*************************************************************|
+
+  Fixing bad orientations ...      6 of     20
+  Moving worst molecules ... 
+  Function value before moving molecules:   4222.4897958385272     
+  Type         1 molecules with non-zero contributions:  100.00%
+  Moving         1 molecules of type         1
+  New positions will be based on good molecules (movebadrandom is not set) 
+   Moving:|0                                                        100%|
+          |*************************************************************|
+  Function value after moving molecules:   16839.812843520001     
+  Packing:|0                                                        100%|
+          |*************************************************************|
+  Fixing bad orientations ...      7 of     20
+  Moving worst molecules ... 
+  Function value before moving molecules:   5285.0424479532212     
+  Type         1 molecules with non-zero contributions:  100.00%
+  Moving         1 molecules of type         1
+  New positions will be based on good molecules (movebadrandom is not set) 
+   Moving:|0                                                        100%|
+          |*************************************************************|
+  Function value after moving molecules:   8097.0586286999542     
+  Packing:|0                                                        100%|
+          |*************************************************************|
+  Fixing bad orientations ...      8 of     20
+  Moving worst molecules ... 
+  Function value before moving molecules:   4699.4446317765696     
+  Type         1 molecules with non-zero contributions:  100.00%
+  Moving         1 molecules of type         1
+  New positions will be based on good molecules (movebadrandom is not set) 
+   Moving:|0                                                        100%|
+          |*************************************************************|
+  Function value after moving molecules:   4237.8043828818327     
+  Packing:|0                                                        100%|
+          |************************************************
+  Fixing bad orientations ...      9 of     20
+  Moving worst molecules ... 
+  Function value before moving molecules:   4222.4897958385045     
+  Type         1 molecules with non-zero contributions:  100.00%
+  Moving         1 molecules of type         1
+  New positions will be based on good molecules (movebadrandom is not set) 
+   Moving:|0                                                        100%|
+          |*************************************************************|
+  Function value after moving molecules:   4309.1138560926665     
+  Packing:|0                                                        100%|
+          |*********************************************************
+  Fixing bad orientations ...     10 of     20
+  Moving worst molecules ... 
+  Function value before moving molecules:   4222.4897958385118     
+  Type         1 molecules with non-zero contributions:  100.00%
+  Moving         1 molecules of type         1
+  New positions will be based on good molecules (movebadrandom is not set) 
+   Moving:|0                                                        100%|
+          |*************************************************************|
+  Function value after moving molecules:   4222.5309579350624     
+  Packing:|0                                                        100%|
+          |************************************
+  Fixing bad orientations ...     11 of     20
+  Moving worst molecules ... 
+  Function value before moving molecules:   4222.4897958385081     
+  Type         1 molecules with non-zero contributions:  100.00%
+  Moving         1 molecules of type         1
+  New positions will be based on good molecules (movebadrandom is not set) 
+   Moving:|0                                                        100%|
+          |*************************************************************|
+  Function value after moving molecules:   7448.0689753372553     
+  Packing:|0                                                        100%|
+          |*************************************************************|
+  Fixing bad orientations ...     12 of     20
+  Moving worst molecules ... 
+  Function value before moving molecules:   4222.4897958385063     
+  Type         1 molecules with non-zero contributions:  100.00%
+  Moving         1 molecules of type         1
+  New positions will be based on good molecules (movebadrandom is not set) 
+   Moving:|0                                                        100%|
+          |*************************************************************|
+  Function value after moving molecules:   4279.5650010154804     
+  Packing:|0                                                        100%|
+          |************************************
+  Fixing bad orientations ...     13 of     20
+  Moving worst molecules ... 
+  Function value before moving molecules:   4222.4897958385109     
+  Type         1 molecules with non-zero contributions:  100.00%
+  Moving         1 molecules of type         1
+  New positions will be based on good molecules (movebadrandom is not set) 
+   Moving:|0                                                        100%|
+          |*************************************************************|
+  Function value after moving molecules:   4356.9863962462478     
+  Packing:|0                                                        100%|
+          |*********************************
+  Fixing bad orientations ...     14 of     20
+  Moving worst molecules ... 
+  Function value before moving molecules:   4222.4897958385063     
+  Type         1 molecules with non-zero contributions:  100.00%
+  Moving         1 molecules of type         1
+  New positions will be based on good molecules (movebadrandom is not set) 
+   Moving:|0                                                        100%|
+          |*************************************************************|
+  Function value after moving molecules:   4222.4897958385063     
+  Packing:|0                                                        100%|
+          |***
+  Fixing bad orientations ...     15 of     20
+  Moving worst molecules ... 
+  Function value before moving molecules:   4222.4897958385063     
+  Type         1 molecules with non-zero contributions:  100.00%
+  Moving         1 molecules of type         1
+  New positions will be based on good molecules (movebadrandom is not set) 
+   Moving:|0                                                        100%|
+          |*************************************************************|
+  Function value after moving molecules:   5028.2944359606972     
+  Packing:|0                                                        100%|
+          |*************************************************************|
+  Fixing bad orientations ...     16 of     20
+  Moving worst molecules ... 
+  Function value before moving molecules:   4222.4897958385345     
+  Type         1 molecules with non-zero contributions:  100.00%
+  Moving         1 molecules of type         1
+  New positions will be based on good molecules (movebadrandom is not set) 
+   Moving:|0                                                        100%|
+          |*************************************************************|
+  Function value after moving molecules:   4222.4922762471197     
+  Packing:|0                                                        100%|
+          |***************
+  Fixing bad orientations ...     17 of     20
+  Moving worst molecules ... 
+  Function value before moving molecules:   4222.4897958385072     
+  Type         1 molecules with non-zero contributions:  100.00%
+  Moving         1 molecules of type         1
+  New positions will be based on good molecules (movebadrandom is not set) 
+   Moving:|0                                                        100%|
+          |*************************************************************|
+  Function value after moving molecules:   21810.960549607866     
+  Packing:|0                                                        100%|
+          |*************************************************************|
+  Fixing bad orientations ...     18 of     20
+  Moving worst molecules ... 
+  Function value before moving molecules:   20992.985754774843     
+  Type         1 molecules with non-zero contributions:  100.00%
+  Moving         1 molecules of type         1
+  New positions will be based on good molecules (movebadrandom is not set) 
+   Moving:|0                                                        100%|
+          |*************************************************************|
+  Function value after moving molecules:   4222.4897958870479     
+  Packing:|0                                                        100%|
+          |*************************************************************|
+  Fixing bad orientations ...     19 of     20
+  Moving worst molecules ... 
+  Function value before moving molecules:   4222.4897958385191     
+  Type         1 molecules with non-zero contributions:  100.00%
+  Moving         1 molecules of type         1
+  New positions will be based on good molecules (movebadrandom is not set) 
+   Moving:|0                                                        100%|
+          |*************************************************************|
+  Function value after moving molecules:   4396.9373529223485     
+  Packing:|0                                                        100%|
+          |***************************************
+  Fixing bad orientations ...     20 of     20
+  Moving worst molecules ... 
+  Function value before moving molecules:   4222.4897958385045     
+  Type         1 molecules with non-zero contributions:  100.00%
+  Moving         1 molecules of type         1
+  New positions will be based on good molecules (movebadrandom is not set) 
+   Moving:|0                                                        100%|
+          |*************************************************************|
+  Function value after moving molecules:   4222.4897958385045     
+
+  Restraint-only function value:    4222.4897958385045     
+  Maximum violation of the restraints:    16.977120548319647     
+  ERROR: Packmol was unable to put the molecules
+         in the desired regions even without
+         considering distance tolerances. 
+         Probably there is something wrong with
+         the constraints, since it seems that
+         the molecules cannot satisfy them at
+         at all. 
+         Please check the spatial constraints and
+         try again.
+  >The maximum number of cycles (          20 ) was achieved.
+   You may try increasing it with the nloop0 keyword, as in: nloop0 1000 

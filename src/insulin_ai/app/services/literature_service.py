@@ -25,7 +25,7 @@ def literature_mining_with_llm(query: str, iteration_context: Optional[Dict] = N
     
     try:
         # Import the real literature mining system
-        from core.literature_mining_system import MaterialsLiteratureMiner
+        from insulin_ai import MaterialsLiteratureMiner
         
         # Initialize the literature miner if not already done
         # This would typically be done in system initialization

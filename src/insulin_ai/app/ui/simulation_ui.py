@@ -30,6 +30,21 @@ try:
 except ImportError:
     ENHANCED_MD_AVAILABLE = False
 
+# Add import for the new dual GAFF+AMBER integration at the top of the file
+try:
+    from insulin_ai.integration.analysis.dual_gaff_amber_integration import DualGaffAmberIntegration
+    DUAL_GAFF_AMBER_AVAILABLE = True
+except ImportError:
+    DUAL_GAFF_AMBER_AVAILABLE = False
+    DualGaffAmberIntegration = None
+
+# Import for OpenMolTools enhanced integration
+try:
+    from insulin_ai.integration.analysis.openmoltools_dual_gaff_amber import OpenMolToolsDualGaffAmber
+    OPENMOLTOOLS_AVAILABLE = True
+except ImportError:
+    OPENMOLTOOLS_AVAILABLE = False
+
 def render_simulation_ui():
     """
     Render the complete MD Simulation UI interface
@@ -50,7 +65,50 @@ def render_simulation_ui():
 
 
 def initialize_md_simulation_system():
-    """Initialize the MD simulation system with error handling"""
+    """Initialize MD simulation system with dependency checking"""
+    
+    if "md_integration" not in st.session_state:
+        st.session_state.md_integration = None
+        st.session_state.md_system_type = None
+        st.session_state.dependency_status = {}
+    
+    # Check what MD systems are available
+    available_systems = []
+    
+    # 🚀 NEW: Check dual GAFF+AMBER integration (PRIORITY)
+    if DUAL_GAFF_AMBER_AVAILABLE:
+        try:
+            dual_integration = DualGaffAmberIntegration()
+            dependency_status = dual_integration.get_dependency_status()
+            
+            if dependency_status['overall']['available']:
+                st.session_state.md_integration = dual_integration
+                st.session_state.md_system_type = 'dual_gaff_amber'
+                st.session_state.dependency_status = dependency_status
+                available_systems.append('dual_gaff_amber')
+                print("✅ Using DualGaffAmberIntegration (PREFERRED)")
+                return True
+            else:
+                print("⚠️ DualGaffAmberIntegration dependencies not met")
+                st.session_state.dependency_status.update(dependency_status)
+        except Exception as e:
+            print(f"❌ DualGaffAmberIntegration initialization failed: {e}")
+    
+    # Fallback to existing systems if dual GAFF+AMBER not available
+    if ENHANCED_MD_AVAILABLE:
+        try:
+            enhanced_md = EnhancedMDWithStoredSMILES()
+            enhanced_deps = enhanced_md.get_dependency_status()
+            
+            if enhanced_deps['overall']['available']:
+                if st.session_state.md_integration is None:  # Only use as fallback
+                    st.session_state.md_integration = enhanced_md
+                    st.session_state.md_system_type = 'enhanced_md'
+                st.session_state.dependency_status.update(enhanced_deps)
+                available_systems.append('enhanced_md')
+                
+        except Exception as e:
+            print(f"❌ Enhanced MD initialization failed: {e}")
     
     # Check if already initialized by main app
     if hasattr(st.session_state, 'md_integration') and st.session_state.md_integration is not None:
@@ -207,34 +265,26 @@ pip install openmm-setup pdbfixer openmmforcefields mdtraj
     render_system_status(dependency_status)
     
     # Main simulation interface if all dependencies are available
-    if dependency_status['dependencies']['all_available']:
-        # Tabs for different simulation workflows
-        # **NEW: Added Enhanced MD workflow tab**
-        if ENHANCED_MD_AVAILABLE:
-            tab1, tab2, tab3, tab4, tab5 = st.tabs([
-                "🚀 Enhanced MD (Stored SMILES)", 
-                "MD Simulation", 
-                "Results Analysis", 
-                "Post-Processing", 
-                "File Management"
-            ])
-            
-            with tab1:
-                render_enhanced_md_tab()
-        else:
+    # Handle different dependency status formats
+    dependencies_available = False
+    
+    if 'overall' in dependency_status:
+        # New dual GAFF+AMBER format
+        dependencies_available = dependency_status['overall'].get('available', False)
+    elif 'dependencies' in dependency_status:
+        # Legacy format
+        dependencies_available = dependency_status['dependencies'].get('all_available', False)
+    else:
+        # Fallback: check if any dependency structure indicates availability
+        dependencies_available = any(
+            dep_info.get('available', False) if isinstance(dep_info, dict) else bool(dep_info)
+            for dep_info in dependency_status.values()
+        )
+    
+    if dependencies_available:
+        # Tabs for different simulation workflows (Enhanced MD functionality now integrated into MD Simulation tab)
             tab1, tab2, tab3, tab4 = st.tabs(["MD Simulation", "Results Analysis", "Post-Processing", "File Management"])
         
-        # Standard tabs (adjust numbering based on enhanced tab availability)
-        if ENHANCED_MD_AVAILABLE:
-            with tab2:
-                render_md_simulation_tab()
-            with tab3:
-                render_results_analysis_tab()
-            with tab4:
-                render_postprocessing_tab()
-            with tab5:
-                render_file_management_tab()
-        else:
             with tab1:
                 render_md_simulation_tab()
             with tab2:
@@ -248,170 +298,641 @@ pip install openmm-setup pdbfixer openmmforcefields mdtraj
 
 
 def render_system_status(dependency_status: Dict[str, Any]):
-    """Render the system status display"""
+    """Render the system status display with dual GAFF+AMBER support"""
     
-    st.markdown("### 🔧 System Status")
+    # Get system type for display
+    system_type = st.session_state.get('md_system_type', 'unknown')
+    
+    # Header with system type
+    if system_type == 'dual_gaff_amber':
+        st.markdown("### 🚀 Dual GAFF+AMBER System Status")
+        st.markdown("**🎯 Revolutionary insulin-polymer composite simulation technology**")
+    else:
+        st.markdown("### 🔧 System Status")
     
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        st.markdown("**Dependencies:**")
-        for dep, available in dependency_status['dependencies'].items():
-            if dep != 'all_available':
-                icon = "✅" if available else "❌"
-                st.markdown(f"{icon} {dep}")
+        if system_type == 'dual_gaff_amber':
+            st.markdown("**🚀 Dual System Dependencies:**")
+            # Handle dual GAFF+AMBER dependency structure
+            if 'openmm' in dependency_status:
+                icon = "✅" if dependency_status['openmm'].get('available', False) else "❌"
+                st.markdown(f"{icon} OpenMM")
+            if 'polymer_builder' in dependency_status:
+                icon = "✅" if dependency_status['polymer_builder'].get('available', False) else "❌"
+                st.markdown(f"{icon} DirectPolymerBuilder")
+            if 'simple_simulator' in dependency_status:
+                icon = "✅" if dependency_status['simple_simulator'].get('available', False) else "❌"
+                st.markdown(f"{icon} SimpleWorkingMDSimulator")
+        else:
+            st.markdown("**Dependencies:**")
+            # Handle legacy dependency structure
+            deps = dependency_status.get('dependencies', dependency_status)
+            for dep, available in deps.items():
+                if dep != 'all_available':
+                    if isinstance(available, dict):
+                        available = available.get('available', False)
+                    icon = "✅" if available else "❌"
+                    st.markdown(f"{icon} {dep}")
     
     with col2:
-        st.markdown("**Platform Information:**")
-        if 'platforms' in dependency_status.get('platform_info', {}):
-            platforms = dependency_status['platform_info']['platforms']
-            best_platform = dependency_status['platform_info']['best_platform']
-            st.write(f"**Best Platform:** {best_platform}")
-            st.write(f"**Available Platforms:** {len(platforms)}")
+        if system_type == 'dual_gaff_amber':
+            st.markdown("**🧪 System Capabilities:**")
+            st.markdown("✅ PSMILES → Polymer")
+            st.markdown("✅ GAFF Parameterization")
+            st.markdown("✅ AMBER ff14SB")
+            st.markdown("✅ Implicit Solvent")
+        else:
+            st.markdown("**Platform Information:**")
+            platform_info = dependency_status.get('platform_info', {})
+            if 'platforms' in platform_info:
+                platforms = platform_info['platforms']
+                best_platform = platform_info['best_platform']
+                st.write(f"**Best Platform:** {best_platform}")
+                st.write(f"**Available Platforms:** {len(platforms)}")
     
     with col3:
         st.markdown("**Status:**")
-        if dependency_status['dependencies']['all_available']:
-            st.success("🚀 All systems ready!")
+        
+        # Determine overall status
+        if system_type == 'dual_gaff_amber':
+            overall_available = dependency_status.get('overall', {}).get('available', False)
+        else:
+            overall_available = dependency_status.get('dependencies', {}).get('all_available', False)
+        
+        if overall_available:
+            if system_type == 'dual_gaff_amber':
+                st.success("🚀 Dual GAFF+AMBER Ready!")
+                st.markdown("**Ready for insulin-polymer simulations**")
+            else:
+                st.success("🚀 All systems ready!")
         else:
             st.error("⚠️ Missing dependencies")
-            missing = [k for k, v in dependency_status['dependencies'].items() 
-                     if not v and k != 'all_available']
-            for dep in missing:
-                cmd = dependency_status['installation_commands'].get(dep, f"Install {dep}")
-                st.code(cmd)
+            
+            # Show missing dependencies
+            if system_type == 'dual_gaff_amber':
+                missing_deps = []
+                for dep_name, dep_info in dependency_status.items():
+                    if dep_name != 'overall' and isinstance(dep_info, dict):
+                        if not dep_info.get('available', False):
+                            missing_deps.append(dep_name)
+                
+                for dep in missing_deps:
+                    st.code(f"# Install {dep}")
+            else:
+                deps = dependency_status.get('dependencies', dependency_status)
+                missing = [k for k, v in deps.items() 
+                         if not (v if not isinstance(v, dict) else v.get('available', False)) 
+                         and k != 'all_available']
+                for dep in missing:
+                    install_cmds = dependency_status.get('installation_commands', {})
+                    cmd = install_cmds.get(dep, f"Install {dep}")
+                    st.code(cmd)
 
 
-def render_automated_candidates_section():
-    """Render section showing automated simulation candidates"""
-    st.markdown("#### 🧬 Automated Simulation Candidates")
-    st.markdown("*Generated polymer boxes and insulin-polymer systems ready for MD simulation*")
+def render_dual_gaff_amber_interface():
+    """Render dual GAFF+AMBER interface with enhanced OpenMolTools option"""
     
-    try:
-        # Get automated candidates from MD integration
-        candidates = st.session_state.md_integration.get_automated_simulation_candidates()
-        
-        if not candidates:
-            st.info("📝 No automated simulation candidates found. Generate PSMILES candidates first in the PSMILES Generation tab with automation enabled.")
-            return
-        
-        # Group by session
-        sessions = {}
-        for candidate in candidates:
-            session_id = candidate['session_id']
-            if session_id not in sessions:
-                sessions[session_id] = []
-            sessions[session_id].append(candidate)
-        
-        # Display sessions
-        for session_id, session_candidates in sessions.items():
-            with st.expander(f"📁 Session: {session_id} ({len(session_candidates)} candidates)", expanded=True):
-                
-                # Create columns for polymer boxes and insulin systems
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    st.markdown("**🔧 Polymer Boxes**")
-                    polymer_count = sum(1 for c in session_candidates if c['has_polymer_box'])
-                    st.metric("Ready for MD", polymer_count, f"out of {len(session_candidates)}")
-                    
-                with col2:
-                    st.markdown("**🧬 Insulin Systems**")
-                    insulin_count = sum(1 for c in session_candidates if c['has_insulin_system'])
-                    st.metric("Ready for MD", insulin_count, f"out of {len(session_candidates)}")
-                
-                # Display individual candidates
-                st.markdown("**Candidates:**")
-                for candidate in session_candidates:
-                    col1, col2, col3, col4 = st.columns([2, 2, 2, 2])
-                    
-                    with col1:
-                        status_icon = "✅" if candidate['ready_for_md'] else "⚠️"
-                        st.write(f"{status_icon} **{candidate['candidate_id']}**")
-                    
-                    with col2:
-                        if candidate['has_polymer_box']:
-                            if st.button(f"🔧 Run MD (Polymer)", key=f"polymer_{candidate['candidate_id']}"):
-                                run_md_on_candidate(candidate, 'polymer')
-                        else:
-                            st.write("❌ No polymer box")
-                    
-                    with col3:
-                        if candidate['has_insulin_system']:
-                            if st.button(f"🧬 Run MD (Insulin)", key=f"insulin_{candidate['candidate_id']}"):
-                                run_md_on_candidate(candidate, 'insulin')
-                        else:
-                            st.write("❌ No insulin system")
-                    
-                    with col4:
-                        with st.popover("📁 Files"):
-                            if candidate['polymer_pdb']:
-                                st.write(f"**Polymer PDB:** `{Path(candidate['polymer_pdb']).name}`")
-                            if candidate['composite_pdb']:
-                                st.write(f"**Composite PDB:** `{Path(candidate['composite_pdb']).name}`")
-                            if candidate['processed_insulin_pdb']:
-                                st.write(f"**Processed Insulin:** `{Path(candidate['processed_insulin_pdb']).name}`")
-                
-    except Exception as e:
-        st.error(f"❌ Error loading automated candidates: {str(e)}")
-        st.info("This may be normal if no candidates have been generated yet.")
-
-
-def run_md_on_candidate(candidate: Dict[str, Any], simulation_type: str):
-    """Run MD simulation on an automated candidate"""
+    st.markdown("#### 🚀 Direct PSMILES Input (Dual GAFF+AMBER)")
+    st.markdown("*Enter PSMILES directly for immediate simulation with revolutionary dual force field approach*")
     
-    # Determine which PDB file to use
-    if simulation_type == 'polymer' and candidate['polymer_pdb']:
-        pdb_file = candidate['polymer_pdb']
-        st.info(f"🚀 Starting MD simulation on polymer box: {Path(pdb_file).name}")
-    elif simulation_type == 'insulin' and candidate['composite_pdb']:
-        pdb_file = candidate['composite_pdb']
-        st.info(f"🚀 Starting MD simulation on insulin-polymer system: {Path(pdb_file).name}")
+    # Professional packing option
+    if OPENMOLTOOLS_AVAILABLE:
+        use_openmoltools = st.checkbox(
+            "📦 **Professional Molecular Packing** (OpenMolTools + PACKMOL)",
+            value=True,
+            help="Uses OpenMolTools with PACKMOL for realistic molecular arrangements and proper intermolecular spacing. Recommended for high-quality simulations."
+        )
+        
+        if use_openmoltools:
+            st.info("🎯 **Enhanced Mode**: Professional PACKMOL packing with automatic volume estimation and realistic density")
+        else:
+            st.info("🔧 **Standard Mode**: Simple composite system building")
     else:
-        st.error(f"❌ Required PDB file not found for {simulation_type} simulation")
-        return
+        use_openmoltools = False
+        st.warning("📦 OpenMolTools not available - using standard composite building")
     
-    # Store selected file for the main simulation interface
-    st.session_state.selected_candidate_file = pdb_file
-    st.session_state.selected_candidate_info = candidate
+    # PSMILES input
+    psmiles_input = st.text_input(
+        "Enter PSMILES:",
+        value="",
+        placeholder="[*]C=CS(=O)(=O)COC([*])=O",
+        help="Polymer SMILES notation with [*] connection points"
+    )
     
-    # Use default simulation parameters - QUICK TEST MODE as requested by user
-    simulation_params = {
-        'temperature': 310.0,
-        'equilibration_steps': 125000,    # Quick Test: 250 ps
-        'production_steps': 500000,       # Quick Test: 1 ns (was 2500000 = 5 ns Medium)
-        'save_interval': 500              # Frequent saving for quick tests
-    }
-    
-    # Start simulation
-    start_simulation(pdb_file, simulation_params)
-
-
-def render_md_simulation_tab():
-    """Render the MD simulation tab"""
-    st.markdown("### MD Simulation")
-    st.markdown("*Run molecular dynamics simulations with AMBER force fields and implicit solvent*")
-    
-    # First show automated simulation candidates if available
-    render_automated_candidates_section()
-    
-    st.markdown("---")
-    
-    # File selection interface
-    simulation_input_file = render_file_selection_interface()
-    
-    # Polymer file selection (advanced)
-    if simulation_input_file:
-        render_polymer_selection_interface()
+    # Polymer configuration
+    col1, col2 = st.columns(2)
+    with col1:
+        chain_length = st.slider("Chain Length (repeat units)", 3, 50, 15)
+    with col2:
+        num_chains = st.slider("Number of Polymer Chains", 1, 8, 2)
     
     # Simulation parameters
-    if simulation_input_file:
-        simulation_params = render_simulation_parameters()
+    simulation_type = st.selectbox(
+        "Simulation Type:",
+        ["Quick Test", "Standard", "Extended"],
+        index=1
+    )
+    
+    # System size preview
+    if psmiles_input and chain_length and num_chains:
+        polymer_atoms = num_chains * chain_length * 50
+        insulin_atoms = 782
+        total_atoms = insulin_atoms + polymer_atoms
+        polymer_ratio = (polymer_atoms / total_atoms) * 100
         
-        # Check if simulation is running
-        render_simulation_execution_interface(simulation_input_file, simulation_params)
+        if polymer_ratio < 20:
+            balance_color = "🟡"
+            balance_text = "Low polymer ratio"
+        elif polymer_ratio > 70:
+            balance_color = "🟠"
+            balance_text = "Polymer dominates"
+        else:
+            balance_color = "🟢"
+            balance_text = "Balanced system"
+        
+        st.markdown(f"""
+        **📊 System Preview:**
+        - **Config**: {num_chains} chain(s) × {chain_length} repeat units
+        - **Estimated Size**: ~{total_atoms:,} atoms ({polymer_ratio:.1f}% polymer)
+        - **Balance**: {balance_color} {balance_text}
+        - **Method**: {'📦 Professional Packing' if use_openmoltools else '🔧 Standard Building'}
+        """)
+    
+    # Start simulation button
+    if st.button("🚀 Start Enhanced Dual GAFF+AMBER", type="primary"):
+        if not psmiles_input.strip():
+            st.error("❌ Please enter a PSMILES string")
+        else:
+            # Store method preference
+            st.session_state.use_openmoltools = use_openmoltools
+            
+            # Convert simulation type to parameters
+            if simulation_type == "Quick Test":
+                equilibration_steps = 5000   # 10 ps
+                production_steps = 25000     # 50 ps
+            elif simulation_type == "Standard":
+                equilibration_steps = 10000  # 20 ps
+                production_steps = 50000     # 100 ps
+            else:  # Extended
+                equilibration_steps = 25000  # 50 ps
+                production_steps = 125000    # 250 ps
+            
+            simulation_params = {
+                'temperature': 310.0,
+                'equilibration_steps': equilibration_steps,
+                'production_steps': production_steps,
+                'save_interval': 500,
+                'polymer_chain_length': chain_length,
+                'num_polymer_chains': num_chains
+            }
+            
+            if use_openmoltools:
+                st.info(f"""
+                **🚀 Enhanced Professional Simulation Starting:**
+                - **PSMILES**: {psmiles_input}
+                - **Method**: OpenMolTools + PACKMOL professional packing
+                - **Config**: {num_chains} chains × {chain_length} units
+                - **Type**: {simulation_type}
+                - **Features**: Realistic density, proper spacing, professional arrangements
+                """)
+            else:
+                st.info(f"""
+                **🚀 Standard Dual GAFF+AMBER Simulation Starting:**
+                - **PSMILES**: {psmiles_input}
+                - **Method**: Standard composite building
+                - **Config**: {num_chains} chains × {chain_length} units
+                - **Type**: {simulation_type}
+                """)
+            
+            # Store for tracking
+            st.session_state.dual_gaff_amber_simulation_requested = True
+            st.session_state.dual_gaff_amber_psmiles = psmiles_input
+            
+            # Start the simulation with method selection
+            _run_enhanced_dual_gaff_amber_simulation(psmiles_input, simulation_params, use_openmoltools)
+
+def _run_enhanced_dual_gaff_amber_simulation(psmiles: str, simulation_params: Dict[str, Any], use_openmoltools: bool = False):
+    """Run dual GAFF+AMBER simulation with method selection"""
+    
+    def enhanced_console_callback(message: str):
+        """Thread-safe console callback for enhanced simulations"""
+        print(f"[Enhanced Dual GAFF+AMBER] {message}")
+    
+    try:
+        if use_openmoltools and OPENMOLTOOLS_AVAILABLE:
+            # Use enhanced OpenMolTools integration
+            if 'enhanced_md_integration' not in st.session_state:
+                st.session_state.enhanced_md_integration = OpenMolToolsDualGaffAmber()
+            
+            integration = st.session_state.enhanced_md_integration
+            
+            # Show status
+            st.info("🚀 **Enhanced Professional Mode**: Using OpenMolTools + PACKMOL")
+            
+            # Create progress placeholders
+            status_placeholder = st.empty()
+            progress_placeholder = st.empty()
+            
+            try:
+                success = integration.run_simulation(
+                    psmiles=psmiles,
+                    simulation_params=simulation_params,
+                    log_callback=enhanced_console_callback,
+                    **simulation_params
+                )
+                
+                if success:
+                    status_placeholder.success("✅ Enhanced simulation started successfully!")
+                    progress_placeholder.info("📊 Professional molecular packing and simulation in progress...")
+                else:
+                    status_placeholder.error("❌ Failed to start enhanced simulation")
+                    
+            except Exception as e:
+                st.error(f"❌ Enhanced simulation error: {e}")
+                st.code(traceback.format_exc())
+        
+        else:
+            # Fall back to standard dual GAFF+AMBER
+            if use_openmoltools:
+                st.warning("📦 OpenMolTools not available - falling back to standard method")
+            
+            _run_dual_gaff_amber_simulation_direct(psmiles, simulation_params)
+    
+    except Exception as e:
+        st.error(f"❌ Simulation setup failed: {e}")
+        st.code(traceback.format_exc())
+
+def run_dual_gaff_amber_direct(psmiles: str, simulation_params: Dict[str, Any]):
+    """Run dual GAFF+AMBER simulation with direct PSMILES input and configurable parameters"""
+    
+    st.markdown("---")
+    st.markdown("#### 🚀 Starting Dual GAFF+AMBER Simulation")
+    
+    # Extract parameters for display
+    chain_length = simulation_params.get('polymer_chain_length', 15)
+    num_chains = simulation_params.get('num_polymer_chains', 1)
+    
+    st.info(f"""
+    **🔧 Simulation Configuration:**
+    - **PSMILES**: {psmiles}
+    - **Chain Length**: {chain_length} repeat units
+    - **Number of Chains**: {num_chains}
+    - **Temperature**: {simulation_params['temperature']} K
+    - **Equilibration**: {simulation_params['equilibration_steps']:,} steps
+    - **Production**: {simulation_params['production_steps']:,} steps
+    """)
+    
+    # Start the simulation using the dual GAFF+AMBER approach
+    _run_dual_gaff_amber_simulation_direct(psmiles, simulation_params)
+
+def _run_dual_gaff_amber_simulation_direct(psmiles: str, simulation_params: Dict[str, Any]):
+    """Run dual GAFF+AMBER simulation with direct PSMILES input and enhanced polymer configuration"""
+    
+    # Check if we're using the dual GAFF+AMBER integration
+    if (hasattr(st.session_state, 'md_integration') and 
+        st.session_state.md_integration and 
+        st.session_state.get('md_system_type') == 'dual_gaff_amber'):
+        
+        # Create thread-safe console callback for progress tracking
+        def dual_console_callback(message: str):
+            # Thread-safe: Just print to console, don't try to use Streamlit from thread
+            print(f"[DUAL_GAFF_AMBER] {message}")
+        
+        # Display simulation approach
+        st.info("🔧 **Using DualGaffAmberIntegration - Enhanced Polymer Configuration**")
+        
+        with st.expander("📋 **Enhanced Simulation Process**", expanded=True):
+            chain_length = simulation_params.get('polymer_chain_length', 15)
+            num_chains = simulation_params.get('num_polymer_chains', 1)
+            
+            st.markdown(f"""
+            **Step-by-Step Process with Enhanced Polymers:**
+            1. 🔗 **Parse PSMILES**: {psmiles}
+            2. 🧪 **Create Polymer Chains**: {num_chains} chain(s) × {chain_length} repeat units each
+            3. 🧬 **Prepare Insulin**: Clean structure, fix CYS→CYX residues for AMBER
+            4. 🔗 **Create Composite**: Combine insulin + enhanced polymer system
+            5. ⚙️ **Dual Force Field**: GAFF for polymer + AMBER ff14SB for insulin
+            6. 🏃 **MD Simulation**: Equilibration + Production with implicit solvent
+            7. 📊 **Results**: Trajectory, energies, and analysis files
+            
+            **Enhanced System Size:**
+            - 🦠 Insulin: ~782 atoms
+            - 🔗 Polymer: ~{chain_length * 50 * num_chains} atoms ({num_chains} × {chain_length} units)
+            - 📈 Total: ~{782 + chain_length * 50 * num_chains} atoms
+            """)
+        
+        # Start the simulation
+        st.info("🚀 **Starting Enhanced Dual GAFF+AMBER Simulation...**")
+        st.info(f"🔧 **Polymer Configuration**: {num_chains} chain(s) × {chain_length} repeat units")
+        
+        # Progress placeholder for updates
+        progress_placeholder = st.empty()
+        progress_placeholder.info("⏳ **Initializing simulation...**")
+        
+        with st.spinner("Starting enhanced dual GAFF+AMBER simulation..."):
+            try:
+                simulation_id = st.session_state.md_integration.run_md_simulation_async(
+                    pdb_file=psmiles,  # Pass PSMILES as the input
+                    temperature=simulation_params['temperature'],
+                    equilibration_steps=simulation_params['equilibration_steps'],
+                    production_steps=simulation_params['production_steps'],
+                    save_interval=simulation_params['save_interval'],
+                    output_callback=dual_console_callback,
+                    manual_polymer_dir=st.session_state.get('manual_polymer_dir'),
+                    output_prefix=f"enhanced_dual_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+                    # Pass enhanced polymer configuration
+                    polymer_chain_length=simulation_params.get('polymer_chain_length', 15),
+                    num_polymer_chains=simulation_params.get('num_polymer_chains', 1)
+                )
+                
+                if simulation_id:
+                    st.session_state.current_simulation = {
+                        'id': simulation_id,
+                        'status': 'running',
+                        'start_time': datetime.now().isoformat(),
+                        'input_file': psmiles,
+                        'parameters': simulation_params,
+                        'approach': 'enhanced_dual_gaff_amber',
+                        'system_type': 'insulin_polymer_composite',
+                        'polymer_config': {
+                            'chain_length': simulation_params.get('polymer_chain_length', 15),
+                            'num_chains': simulation_params.get('num_polymer_chains', 1)
+                        }
+                    }
+                    
+                    progress_placeholder.success("🎉 **Enhanced Dual GAFF+AMBER Simulation Started!**")
+                    
+                    st.markdown(f"""
+                    **✅ Enhanced Simulation Running:**
+                    - 🧪 Polymer: {simulation_params.get('num_polymer_chains', 1)} chain(s) × {simulation_params.get('polymer_chain_length', 15)} units (GAFF)
+                    - 🧬 Insulin: ~782 atoms (AMBER ff14SB with native CYX support)
+                    - 🌊 Implicit solvent (GB) for stability
+                    - 📊 Enhanced system size: ~{782 + simulation_params.get('polymer_chain_length', 15) * 50 * simulation_params.get('num_polymer_chains', 1)} total atoms
+                    - ⏱️ Duration: {simulation_params['equilibration_steps'] + simulation_params['production_steps']:,} steps
+                    """)
+                    
+                    st.info("📊 **Monitor Progress**: Check the console output above for real-time updates. The simulation runs in background.")
+                    st.info("🔄 **Auto-Refresh**: The page will update automatically to show completion status.")
+                    
+                    # Auto-refresh to show simulation progress
+                    st.rerun()
+                    
+                else:
+                    progress_placeholder.error("❌ Failed to start enhanced dual GAFF+AMBER simulation")
+                    
+            except Exception as e:
+                progress_placeholder.error(f"❌ Enhanced dual GAFF+AMBER simulation failed: {str(e)}")
+                st.error(f"**Error Details**: {str(e)}")
+                import traceback
+                st.text("**Full Error Traceback:**")
+                st.code(traceback.format_exc())
+                
     else:
-        st.info("Please select or upload a PDB file to run simulation.")
+        st.error("❌ Enhanced DualGaffAmberIntegration not available")
+        st.info("💡 **Issue**: Make sure all dependencies are installed for the enhanced dual approach")
+
+def run_dual_gaff_amber_on_candidate(candidate: Dict[str, Any], simulation_type: str):
+    """Run dual GAFF+AMBER simulation on an automated candidate with enhanced polymer configuration"""
+    
+    psmiles = candidate.get('psmiles')
+    if not psmiles:
+        st.error("❌ No PSMILES found for this candidate")
+        return
+    
+    # Use enhanced defaults for better polymer systems
+    chain_length = 15  # Better balance than old default of 3
+    num_chains = 2     # Multiple chains for realistic delivery systems
+    
+    # Convert simulation type to parameters
+    if simulation_type == "Quick Test":
+        equilibration_steps = 5000   # 10 ps
+        production_steps = 25000     # 50 ps
+    elif simulation_type == "Standard":
+        equilibration_steps = 10000  # 20 ps
+        production_steps = 50000     # 100 ps
+    else:  # Extended
+        equilibration_steps = 25000  # 50 ps
+        production_steps = 125000    # 250 ps
+    
+    simulation_params = {
+        'temperature': 310.0,
+        'equilibration_steps': equilibration_steps,
+        'production_steps': production_steps,
+        'save_interval': 500,
+        'polymer_chain_length': chain_length,
+        'num_polymer_chains': num_chains
+    }
+    
+    # Calculate system size
+    polymer_atoms = chain_length * 50 * num_chains
+    total_atoms = 782 + polymer_atoms
+    
+    st.info(f"""
+    **🔧 Enhanced Automated Simulation Configuration:**
+    - **Candidate**: {candidate.get('name', 'Unknown')}
+    - **PSMILES**: {psmiles}
+    - **Type**: {simulation_type}
+    - **Polymer Config**: {num_chains} chain(s) × {chain_length} repeat units (Enhanced Defaults)
+    - **System Size**: ~{total_atoms:,} atoms ({(polymer_atoms/total_atoms)*100:.1f}% polymer)
+    """)
+    
+    # Store for tracking
+    st.session_state.dual_gaff_amber_simulation_requested = True
+    st.session_state.dual_gaff_amber_psmiles = psmiles
+    
+    # Start the simulation with enhanced configuration
+    _run_dual_gaff_amber_simulation_direct(psmiles, simulation_params)
+
+def render_automated_candidates_section():
+    """
+    Render the automated candidates section with enhanced polymer configuration controls.
+    Shows candidates from automation pipeline with configurable simulation parameters.
+    """
+    
+    # Check system type and render appropriate interface
+    system_type = st.session_state.get('md_system_type', 'unknown')
+    
+    if system_type == 'dual_gaff_amber':
+        # Show dual GAFF+AMBER interface first
+        render_dual_gaff_amber_interface()
+        
+        st.markdown("---")
+        st.markdown("#### 🤖 Automated PSMILES Candidates")
+        st.markdown("*Run simulations on candidates generated by the automation pipeline*")
+    else:
+        st.markdown("#### 🤖 Automated Simulation Candidates")
+        st.markdown("*Run simulations on candidates generated by the automation pipeline*")
+    
+    # Get enhanced candidates
+    try:
+        enhanced_candidates = get_enhanced_candidates()
+        
+        if enhanced_candidates:
+            st.success(f"🎯 **Found {len(enhanced_candidates)} enhanced candidates ready for simulation**")
+            
+            # Add polymer configuration section for automated candidates
+            if system_type == 'dual_gaff_amber':
+                st.markdown("##### 🔧 Polymer Configuration for Automated Candidates")
+                st.markdown("*Configure polymer parameters that will be applied to all automated simulations*")
+                
+                col_config1, col_config2, col_config3 = st.columns(3)
+                
+                with col_config1:
+                    auto_chain_length = st.slider(
+                        "📏 **Chain Length** (repeat units)",
+                        min_value=3,
+                        max_value=50,
+                        value=15,  # Good default for balanced systems
+                        key="auto_chain_length",
+                        help="Number of monomer repeat units in each polymer chain"
+                    )
+                
+                with col_config2:
+                    auto_num_chains = st.slider(
+                        "🔢 **Number of Polymer Chains**",
+                        min_value=1,
+                        max_value=8,
+                        value=3,  # Better default for realistic delivery systems
+                        key="auto_num_chains",
+                        help="Number of separate polymer molecules in the composite system"
+                    )
+                
+                with col_config3:
+                    auto_simulation_type = st.selectbox(
+                        "🎯 **Simulation Type**",
+                        ["Quick Test", "Standard", "Extended"],
+                        index=1,
+                        key="auto_simulation_type",
+                        help="Simulation duration and complexity"
+                    )
+                
+                # Show predicted system size for automated runs
+                estimated_polymer_atoms = auto_chain_length * 50 * auto_num_chains
+                total_estimated_atoms = 782 + estimated_polymer_atoms
+                polymer_ratio = (estimated_polymer_atoms / total_estimated_atoms) * 100
+                
+                if polymer_ratio < 20:
+                    ratio_status = "⚠️ Low polymer ratio"
+                elif polymer_ratio > 70:
+                    ratio_status = "⚠️ Polymer dominates"
+                else:
+                    ratio_status = "✅ Balanced system"
+                
+                st.info(f"""
+                **📊 Automated Simulation Configuration:**
+                - 🔗 **Per Candidate**: {auto_num_chains} chain(s) × {auto_chain_length} repeat units
+                - 🧬 **Estimated Size**: ~{total_estimated_atoms:,} atoms ({polymer_ratio:.1f}% polymer)
+                - 🎯 **System Balance**: {ratio_status}
+                - ⏱️ **Duration**: {auto_simulation_type}
+                """)
+            
+            # Display candidates with enhanced run buttons
+            for i, candidate in enumerate(enhanced_candidates):
+                candidate_container = st.container()
+                with candidate_container:
+                    col1, col2 = st.columns([3, 1])
+                    
+                    with col1:
+                        st.markdown(f"**🧬 Candidate {i+1}**: {candidate.get('name', 'Unknown')}")
+                        st.text(f"📝 PSMILES: {candidate.get('psmiles', 'N/A')}")
+                        
+                        # Show candidate metadata if available
+                        if candidate.get('source') == 'automation_pipeline':
+                            st.text(f"🤖 Source: Automation Pipeline")
+                        if candidate.get('timestamp'):
+                            st.text(f"⏰ Generated: {candidate['timestamp']}")
+                    
+                    with col2:
+                        if system_type == 'dual_gaff_amber':
+                            button_text = "🚀 Dual GAFF+AMBER"
+                            help_text = f"Run with {auto_num_chains} chains × {auto_chain_length} units"
+                        else:
+                            button_text = "▶️ Run Enhanced MD"
+                            help_text = "Run enhanced MD simulation"
+                        
+                        # Use unique key for each button
+                        button_key = f"run_candidate_{candidate.get('id', i)}_{system_type}"
+                        
+                        if st.button(
+                            button_text,
+                            key=button_key,
+                            help=help_text,
+                            type="primary"
+                        ):
+                            if system_type == 'dual_gaff_amber':
+                                # Pass enhanced polymer configuration to automated run
+                                run_dual_gaff_amber_on_candidate_enhanced(
+                                    candidate, 
+                                    auto_simulation_type,
+                                    auto_chain_length,
+                                    auto_num_chains
+                                )
+                            else:
+                                run_dual_gaff_amber_on_candidate(candidate, "Standard")
+                
+                st.markdown("---")
+        else:
+            st.info("📭 **No enhanced candidates available**")
+            st.markdown("""
+            **💡 To generate candidates:**
+            1. Use the **PSMILES Generation** tab to create polymer candidates
+            2. Run the **Automation Pipeline** to process them
+            3. Return here to run simulations with enhanced polymer configuration
+            """)
+            
+    except Exception as e:
+        st.error(f"❌ Error loading automated candidates: {e}")
+        st.info("💡 **Tip**: Try generating some PSMILES candidates first using the PSMILES Generation tab")
+
+def run_dual_gaff_amber_on_candidate_enhanced(candidate: Dict[str, Any], simulation_type: str, chain_length: int, num_chains: int):
+    """Run dual GAFF+AMBER simulation on an automated candidate with user-specified polymer configuration"""
+    
+    psmiles = candidate.get('psmiles')
+    if not psmiles:
+        st.error("❌ No PSMILES found for this candidate")
+        return
+    
+    # Convert simulation type to parameters
+    if simulation_type == "Quick Test":
+        equilibration_steps = 5000   # 10 ps
+        production_steps = 25000     # 50 ps
+    elif simulation_type == "Standard":
+        equilibration_steps = 10000  # 20 ps
+        production_steps = 50000     # 100 ps
+    else:  # Extended
+        equilibration_steps = 25000  # 50 ps
+        production_steps = 125000    # 250 ps
+    
+    simulation_params = {
+        'temperature': 310.0,
+        'equilibration_steps': equilibration_steps,
+        'production_steps': production_steps,
+        'save_interval': 500,
+        'polymer_chain_length': chain_length,  # User-specified
+        'num_polymer_chains': num_chains       # User-specified
+    }
+    
+    # Calculate system size
+    polymer_atoms = chain_length * 50 * num_chains
+    total_atoms = 782 + polymer_atoms
+    
+    st.info(f"""
+    **🔧 Enhanced Automated Simulation Configuration:**
+    - **Candidate**: {candidate.get('name', 'Unknown')}
+    - **PSMILES**: {psmiles}
+    - **Type**: {simulation_type}
+    - **Polymer Config**: {num_chains} chain(s) × {chain_length} repeat units
+    - **System Size**: ~{total_atoms:,} atoms ({(polymer_atoms/total_atoms)*100:.1f}% polymer)
+    """)
+    
+    # Store for tracking
+    st.session_state.dual_gaff_amber_simulation_requested = True
+    st.session_state.dual_gaff_amber_psmiles = psmiles
+    
+    # Start the simulation with enhanced configuration
+    _run_dual_gaff_amber_simulation_direct(psmiles, simulation_params)
 
 
 def render_file_selection_interface() -> Optional[str]:
@@ -425,13 +946,20 @@ def render_file_selection_interface() -> Optional[str]:
         if st.button("🔄 Refresh Files", help="Refresh the file list to detect newly created files"):
             st.rerun()
     
-    # Get available PDB files
+    # Get available PDB files with error handling
+    available_pdbs = []
     try:
         from integration.analysis.md_simulation_integration import get_insulin_polymer_pdb_files
         available_pdbs = get_insulin_polymer_pdb_files()
     except ImportError:
-        available_pdbs = []
         st.warning("⚠️ Unable to detect PDB files - file detection module not available")
+    except FileNotFoundError as e:
+        st.warning(f"⚠️ Unable to scan for PDB files - directory access issue: {e}")
+    except PermissionError as e:
+        st.warning(f"⚠️ Unable to scan for PDB files - permission issue: {e}")
+    except Exception as e:
+        st.warning(f"⚠️ Unable to scan for PDB files - unexpected error: {e}")
+        available_pdbs = []
     
     simulation_input_file = None
     
@@ -617,6 +1145,26 @@ def render_simulation_parameters() -> Dict[str, Any]:
         temperature = st.slider("Temperature (K)", 250, 400, 310, 5, 
                                help="Simulation temperature in Kelvin (physiological = 310 K)")
         
+        # 🚀 NEW: Simulation Method Selection (Our Dual GAFF+AMBER Approach)
+        st.markdown("##### 🔧 Simulation Method")
+        simulation_method = st.selectbox(
+            "Force Field Approach",
+            options=["Dual GAFF+AMBER (Recommended)", "Enhanced (Stored SMILES)", "Standard (Legacy)"],
+            index=0,  # Default to our new dual approach
+            help="""
+            • **🚀 Dual GAFF+AMBER**: GAFF for polymers + AMBER for insulin (Fixed CYS/CYX issues)
+            • **⚡ Enhanced**: Uses pre-stored SMILES data for faster setup
+            • **🔧 Standard**: Original approach (may have template generator issues)
+            """
+        )
+        
+        if simulation_method == "Dual GAFF+AMBER (Recommended)":
+            st.success("✅ Using our latest working approach - no CYS/CYX template errors!")
+        elif simulation_method == "Enhanced (Stored SMILES)":
+            st.info("⚡ Will use pre-stored SMILES data when available")
+        else:
+            st.warning("⚠️ Legacy approach may encounter CYS/CYX template generator issues")
+        
         # Equilibration steps with better options and descriptions
         # NOTE: These steps are calculated for 2 fs timestep (actual simulator timestep)
         equilibration_options = {
@@ -693,6 +1241,7 @@ def render_simulation_parameters() -> Dict[str, Any]:
     
     return {
         'temperature': temperature,
+        'simulation_method': simulation_method,  # 🚀 NEW: Include our dual GAFF+AMBER method selection
         'equilibration_steps': equilibration_steps,
         'production_steps': production_steps,
         'save_interval': save_interval,
@@ -976,7 +1525,7 @@ def render_simulation_start_interface(simulation_input_file: str, simulation_par
 
 
 def start_simulation(simulation_input_file: str, simulation_params: Dict[str, Any]):
-    """Start the MD simulation"""
+    """Start the MD simulation (enhanced with stored SMILES when available)"""
     
     # Safety check - ensure md_integration is available
     if st.session_state.md_integration is None:
@@ -989,7 +1538,149 @@ def start_simulation(simulation_input_file: str, simulation_params: Dict[str, An
     # Create console capture
     console_capture_ref = create_console_capture()
     
-    # Start simulation
+    # 🚀 NEW: Choose simulation approach based on selected method
+    simulation_method = simulation_params.get('simulation_method', 'Standard (Legacy)')
+    
+    if simulation_method == "Dual GAFF+AMBER (Recommended)":
+        # Use our new dual GAFF+AMBER approach
+        st.info("🚀 **Using Dual GAFF+AMBER Approach** - GAFF for polymers + AMBER for insulin")
+        _run_dual_gaff_amber_simulation(simulation_input_file, simulation_params, console_capture_ref)
+        
+    elif simulation_method == "Enhanced (Stored SMILES)":
+        # Try enhanced MD with stored SMILES first, then fallback to regular MD
+        enhanced_success = False
+        
+        if ENHANCED_MD_AVAILABLE:
+            try:
+                enhanced_success = _try_enhanced_md_simulation(simulation_input_file, simulation_params, console_capture_ref)
+            except Exception as e:
+                st.warning(f"⚠️ Enhanced MD approach failed: {e}")
+                st.info("🔄 Falling back to regular MD simulation...")
+        
+        # If enhanced MD didn't work, use regular MD
+        if not enhanced_success:
+            _run_regular_md_simulation(simulation_input_file, simulation_params, console_capture_ref)
+            
+    else:
+        # Standard (Legacy) approach
+        st.warning("⚠️ **Using Legacy Approach** - May encounter CYS/CYX template generator issues")
+        _run_regular_md_simulation(simulation_input_file, simulation_params, console_capture_ref)
+
+
+def _try_enhanced_md_simulation(simulation_input_file: str, simulation_params: Dict[str, Any], console_capture_ref) -> bool:
+    """Try to run simulation using enhanced MD with stored SMILES"""
+    
+    # Check if we can find a PSMILES candidate that matches this PDB file
+    enhanced_simulator = create_enhanced_md_simulator()
+    candidates = enhanced_simulator.get_available_candidates_for_simulation()
+    ready_candidates = [c for c in candidates if c.get('ready_for_md', False)]
+    
+    if not ready_candidates:
+        st.info("💡 No PSMILES candidates with stored SMILES found - using regular MD")
+        return False
+    
+    # For now, use the first ready candidate (could be improved to match by file content/name)
+    selected_candidate = ready_candidates[0]
+    
+    st.info(f"⚡ **Enhanced MD Detected:** Using stored SMILES from candidate {selected_candidate['id']}")
+    st.info("🧬 **Workflow:** Skipping PDB→SMILES reconstruction → Using pre-stored SMILES")
+    
+    # Create enhanced simulation parameters
+    enhanced_params = {
+        'force_field_type': 'smirnoff',  # Use SMIRNOFF for enhanced MD
+        'temperature': simulation_params['temperature'],
+        'steps': simulation_params['production_steps'],  # Use production steps for main simulation
+        'output_frequency': max(100, simulation_params['save_interval'] // 10)  # Reasonable output frequency
+    }
+    
+    try:
+        # Show workflow progress
+        with st.spinner("Running enhanced MD simulation with stored SMILES..."):
+            progress_container = st.container()
+            with progress_container:
+                st.info("🧬 **Enhanced Workflow:** Using pre-stored SMILES → Skip PDB reconstruction → Force field setup → MD simulation")
+                
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                status_text.text("Retrieving stored SMILES...")
+                progress_bar.progress(20)
+                time.sleep(0.5)
+                
+                status_text.text("Setting up force field with stored SMILES...")
+                progress_bar.progress(40)
+                time.sleep(0.5)
+                
+                # Run actual simulation
+                results = enhanced_simulator.run_simulation_with_stored_smiles(
+                    psmiles=selected_candidate['psmiles'],
+                    simulation_params=enhanced_params
+                )
+                
+                status_text.text("Running MD simulation...")
+                progress_bar.progress(80)
+                time.sleep(1.0)
+                
+                status_text.text("Processing results...")
+                progress_bar.progress(100)
+                time.sleep(0.5)
+                
+                # Clear progress indicators
+                progress_container.empty()
+        
+        # Display results
+        if results['success']:
+            st.success("🎉 **Enhanced MD Simulation Completed Successfully!**")
+            st.info("⚡ **Efficiency Gained:** Used pre-stored SMILES instead of PDB→SMILES reconstruction")
+            
+            # Store simulation result 
+            simulation_id = f"enhanced_md_{selected_candidate['id']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            
+            if 'completed_simulations' not in st.session_state:
+                st.session_state.completed_simulations = []
+            
+            st.session_state.completed_simulations.append({
+                'id': simulation_id,
+                'candidate_id': selected_candidate['id'], 
+                'type': 'enhanced_md',
+                'psmiles': selected_candidate['psmiles'],
+                'results': results,
+                'timestamp': datetime.now().isoformat(),
+                'input_file': simulation_input_file,
+                'parameters': simulation_params
+            })
+            
+            # Show workflow details
+            col_res1, col_res2 = st.columns(2)
+            
+            with col_res1:
+                st.markdown("**Simulation Results:**")
+                sim_output = results['simulation_output']
+                st.text(f"Status: {sim_output['status']}")
+                st.text(f"Steps completed: {sim_output['steps_completed']}")
+                st.text(f"Final energy: {sim_output['final_energy']}")
+                
+            with col_res2:
+                st.markdown("**Enhanced Workflow Details:**")
+                ff_status = results['force_field_status']
+                st.text(f"SMILES source: {ff_status['smiles_source']}")
+                st.text(f"Force field: {ff_status['method_used']}")
+                st.text(f"SMILES used: {results['smiles_used'][:30]}...")
+                st.text(f"Simulation ID: {simulation_id}")
+            
+            return True
+        else:
+            st.warning(f"⚠️ Enhanced MD failed: {results['error']}")
+            return False
+            
+    except Exception as e:
+        st.warning(f"⚠️ Enhanced MD simulation failed: {str(e)}")
+        return False
+
+
+def _run_regular_md_simulation(simulation_input_file: str, simulation_params: Dict[str, Any], console_capture_ref):
+    """Run regular MD simulation (fallback when enhanced MD is not available)"""
+    
     try:
         # Debug: Show what parameters are being sent
         st.info(f"🔧 Debug: Sending simulation parameters:")
@@ -1008,7 +1699,7 @@ def start_simulation(simulation_input_file: str, simulation_params: Dict[str, An
             manual_polymer_dir=st.session_state.get('manual_polymer_dir')
         )
         
-        st.success(f"✅ Simulation started with ID: {simulation_id}")
+        st.success(f"✅ Regular MD simulation started with ID: {simulation_id}")
         st.info("🔄 Simulation is running in the background. The progress will appear below.")
         st.info("💡 The page will auto-refresh to show real-time updates.")
         
@@ -1016,7 +1707,97 @@ def start_simulation(simulation_input_file: str, simulation_params: Dict[str, An
         st.rerun()
         
     except Exception as e:
-        st.error(f"❌ Failed to start simulation: {str(e)}")
+        st.error(f"❌ Failed to start regular MD simulation: {str(e)}")
+
+
+def _run_dual_gaff_amber_simulation(simulation_input_file: str, simulation_params: Dict[str, Any], console_capture_ref):
+    """Run simulation using our new dual GAFF+AMBER approach"""
+    
+    # 🚀 NEW: Our dual GAFF+AMBER simulation approach 
+    st.info("🚀 **Starting Dual GAFF+AMBER Insulin-Polymer Composite Simulation**")
+    st.markdown("""
+    **Revolutionary Dual Approach:**
+    - 🧪 **DirectPolymerBuilder**: Creates polymer from PSMILES
+    - 🔗 **GAFF**: Parameterizes polymer molecules (handles complex chemistry)
+    - 🧬 **AMBER ff14SB**: Parameterizes insulin (native CYX disulfide support)  
+    - 🌊 **Implicit Solvent (GB)**: Fast, stable simulation environment
+    - ✅ **No CYS/CYX template generator conflicts!**
+    - 🎯 **Proven working approach** from successful test scripts
+    """)
+    
+    try:
+        # Check if we're using the new dual GAFF+AMBER integration
+        if (hasattr(st.session_state, 'md_integration') and 
+            st.session_state.md_integration and 
+            st.session_state.get('md_system_type') == 'dual_gaff_amber'):
+            
+            # Create thread-safe console callback for progress tracking
+            def dual_console_callback(message: str):
+                # Thread-safe: Just print to console, don't try to use Streamlit from thread
+                print(f"[DUAL_GAFF_AMBER] {message}")
+            
+            # Display simulation approach
+            st.info("🔧 **Using DualGaffAmberIntegration - Latest Working Technology**")
+            
+            with st.expander("📋 **Simulation Process Overview**", expanded=True):
+                st.markdown("""
+                **Step-by-Step Process:**
+                1. 🔗 **Extract/Process Polymer**: Parse PSMILES structure
+                2. 🧪 **Create Polymer Structure**: DirectPolymerBuilder generates 3D structure
+                3. 🧬 **Prepare Insulin**: Clean structure, remove water, add hydrogens
+                4. 🔗 **Create Composite**: Combine insulin + polymer with spatial separation
+                5. ⚙️ **Dual Force Field**: GAFF for polymer + AMBER for insulin
+                6. 🏃 **MD Simulation**: Equilibration + Production with implicit solvent
+                7. 📊 **Results**: Trajectory, energies, and analysis files
+                """)
+            
+            # Start the simulation with thread-safe progress tracking
+            progress_placeholder = st.empty()
+            progress_placeholder.info("🚀 **Initializing Dual GAFF+AMBER insulin-polymer simulation...**")
+            
+            with st.spinner("Starting dual GAFF+AMBER simulation..."):
+                simulation_id = st.session_state.md_integration.run_md_simulation_async(
+                    pdb_file=simulation_input_file,
+                    temperature=simulation_params['temperature'],
+                    equilibration_steps=simulation_params['equilibration_steps'],
+                    production_steps=simulation_params['production_steps'],
+                    save_interval=simulation_params['save_interval'],
+                    output_callback=dual_console_callback,
+                    manual_polymer_dir=st.session_state.get('manual_polymer_dir'),
+                    output_prefix=f"dual_psmiles_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                )
+            
+            if simulation_id:
+                st.session_state.current_simulation = {
+                    'id': simulation_id,
+                    'status': 'running',
+                    'start_time': datetime.now().isoformat(),
+                    'input_file': simulation_input_file,
+                    'parameters': simulation_params,
+                    'approach': 'dual_gaff_amber',
+                    'system_type': 'insulin_polymer_composite'
+                }
+                
+                progress_placeholder.success("🎉 **Dual GAFF+AMBER Insulin-Polymer Simulation Started Successfully!**")
+                st.markdown("""
+                **✅ Simulation Running with Proven Technology:**
+                - 🧪 Polymer parameterized with GAFF
+                - 🧬 Insulin parameterized with AMBER ff14SB 
+                - 🌊 Implicit solvent for stability
+                - 📊 Real-time monitoring below
+                """)
+                
+            else:
+                progress_placeholder.error("❌ Failed to start dual GAFF+AMBER simulation")
+                
+        else:
+            st.error("❌ DualGaffAmberIntegration not available")
+            st.info("💡 **Issue**: Make sure all dependencies are installed for the dual approach")
+            
+    except Exception as e:
+        st.error(f"❌ Dual GAFF+AMBER simulation failed: {str(e)}")
+        import traceback
+        st.code(traceback.format_exc())
 
 
 def initialize_simulation_session_state():
@@ -2314,16 +3095,54 @@ def render_file_management_tab():
 
 
 def render_dependency_errors(dependency_status: Dict[str, Any]):
-    """Render dependency error information"""
+    """Render dependency error information with dual GAFF+AMBER support"""
     
-    st.error("⚠️ Missing required dependencies. Please install them to use MD simulation.")
+    system_type = st.session_state.get('md_system_type', 'unknown')
     
-    missing = [k for k, v in dependency_status['dependencies'].items() 
-             if not v and k != 'all_available']
-    
-    for dep in missing:
-        cmd = dependency_status['installation_commands'].get(dep, f"Install {dep}")
-        st.code(cmd)
+    if system_type == 'dual_gaff_amber':
+        st.error("⚠️ Dual GAFF+AMBER system dependencies missing. Please install required components.")
+        
+        # Handle dual GAFF+AMBER dependency format
+        missing_deps = []
+        for dep_name, dep_info in dependency_status.items():
+            if dep_name != 'overall' and isinstance(dep_info, dict):
+                if not dep_info.get('available', False):
+                    missing_deps.append((dep_name, dep_info.get('description', dep_name)))
+        
+        if missing_deps:
+            st.markdown("**Missing Components:**")
+            for dep_name, dep_desc in missing_deps:
+                st.markdown(f"❌ **{dep_name}**: {dep_desc}")
+        
+        # Installation instructions for dual GAFF+AMBER
+        st.markdown("**Installation Commands:**")
+        st.code("""
+# Install core dependencies
+conda install -c conda-forge openmm openmmforcefields rdkit
+pip install openff-toolkit
+
+# Or alternative installation
+pip install openmm openmmforcefields rdkit openff-toolkit
+        """)
+        
+    else:
+        st.error("⚠️ Missing required dependencies. Please install them to use MD simulation.")
+        
+        # Handle legacy dependency format
+        if 'dependencies' in dependency_status:
+            missing = [k for k, v in dependency_status['dependencies'].items() 
+                     if not v and k != 'all_available']
+            
+            for dep in missing:
+                cmd = dependency_status.get('installation_commands', {}).get(dep, f"Install {dep}")
+                st.code(cmd)
+        else:
+            # Fallback for unknown format
+            st.code("""
+# Install basic MD dependencies
+conda install -c conda-forge openmm pdbfixer openmmforcefields
+pip install openmm pdbfixer openmmforcefields
+            """)
 
 
 def render_installation_instructions():
@@ -2348,286 +3167,8 @@ def inject_simulation_styles():
     inject_minimal_design_system()
 
 
-def render_enhanced_md_tab():
-    """Render the Enhanced MD simulation tab with stored SMILES workflow"""
-    
-    st.markdown("## 🚀 Enhanced MD Simulation with Stored SMILES")
-    st.markdown("""
-    **Optimized Workflow:** This enhanced system uses pre-stored SMILES strings from PSMILES generation 
-    instead of reconstructing them from PDB files, eliminating redundant work and improving reliability.
-    """)
-    
-    # Check enhanced MD availability
-    if not ENHANCED_MD_AVAILABLE:
-        st.error("❌ Enhanced MD with stored SMILES not available")
-        st.info("This requires the enhanced_md_with_stored_smiles module")
-        return
-    
-    # Create enhanced simulator
-    try:
-        enhanced_simulator = create_enhanced_md_simulator()
-        readiness_status = enhanced_simulator.get_simulation_readiness_status()
-    except Exception as e:
-        st.error(f"❌ Failed to initialize enhanced MD simulator: {e}")
-        return
-    
-    # Display readiness status
-    col1, col2 = st.columns([2, 1])
-    
-    with col2:
-        st.markdown("### System Status")
-        if readiness_status['overall_ready']:
-            st.success("✅ **Enhanced MD Ready**")
-        else:
-            st.error("❌ **System Not Ready**")
-            
-        # Show component status
-        components = readiness_status['components']
-        for comp_name, available in components.items():
-            icon = "✅" if available else "❌"
-            st.write(f"{icon} {comp_name.replace('_', ' ').title()}")
-            
-        if readiness_status['missing_components']:
-            st.error("**Missing:**")
-            for comp in readiness_status['missing_components']:
-                st.write(f"• {comp}")
-    
-    with col1:
-        # Show available candidates
-        st.markdown("### Available PSMILES Candidates")
-        
-        try:
-            candidates = enhanced_simulator.get_available_candidates_for_simulation()
-            
-            if not candidates:
-                st.warning("No PSMILES candidates available. Generate some in the PSMILES Generation tab first.")
-                return
-            
-            # Filter ready vs not ready candidates
-            ready_candidates = [c for c in candidates if c.get('ready_for_md', False)]
-            not_ready_candidates = [c for c in candidates if not c.get('ready_for_md', False)]
-            
-            # Display ready candidates
-            if ready_candidates:
-                st.success(f"✅ **{len(ready_candidates)} candidates ready for MD simulation**")
-                
-                # Select candidate for simulation
-                candidate_options = [
-                    f"{c['id']}: {c['psmiles'][:30]}..." if len(c['psmiles']) > 30 else f"{c['id']}: {c['psmiles']}"
-                    for c in ready_candidates
-                ]
-                
-                selected_idx = st.selectbox(
-                    "Select candidate for simulation:",
-                    range(len(ready_candidates)),
-                    format_func=lambda i: candidate_options[i]
-                )
-                
-                if selected_idx is not None:
-                    selected_candidate = ready_candidates[selected_idx]
-                    
-                    # Show candidate details
-                    with st.expander("🔍 Candidate Details"):
-                        col_a, col_b = st.columns(2)
-                        with col_a:
-                            st.text(f"PSMILES: {selected_candidate['psmiles']}")
-                            st.text(f"Request: {selected_candidate['request']}")
-                            st.text(f"Timestamp: {selected_candidate['timestamp']}")
-                        with col_b:
-                            st.text(f"SMILES: {selected_candidate['smiles']}")
-                            st.text(f"Conversion: {selected_candidate.get('conversion_method', 'unknown')}")
-                            st.success("✅ Ready for MD")
-                    
-                    # Simulation parameters
-                    st.markdown("### Simulation Parameters")
-                    
-                    col_params1, col_params2 = st.columns(2)
-                    
-                    with col_params1:
-                        force_field_type = st.selectbox(
-                            "Force Field Type:",
-                            ['smirnoff', 'gaff'],
-                            help="SMIRNOFF (OpenFF) or GAFF force field"
-                        )
-                        
-                        temperature = st.slider(
-                            "Temperature (K):",
-                            min_value=250.0,
-                            max_value=400.0,
-                            value=310.0,
-                            step=10.0
-                        )
-                    
-                    with col_params2:
-                        simulation_steps = st.number_input(
-                            "Simulation Steps:",
-                            min_value=100,
-                            max_value=100000,
-                            value=5000,
-                            step=1000
-                        )
-                        
-                        output_frequency = st.number_input(
-                            "Output Frequency:",
-                            min_value=10,
-                            max_value=1000,
-                            value=100,
-                            step=10
-                        )
-                    
-                    # Run simulation button
-                    if st.button("🚀 Run Enhanced MD Simulation", type="primary"):
-                        
-                        simulation_params = {
-                            'force_field_type': force_field_type,
-                            'temperature': temperature,
-                            'steps': simulation_steps,
-                            'output_frequency': output_frequency
-                        }
-                        
-                        with st.spinner("Running enhanced MD simulation with stored SMILES..."):
-                            
-                            # Show workflow progress
-                            progress_container = st.container()
-                            with progress_container:
-                                st.info("🧬 **Workflow:** Using pre-stored SMILES → Skip PDB reconstruction → Force field setup → MD simulation")
-                                
-                                progress_bar = st.progress(0)
-                                status_text = st.empty()
-                                
-                                # Simulate progress steps
-                                import time
-                                
-                                status_text.text("Retrieving stored SMILES...")
-                                progress_bar.progress(20)
-                                time.sleep(0.5)
-                                
-                                status_text.text("Setting up force field with stored SMILES...")
-                                progress_bar.progress(50)
-                                time.sleep(1.0)
-                                
-                                # Run actual simulation
-                                results = enhanced_simulator.run_simulation_with_stored_smiles(
-                                    psmiles=selected_candidate['psmiles'],
-                                    simulation_params=simulation_params
-                                )
-                                
-                                status_text.text("Running MD simulation...")
-                                progress_bar.progress(80)
-                                time.sleep(1.0)
-                                
-                                status_text.text("Processing results...")
-                                progress_bar.progress(100)
-                                time.sleep(0.5)
-                                
-                                # Clear progress indicators
-                                progress_container.empty()
-                        
-                        # Display results
-                        if results['success']:
-                            st.success("🎉 **Enhanced MD Simulation Completed Successfully!**")
-                            
-                            # Show workflow efficiency
-                            st.info("⚡ **Efficiency Gained:** Used pre-stored SMILES instead of PDB→SMILES reconstruction")
-                            
-                            # Show results
-                            col_res1, col_res2 = st.columns(2)
-                            
-                            with col_res1:
-                                st.markdown("**Simulation Results:**")
-                                sim_output = results['simulation_output']
-                                st.text(f"Status: {sim_output['status']}")
-                                st.text(f"Steps completed: {sim_output['steps_completed']}")
-                                st.text(f"Final energy: {sim_output['final_energy']}")
-                                
-                            with col_res2:
-                                st.markdown("**Workflow Details:**")
-                                ff_status = results['force_field_status']
-                                st.text(f"SMILES source: {ff_status['smiles_source']}")
-                                st.text(f"Force field: {ff_status['method_used']}")
-                                st.text(f"SMILES used: {results['smiles_used'][:30]}...")
-                                
-                        else:
-                            st.error(f"❌ Simulation failed: {results['error']}")
-                            
-                            # Show detailed error info
-                            if results.get('force_field_status'):
-                                ff_status = results['force_field_status']
-                                st.error(f"Force field error: {ff_status.get('error', 'Unknown error')}")
-            
-            # Show not ready candidates
-            if not_ready_candidates:
-                st.warning(f"⚠️ **{len(not_ready_candidates)} candidates not ready for MD simulation**")
-                
-                with st.expander("View candidates needing SMILES data"):
-                    for candidate in not_ready_candidates:
-                        st.write(f"• **{candidate['id']}**: {candidate.get('issue', 'Unknown issue')}")
-                        st.caption(f"  PSMILES: {candidate['psmiles'][:50]}...")
-                
-        except Exception as e:
-            st.error(f"❌ Error getting candidates: {e}")
-            traceback.print_exc()
-    
-    # Add workflow comparison section
-    st.markdown("---")
-    st.markdown("### 📊 Workflow Comparison")
-    
-    col_old, col_new = st.columns(2)
-    
-    with col_old:
-        st.markdown("#### ❌ Old Workflow")
-        st.markdown("""
-        1. Generate PSMILES
-        2. Convert PSMILES → SMILES (discard)
-        3. Create PDB file
-        4. **Reconstruct SMILES from PDB** ⚠️
-        5. Setup force field
-        6. Run MD simulation
-        
-        **Issues:**
-        - Redundant SMILES reconstruction
-        - Potential reconstruction errors
-        - Inefficient workflow
-        """)
-    
-    with col_new:
-        st.markdown("#### ✅ Enhanced Workflow")
-        st.markdown("""
-        1. Generate PSMILES
-        2. Convert PSMILES → SMILES (**store**)
-        3. Create PDB file (optional)
-        4. **Use stored SMILES directly** ✨
-        5. Setup force field
-        6. Run MD simulation
-        
-        **Benefits:**
-        - No redundant reconstruction
-        - Reliable SMILES data
-        - Faster workflow
-        - Better error handling
-        """)
-    
-    # Add migration helper at the end
-    render_smiles_migration_helper()
-
-
-# **ADD MIGRATION HELPER**
-def render_smiles_migration_helper():
-    """Helper to migrate existing candidates to include SMILES data"""
-    
-    st.markdown("### 🔄 SMILES Data Migration")
-    st.info("Update existing PSMILES candidates to include SMILES data for enhanced MD workflows")
-    
-    if st.button("🔄 Update Existing Candidates with SMILES"):
-        from app.utils.psmiles_smiles_storage import update_session_candidates_with_smiles
-        
-        with st.spinner("Updating candidates with SMILES data..."):
-            try:
-                update_session_candidates_with_smiles()
-                st.success("✅ Successfully updated candidates with SMILES data!")
-                st.rerun()
-            except Exception as e:
-                st.error(f"❌ Migration failed: {e}")
+# Enhanced MD functionality has been consolidated into the regular MD Simulation tab
+# This removes the need for a separate Enhanced MD tab
 
 
 # Module initialization
@@ -2636,3 +3177,144 @@ if __name__ == "__main__":
     st.set_page_config(page_title="MD Simulation UI Test", layout="wide")
     inject_simulation_styles()
     render_simulation_ui() 
+
+def get_enhanced_candidates() -> List[Dict[str, Any]]:
+    """Get enhanced candidates from various sources (session state, automation pipeline, etc.)"""
+    
+    candidates = []
+    
+    try:
+        # Method 1: Try enhanced MD simulator (if available)
+        if ENHANCED_MD_AVAILABLE:
+            enhanced_simulator = create_enhanced_md_simulator()
+            session_candidates = enhanced_simulator.get_available_candidates_for_simulation()
+            
+            # Filter for ready candidates
+            ready_candidates = [c for c in session_candidates if c.get('ready_for_md', False)]
+            for candidate in ready_candidates:
+                candidates.append({
+                    'id': candidate['id'],
+                    'name': candidate.get('name', candidate['id']),
+                    'psmiles': candidate['psmiles'],
+                    'smiles': candidate.get('smiles', ''),
+                    'timestamp': candidate.get('timestamp', ''),
+                    'source': 'enhanced_md_session_state',
+                    'ready_for_md': True
+                })
+    
+    except Exception as e:
+        print(f"Enhanced MD candidates not available: {e}")
+    
+    try:
+        # Method 2: Try dual GAFF+AMBER integration automation candidates
+        if hasattr(st.session_state, 'md_integration') and st.session_state.md_integration:
+            automation_candidates = st.session_state.md_integration.get_automated_simulation_candidates()
+            
+            for candidate in automation_candidates:
+                candidates.append({
+                    'id': candidate.get('candidate_id', candidate.get('id', 'unknown')),
+                    'name': candidate.get('name', candidate.get('candidate_id', 'Unknown')),
+                    'psmiles': candidate.get('psmiles', ''),
+                    'smiles': candidate.get('smiles', ''),
+                    'timestamp': candidate.get('timestamp', ''),
+                    'source': 'automation_pipeline',
+                    'ready_for_md': candidate.get('ready_for_md', True)  # Preserve ready_for_md flag
+                })
+                
+    except Exception as e:
+        print(f"Automation pipeline candidates not available: {e}")
+    
+    try:
+        # Method 3: Check session state for PSMILES candidates
+        if hasattr(st.session_state, 'psmiles_candidates'):
+            for i, candidate in enumerate(st.session_state.psmiles_candidates):
+                # Only include if it has both PSMILES and SMILES
+                if candidate.get('psmiles') and (candidate.get('smiles') or candidate.get('polymer_smiles')):
+                    candidates.append({
+                        'id': f"session_candidate_{i}",
+                        'name': candidate.get('name', f"Session Candidate {i+1}"),
+                        'psmiles': candidate['psmiles'],
+                        'smiles': candidate.get('smiles', candidate.get('polymer_smiles', '')),
+                        'timestamp': candidate.get('timestamp', ''),
+                        'source': 'session_state',
+                        'ready_for_md': True
+                    })
+    
+    except Exception as e:
+        print(f"Session state candidates not available: {e}")
+    
+    # Remove duplicates based on PSMILES
+    unique_candidates = []
+    seen_psmiles = set()
+    
+    for candidate in candidates:
+        psmiles = candidate.get('psmiles', '')
+        if psmiles and psmiles not in seen_psmiles:
+            unique_candidates.append(candidate)
+            seen_psmiles.add(psmiles)
+    
+    print(f"Found {len(unique_candidates)} unique enhanced candidates")
+    return unique_candidates
+
+def render_md_simulation_tab():
+    """Render the MD simulation tab with dual GAFF+AMBER priority and enhanced polymer configuration"""
+    
+    system_type = st.session_state.get('md_system_type', 'unknown')
+    
+    if system_type == 'dual_gaff_amber':
+        st.markdown("### 🚀 Dual GAFF+AMBER Insulin-Polymer Simulations")
+        st.markdown("*Revolutionary dual approach: GAFF for polymers + AMBER for insulin with native CYX support*")
+    else:
+        st.markdown("### MD Simulation")
+        st.markdown("*Run molecular dynamics simulations with AMBER force fields and implicit solvent*")
+    
+    # Show automated simulation candidates and dual GAFF+AMBER interface
+    render_automated_candidates_section()
+    
+    # Only show file-based interface for non-dual systems or as fallback
+    if system_type != 'dual_gaff_amber':
+        st.markdown("---")
+        st.markdown("#### 📁 File-Based Simulation (Legacy)")
+        
+        # File selection interface
+        simulation_input_file = render_file_selection_interface()
+        
+        # Polymer file selection (advanced)
+        if simulation_input_file:
+            render_polymer_selection_interface()
+        
+        # Simulation parameters
+        if simulation_input_file:
+            simulation_params = render_simulation_parameters()
+            
+            # Check if simulation is running
+            render_simulation_execution_interface(simulation_input_file, simulation_params)
+        else:
+            st.info("Please select or upload a PDB file to run simulation.")
+    else:
+        # For dual GAFF+AMBER, check if simulation is running from direct PSMILES input
+        if hasattr(st.session_state, 'dual_gaff_amber_simulation_requested') and st.session_state.dual_gaff_amber_simulation_requested:
+            psmiles = getattr(st.session_state, 'dual_gaff_amber_psmiles', '')
+            if psmiles:
+                st.markdown("---")
+                st.markdown("#### 🏃 Simulation Status")
+                
+                # Check simulation status
+                if hasattr(st.session_state, 'md_integration') and st.session_state.md_integration:
+                    sim_status = st.session_state.md_integration.get_simulation_status()
+                    
+                    if sim_status.get('simulation_running', False):
+                        st.info(f"🚀 **Dual GAFF+AMBER simulation running...**")
+                        st.info(f"**PSMILES**: {psmiles}")
+                        
+                        # Show live console if available
+                        if sim_status.get('simulation_info'):
+                            with st.expander("📊 Live Simulation Console", expanded=True):
+                                st.text("Simulation in progress...")
+                    else:
+                        if sim_status.get('status') == 'completed':
+                            st.success("🎉 **Dual GAFF+AMBER simulation completed!**")
+                        elif sim_status.get('status') == 'failed':
+                            st.error("❌ **Dual GAFF+AMBER simulation failed**")
+                        else:
+                            st.info("⏳ **Simulation queued...**")

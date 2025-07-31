@@ -183,7 +183,6 @@ extend-exclude = '''
   | buck-out
   | build
   | dist
-  | PSP
 )/
 '''
 
@@ -221,7 +220,6 @@ warn_unused_configs = true
 disallow_untyped_defs = true
 ignore_missing_imports = true
 exclude = [
-    "PSP/",
     "build/",
     "dist/",
 ]

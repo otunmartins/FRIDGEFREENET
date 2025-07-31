@@ -220,7 +220,8 @@ class SimpleMDIntegration:
                               save_interval: int = 1000,
                               output_prefix: str = None,
                               output_callback: Optional[Callable] = None,
-                              manual_polymer_dir: str = None) -> str:
+                              manual_polymer_dir: str = None,
+                              enhanced_smiles: str = None) -> str:
         """
         Run MD simulation asynchronously using SIMPLE WORKING approach.
         
@@ -239,6 +240,7 @@ class SimpleMDIntegration:
             'production_steps': production_steps,
             'save_interval': save_interval,
             'manual_polymer_dir': manual_polymer_dir,
+            'enhanced_smiles': enhanced_smiles,
             'status': 'starting',
             'start_time': time.time()
         }
@@ -247,7 +249,7 @@ class SimpleMDIntegration:
         self.simulation_thread = threading.Thread(
             target=self._run_simple_simulation_thread,
             args=(simulation_id, pdb_file, temperature, equilibration_steps, 
-                  production_steps, save_interval, output_callback, manual_polymer_dir)
+                  production_steps, save_interval, output_callback, manual_polymer_dir, enhanced_smiles)
         )
         self.simulation_thread.daemon = True
         self.simulation_thread.start()
@@ -260,7 +262,7 @@ class SimpleMDIntegration:
                                     temperature: float, equilibration_steps: int,
                                     production_steps: int, save_interval: int,
                                     output_callback: Optional[Callable],
-                                    manual_polymer_dir: str):
+                                    manual_polymer_dir: str, enhanced_smiles: str = None):
         """
         Run simulation in thread using SIMPLE WORKING approach.
         
@@ -302,7 +304,16 @@ class SimpleMDIntegration:
                 """Check if simulation should be stopped"""
                 return not self.simulation_running
             
-            # Use our simple working simulator (REPLACEMENT for complex system)
+            # Use our simple working simulator (ENHANCED with stored SMILES support)
+            log_and_callback(f"🔍 DEBUG: enhanced_smiles parameter received: {enhanced_smiles is not None}")
+            if enhanced_smiles:
+                log_and_callback(f"⚡ **ENHANCED MODE**: Using pre-stored SMILES for force field")
+                log_and_callback(f"🎯 Stored SMILES: {enhanced_smiles[:50]}...")
+                log_and_callback(f"📏 Full SMILES length: {len(enhanced_smiles)} characters")
+            else:
+                log_and_callback(f"📁 **STANDARD MODE**: Will convert PDB → SMILES")
+                log_and_callback(f"❌ DEBUG: enhanced_smiles is None or empty - falling back to PDB conversion")
+            
             results = self.simple_simulator.run_simulation(
                 polymer_pdb_path=polymer_pdb,
                 composite_pdb_path=composite_pdb,
@@ -312,7 +323,8 @@ class SimpleMDIntegration:
                 save_interval=save_interval,
                 output_prefix=simulation_id,
                 output_callback=log_and_callback,
-                stop_condition_check=stop_condition_check  # Enable stopping
+                stop_condition_check=stop_condition_check,  # Enable stopping
+                enhanced_smiles=enhanced_smiles  # **ENHANCED: Pass stored SMILES**
             )
             
             if results['success']:
@@ -355,6 +367,142 @@ class SimpleMDIntegration:
         finally:
             self.simulation_running = False
     
+    def run_simple_insulin_simulation_async(self, insulin_pdb: str,
+                                           temperature: float = 310.0,
+                                           equilibration_steps: int = 5000,
+                                           production_steps: int = 25000,
+                                           save_interval: int = 1000,
+                                           output_prefix: str = None,
+                                           output_callback: Optional[Callable] = None) -> str:
+        """
+        Run simple insulin-only simulation asynchronously using the simple_insulin_simulation.py approach.
+        
+        This method handles CYX residues properly and avoids GAFF template generator issues.
+        Uses the key insight: CYX residues are CORRECT for disulfide-bonded cysteines.
+        AMBER force fields already support CYX without complex template generators.
+        
+        Args:
+            insulin_pdb: Path to insulin PDB file (with CYX residues)
+            temperature: Temperature in Kelvin (default 310K = body temp)
+            equilibration_steps: Number of equilibration steps
+            production_steps: Number of production steps
+            save_interval: Save trajectory every N steps
+            output_prefix: Prefix for output files
+            output_callback: Callback function for progress updates
+            
+        Returns:
+            Simulation ID string
+        """
+        
+        # Generate simulation ID
+        simulation_id = output_prefix or f"simple_insulin_{uuid.uuid4().hex[:8]}"
+        
+        # Store simulation parameters
+        self.current_simulation = {
+            'id': simulation_id,
+            'insulin_pdb': insulin_pdb,
+            'temperature': temperature,
+            'equilibration_steps': equilibration_steps,
+            'production_steps': production_steps,
+            'save_interval': save_interval,
+            'status': 'starting',
+            'start_time': time.time(),
+            'simulation_type': 'simple_insulin'
+        }
+        
+        # Start simulation thread
+        self.simulation_thread = threading.Thread(
+            target=self._run_simple_insulin_thread,
+            args=(simulation_id, insulin_pdb, temperature, equilibration_steps, 
+                  production_steps, save_interval, output_callback)
+        )
+        self.simulation_thread.daemon = True
+        self.simulation_thread.start()
+        
+        self.simulation_running = True
+        
+        return simulation_id
+    
+    def _run_simple_insulin_thread(self, simulation_id: str, insulin_pdb: str,
+                                  temperature: float, equilibration_steps: int,
+                                  production_steps: int, save_interval: int,
+                                  output_callback: Optional[Callable]):
+        """
+        Run simple insulin simulation in thread using the simple_insulin_simulation.py approach.
+        
+        This avoids all GAFF template generator issues by using simple AMBER force fields only.
+        """
+        
+        def log_and_callback(message: str):
+            """Helper to log messages and send through callback"""
+            self.latest_messages.append(message)
+            print(message)  # Also print to console
+            if output_callback:
+                try:
+                    output_callback(message)
+                except Exception as e:
+                    print(f"Callback error: {e}")
+        
+        try:
+            self.current_simulation['status'] = 'starting'
+            log_and_callback("🧬 Starting Simple Insulin Simulation (AMBER only)")
+            
+            # Define stop condition check function
+            def stop_condition_check():
+                return self.current_simulation.get('status') == 'stopping'
+            
+            # Run the simple insulin simulation using our enhanced simulator
+            results = self.simple_simulator.run_simple_insulin_simulation(
+                insulin_pdb=insulin_pdb,
+                equilibration_steps=equilibration_steps,
+                production_steps=production_steps,
+                temperature=temperature,
+                save_interval=save_interval,
+                output_prefix=f"simple_insulin_{simulation_id}",
+                output_callback=output_callback,
+                stop_condition_check=stop_condition_check
+            )
+            
+            # Update simulation status based on results
+            if results['success']:
+                log_and_callback(f"\n🎉 SIMPLE INSULIN SIMULATION COMPLETED SUCCESSFULLY!")
+                log_and_callback(f"📁 Results saved in: {results['output_dir']}")
+                log_and_callback(f"🎬 Trajectory: {results['trajectory_file']}")
+                log_and_callback(f"📊 Final energy: {results['final_energy']}")
+                log_and_callback(f"⏱️  Total simulation time: {results['simulation_time_ps']:.1f} ps")
+                log_and_callback(f"🖥️  Platform used: {results['platform']}")
+                
+                self.current_simulation['status'] = 'completed'
+            elif results.get('message') == 'Simulation stopped by user during equilibration' or \
+                 results.get('message') == 'Simulation stopped by user during production':
+                log_and_callback(f"\n🛑 SIMPLE INSULIN SIMULATION STOPPED BY USER")
+                if 'steps_completed' in results:
+                    log_and_callback(f"📊 Steps completed: {results['steps_completed']}")
+                if 'final_energy' in results:
+                    log_and_callback(f"📊 Final energy: {results['final_energy']}")
+                
+                self.current_simulation['status'] = 'stopped'
+            else:
+                log_and_callback(f"\n❌ SIMPLE INSULIN SIMULATION FAILED: {results.get('error', 'Unknown error')}")
+                self.current_simulation['status'] = 'failed'
+            
+            self.current_simulation['results'] = results
+            self.current_simulation['end_time'] = time.time()
+            
+        except Exception as e:
+            error_msg = f"❌ Simple insulin simulation thread failed: {str(e)}"
+            log_and_callback(error_msg)
+            
+            self.current_simulation['status'] = 'failed'
+            self.current_simulation['error'] = str(e)
+            self.current_simulation['end_time'] = time.time()
+            
+            import traceback
+            traceback.print_exc()
+        
+        finally:
+            self.simulation_running = False
+
     def get_simulation_status(self) -> Dict[str, Any]:
         """Get current simulation status"""
         if self.current_simulation is None:

@@ -26,7 +26,7 @@ def render_literature_mining_ui():
     try:
         from app.services.system_service import check_systems_initialized
         from app.utils.session_utils import add_to_material_library
-        from core.literature_mining_system import MaterialsLiteratureMiner
+        from insulin_ai import MaterialsLiteratureMiner
         systems_initialized = check_systems_initialized()
     except ImportError:
         st.error("⚠️ Required services not available. Please check system configuration.")

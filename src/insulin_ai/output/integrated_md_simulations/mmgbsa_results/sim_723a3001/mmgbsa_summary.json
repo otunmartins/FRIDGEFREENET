@@ -1,0 +1,13 @@
+{
+  "success": true,
+  "simulation_id": "sim_723a3001",
+  "n_frames": 1000,
+  "average_binding_energy": 0.05622913367887532,
+  "binding_energy_std": 0.025876585118121923,
+  "entropy_correction": 0.0005615910794596698,
+  "corrected_binding_energy": 0.056790724758334986,
+  "method": "Proven MM-GBSA (OpenMM simplified approach)",
+  "approach": "MDTraj + Single system creation + Position updates only",
+  "issues_fixed": "No more trajectory splitting, bond fixing, or template registration errors",
+  "timestamp": "2025-07-17T23:29:40.214093"
+}

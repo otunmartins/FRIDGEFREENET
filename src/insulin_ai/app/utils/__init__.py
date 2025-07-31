@@ -54,13 +54,6 @@ from .psmiles_workflow_utils import (
     get_inchi_info
 )
 
-# PSP AmorphousBuilder utilities
-from .psp_utils import (
-    build_amorphous_polymer_structure,
-    vasp_to_pdb,
-    display_3d_structure
-)
-
 # PDB preprocessing utilities
 from .pdb_utils import (
     preprocess_pdb_standalone
@@ -108,11 +101,6 @@ __all__ = [
     'perform_functional_group_addition',
     'generate_fingerprints',
     'get_inchi_info',
-    
-    # PSP utilities
-    'build_amorphous_polymer_structure',
-    'vasp_to_pdb',
-    'display_3d_structure',
     
     # PDB preprocessing
     'preprocess_pdb_standalone'

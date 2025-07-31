@@ -383,7 +383,8 @@ class MDSimulationIntegration:
                               save_interval: int = 500,
                               output_prefix: str = None,
                               output_callback: Optional[Callable] = None,
-                              manual_polymer_dir: str = None) -> str:
+                              manual_polymer_dir: str = None,
+                              enhanced_smiles: str = None) -> str:
         """
         Run MD simulation asynchronously with proper preprocessing
         
@@ -421,7 +422,7 @@ class MDSimulationIntegration:
         self.simulation_thread = threading.Thread(
             target=self._run_simulation_thread,
             args=(simulation_id, pdb_file, temperature, equilibration_steps, 
-                  production_steps, save_interval, output_callback, manual_polymer_dir)
+                  production_steps, save_interval, output_callback, manual_polymer_dir, enhanced_smiles)
         )
         self.simulation_thread.daemon = True
         self.simulation_thread.start()
@@ -434,7 +435,8 @@ class MDSimulationIntegration:
                              temperature: float, equilibration_steps: int,
                              production_steps: int, save_interval: int,
                              output_callback: Optional[Callable],
-                             manual_polymer_dir: str = None):
+                             manual_polymer_dir: str = None,
+                             enhanced_smiles: str = None):
         """Run the simulation in a separate thread"""
         
         def log_output(message: str):
@@ -443,32 +445,53 @@ class MDSimulationIntegration:
                 output_callback(message)  # Also send to app interface
         
         try:
-            # Step 1: Preprocess PDB file with PDBFixer
-            log_output(f"🔧 Step 1: Preprocessing PDB file with PDBFixer")
+            # Step 1: Smart PDB processing (preserves correct files, fixes broken ones)
+            log_output(f"🔧 Step 1: Smart PDB processing with insulin-aware fixer")
             
-            # Add info about manual polymer selection
+            # Add info about manual polymer selection and enhanced SMILES
             if manual_polymer_dir:
                 log_output(f"🎯 Using manual polymer directory: {manual_polymer_dir}")
+            if enhanced_smiles:
+                log_output(f"⚡ Enhanced mode: Using pre-stored SMILES (preserves structure quality)")
             
-            preprocess_result = self.preprocess_pdb_file(
-                pdb_file,
-                remove_water=True,
-                remove_heterogens=False,  # Keep polymers
-                add_missing_residues=True,
-                add_missing_atoms=True,
-                add_missing_hydrogens=True,
-                ph=7.4,
-                output_callback=log_output
-            )
+            # Use smart insulin fixer to prevent CYX → CYS corruption
+            try:
+                from .smart_insulin_fixer import smart_insulin_fix
+                log_output(f"🧠 Using smart insulin fixer (preserves CYX residues)...")
+                smart_processed_path = smart_insulin_fix(pdb_file)
+                
+                preprocess_result = {
+                    'success': True,
+                    'output_path': smart_processed_path,
+                    'method': 'smart_insulin_fixer',
+                    'preserved_original': smart_processed_path == pdb_file,
+                    'atoms': 'unknown',  # Will be determined later
+                    'residues': 'unknown'  # Will be determined later
+                }
+                log_output(f"✅ Smart processing: {preprocess_result['preserved_original'] and 'Preserved original (perfect)' or 'Applied intelligent fixes'}")
+                
+            except ImportError:
+                log_output(f"⚠️ Smart fixer not available - using PDBFixer (may corrupt CYX residues)...")
+                # Fallback to original PDBFixer method
+                preprocess_result = self.preprocess_pdb_file(
+                    pdb_file,
+                    remove_water=True,
+                    remove_heterogens=False,  # Keep polymers
+                    add_missing_residues=True,
+                    add_missing_atoms=True,
+                    add_missing_hydrogens=True,
+                    ph=7.4,
+                    output_callback=log_output
+                )
             
             if not preprocess_result['success']:
                 log_output(f"❌ PDB preprocessing failed: {preprocess_result['error']}")
                 self.simulation_running = False
                 return
             
-            # Use preprocessed PDB file
+            # Use smart-processed PDB file
             processed_pdb = preprocess_result['output_path']
-            log_output(f"✅ PDB preprocessing completed: {processed_pdb}")
+            log_output(f"✅ Smart PDB processing completed: {processed_pdb}")
             
             # Step 2: Load processed PDB file to get topology and positions
             log_output(f"📖 Loading processed PDB file for OpenMM simulation")
@@ -784,7 +807,7 @@ class MDSimulationIntegration:
                             pdb_files = [f for f in all_files if f.suffix == '.pdb']
                             print(f"   📁 All PDB files found: {[f.name for f in pdb_files]}")
                             
-                            # 1. Check in molecules subdirectory (PSP standard location)
+                            # 1. Check in molecules subdirectory (standard location)
                             molecules_dir = candidate_dir / 'molecules'
                             if molecules_dir.exists():
                                 print(f"   📂 Molecules directory exists: {molecules_dir}")

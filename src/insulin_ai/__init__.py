@@ -51,6 +51,11 @@ __all__ = [
     # Availability flags
     "MD_AVAILABLE",
     "AUTOMATION_AVAILABLE",
+    
+    # Utility functions
+    "get_version",
+    "get_package_info",
+    "get_insulin_pdb_path",
 ]
 
 # Package-level configuration
@@ -90,6 +95,18 @@ def setup_environment():
 def get_version():
     """Get the current version of the package."""
     return __version__
+
+def get_insulin_pdb_path(filename="insulin_default.pdb"):
+    """Get the path to an insulin PDB file.
+    
+    Args:
+        filename: Name of the insulin PDB file to locate
+        
+    Returns:
+        str: Full path to the insulin PDB file
+    """
+    insulin_dir = PACKAGE_ROOT / "integration" / "data" / "insulin"
+    return str(insulin_dir / filename)
 
 def get_package_info():
     """Get comprehensive package information."""

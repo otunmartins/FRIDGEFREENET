@@ -20,10 +20,7 @@ def initialize_systems() -> Dict[str, Any]:
     """
     try:
         # Import core systems
-        from core.chatbot_system import InsulinAIChatbot
-        from core.literature_mining_system import MaterialsLiteratureMiner
-        from core.psmiles_generator import PSMILESGenerator
-        from core.psmiles_processor import PSMILESProcessor
+        from insulin_ai import InsulinAIChatbot, MaterialsLiteratureMiner, PSMILESGenerator, PSMILESProcessor
         
         # Get OpenAI configuration
         api_key = os.environ.get('OPENAI_API_KEY')

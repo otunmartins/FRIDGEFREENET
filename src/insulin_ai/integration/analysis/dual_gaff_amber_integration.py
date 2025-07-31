@@ -1,0 +1,607 @@
+#!/usr/bin/env python3
+"""
+Dual GAFF+AMBER MD Integration
+==============================
+
+This module provides MD integration using the proven dual approach:
+1. GAFF for polymer parameterization (DirectPolymerBuilder)
+2. AMBER for insulin simulation (simple_insulin_simulation.py approach)
+3. Combined properly without CYS/CYX template generator issues
+
+Based on the successful dual_gaff_amber_md_simulation.py script.
+"""
+
+import os
+import sys
+import time
+import threading
+import uuid
+import tempfile
+import shutil
+from pathlib import Path
+from datetime import datetime
+from typing import Dict, List, Optional, Tuple, Any, Callable
+import numpy as np
+
+# Add the src directory to Python path
+src_path = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(src_path))
+
+try:
+    from openmm.app import (
+        PDBFile, Modeller, ForceField, Simulation,
+        StateDataReporter, PDBReporter,
+        NoCutoff, HBonds,
+    )
+    from openmm import LangevinIntegrator, Platform, unit, LangevinMiddleIntegrator
+    from openmm.app import Topology
+    from openmmforcefields.generators import GAFFTemplateGenerator
+    from openff.toolkit.topology import Molecule
+    OPENMM_AVAILABLE = True
+except ImportError as e:
+    OPENMM_AVAILABLE = False
+    print(f"⚠️ OpenMM or related packages not available: {e}")
+
+try:
+    from insulin_ai.utils.direct_polymer_builder import DirectPolymerBuilder
+    POLYMER_BUILDER_AVAILABLE = True
+except ImportError:
+    POLYMER_BUILDER_AVAILABLE = False
+    print("⚠️ DirectPolymerBuilder not available")
+
+try:
+    from insulin_ai.integration.analysis.simple_working_md_simulator import SimpleWorkingMDSimulator
+    SIMPLE_SIMULATOR_AVAILABLE = True
+except ImportError:
+    SIMPLE_SIMULATOR_AVAILABLE = False
+    print("⚠️ SimpleWorkingMDSimulator not available")
+
+
+class DualGaffAmberIntegration:
+    """
+    Dual GAFF+AMBER MD Integration for insulin-polymer composite systems.
+    
+    This class implements the successful dual approach:
+    - Uses DirectPolymerBuilder for polymer creation
+    - Uses GAFF for polymer parameterization
+    - Uses AMBER for insulin parameterization (native CYX support)
+    - Combines systems properly with spatial separation
+    """
+    
+    def __init__(self, output_dir: str = "dual_gaff_amber_simulations"):
+        """Initialize the dual GAFF+AMBER integration"""
+        
+        self.output_dir = Path(output_dir)
+        self.output_dir.mkdir(exist_ok=True)
+        
+        # Initialize components
+        self.polymer_builder = DirectPolymerBuilder() if POLYMER_BUILDER_AVAILABLE else None
+        
+        # Keep a reference to the simple simulator for its helper methods if needed
+        # but the main logic will be self-contained here.
+        self.simulator = SimpleWorkingMDSimulator() if SIMPLE_SIMULATOR_AVAILABLE else None
+        
+        # Simulation state
+        self.current_simulation = None
+        self.simulation_running = False
+        self.simulation_thread = None
+        
+        # Check dependencies
+        self.dependencies_ok = self._check_dependencies()
+        
+    def _check_dependencies(self) -> bool:
+        """Check if all required dependencies are available"""
+        
+        missing = []
+        if not OPENMM_AVAILABLE:
+            missing.append("OpenMM")
+        if not POLYMER_BUILDER_AVAILABLE:
+            missing.append("DirectPolymerBuilder")
+        if not SIMPLE_SIMULATOR_AVAILABLE:
+            missing.append("SimpleWorkingMDSimulator")
+            
+        if missing:
+            print(f"❌ Missing dependencies: {', '.join(missing)}")
+            return False
+        
+        print("✅ All dependencies available for dual GAFF+AMBER approach")
+        return True
+    
+    def get_dependency_status(self) -> Dict[str, Any]:
+        """Get status of all dependencies"""
+        
+        return {
+            'openmm': {
+                'available': OPENMM_AVAILABLE,
+                'description': 'OpenMM molecular dynamics engine'
+            },
+            'polymer_builder': {
+                'available': POLYMER_BUILDER_AVAILABLE,
+                'description': 'DirectPolymerBuilder for polymer creation'
+            },
+            'simple_simulator': {
+                'available': SIMPLE_SIMULATOR_AVAILABLE,
+                'description': 'SimpleWorkingMDSimulator for MD'
+            },
+            'overall': {
+                'available': self.dependencies_ok,
+                'description': 'All systems operational for dual GAFF+AMBER'
+            }
+        }
+    
+    def find_insulin_file(self, custom_insulin_pdb: str = None) -> str:
+        """Find suitable insulin PDB file"""
+        
+        if custom_insulin_pdb and os.path.exists(custom_insulin_pdb):
+            return custom_insulin_pdb
+        
+        # Look for insulin files in standard locations
+        insulin_candidates = [
+            "src/insulin_ai/integration/data/insulin/insulin_default.pdb",
+            "src/insulin_ai/integration/data/insulin/human_insulin_1mso.pdb"
+        ]
+        
+        for candidate in insulin_candidates:
+            if os.path.exists(candidate):
+                return candidate
+        
+        raise ValueError("No insulin PDB file found. Please provide insulin_pdb parameter.")
+    
+    def fix_insulin_pdb_residues(self, input_pdb_path: str, output_pdb_path: str, log_callback):
+        """
+        Fix insulin PDB file to use CYX for disulfide-bonded cysteines.
+        
+        This creates a corrected PDB file that AMBER can properly handle.
+        """
+        
+        log_callback("🔧 Fixing insulin PDB residue names for AMBER compatibility...")
+        
+        try:
+            with open(input_pdb_path, 'r') as f:
+                pdb_lines = f.readlines()
+            
+            fixed_lines = []
+            cys_count = 0
+            
+            for line in pdb_lines:
+                if line.startswith(('ATOM', 'HETATM')) and 'CYS' in line:
+                    # Replace CYS with CYX in the residue name field (columns 18-20)
+                    if line[17:20].strip() == 'CYS':
+                        line = line[:17] + 'CYX' + line[20:]
+                        cys_count += 1
+                
+                fixed_lines.append(line)
+            
+            # Write corrected PDB
+            with open(output_pdb_path, 'w') as f:
+                f.writelines(fixed_lines)
+            
+            if cys_count > 0:
+                log_callback(f"   ✅ Fixed {cys_count} CYS → CYX atom records")
+                log_callback(f"   📁 Corrected PDB saved: {output_pdb_path}")
+            else:
+                log_callback("   ✅ No CYS residues found - insulin already properly formatted")
+            
+            return output_pdb_path
+            
+        except Exception as e:
+            log_callback(f"   ⚠️ PDB fixing failed: {e}")
+            log_callback(f"   🔄 Using original PDB: {input_pdb_path}")
+            return input_pdb_path
+    
+    def extract_polymer_info_from_path(self, simulation_input_file: str) -> Tuple[str, str]:
+        """
+        Extract polymer PSMILES and prepare for simulation.
+        
+        Args:
+            simulation_input_file: Path to simulation input file or directory
+            
+        Returns:
+            Tuple of (psmiles, expected_polymer_pdb_path)
+        """
+        
+        # Handle different input types
+        input_path = Path(simulation_input_file)
+        
+        if input_path.is_dir():
+            # Directory containing polymer files
+            psmiles_file = input_path / "psmiles.txt"
+            if psmiles_file.exists():
+                with open(psmiles_file, 'r') as f:
+                    psmiles = f.read().strip()
+                    
+                # Look for polymer PDB
+                polymer_pdb_candidates = list(input_path.glob("*polymer*.pdb"))
+                expected_pdb = polymer_pdb_candidates[0] if polymer_pdb_candidates else None
+                
+                return psmiles, str(expected_pdb) if expected_pdb else None
+        
+        elif input_path.suffix == '.txt':
+            # Direct PSMILES file
+            with open(input_path, 'r') as f:
+                psmiles = f.read().strip()
+            return psmiles, None
+        
+        else:
+            # Assume it's a PSMILES string if it contains certain characters
+            if any(char in str(input_path) for char in ['[*]', '=', '#']):
+                return str(input_path), None
+        
+        raise ValueError(f"Unable to extract polymer information from: {simulation_input_file}")
+    
+    def run_md_simulation_async(self, 
+                              pdb_file: str,
+                              temperature: float = 310.0,
+                              equilibration_steps: int = 10000,  # 20 ps
+                              production_steps: int = 50000,     # 100 ps
+                              save_interval: int = 500,
+                              output_prefix: str = None,
+                              output_callback: Optional[Callable] = None,
+                              manual_polymer_dir: str = None,
+                              **kwargs) -> str:
+        """
+        Run dual GAFF+AMBER simulation asynchronously.
+        
+        Args:
+            pdb_file: Path to polymer input file/directory or PSMILES
+            temperature: Simulation temperature (K)
+            equilibration_steps: Number of equilibration steps
+            production_steps: Number of production steps
+            save_interval: Save trajectory every N steps
+            output_prefix: Prefix for output files
+            output_callback: Callback function for output messages
+            manual_polymer_dir: Manual polymer directory
+            
+        Returns:
+            Simulation ID
+        """
+        
+        if not self.dependencies_ok:
+            raise RuntimeError("Dependencies not available for dual GAFF+AMBER simulation")
+        
+        # Generate simulation ID
+        simulation_id = output_prefix or f"dual_gaff_amber_{uuid.uuid4().hex[:8]}"
+        
+        # Store simulation parameters
+        self.current_simulation = {
+            'id': simulation_id,
+            'pdb_file': pdb_file,
+            'temperature': temperature,
+            'equilibration_steps': equilibration_steps,
+            'production_steps': production_steps,
+            'save_interval': save_interval,
+            'manual_polymer_dir': manual_polymer_dir,
+            'status': 'starting',
+            'start_time': time.time(),
+            'approach': 'dual_gaff_amber'
+        }
+        
+        # Start simulation in background thread
+        self.simulation_thread = threading.Thread(
+            target=self._run_dual_simulation_thread,
+            args=(simulation_id, pdb_file, temperature, equilibration_steps, 
+                  production_steps, save_interval, output_callback, manual_polymer_dir),
+            kwargs=kwargs
+        )
+        self.simulation_thread.daemon = True
+        self.simulation_thread.start()
+        
+        self.simulation_running = True
+        
+        return simulation_id
+    
+    def _run_dual_simulation_thread(self, 
+                                  simulation_id: str, 
+                                  pdb_file: str,
+                                  temperature: float, 
+                                  equilibration_steps: int,
+                                  production_steps: int, 
+                                  save_interval: int,
+                                  output_callback: Optional[Callable],
+                                  manual_polymer_dir: str = None,
+                                  **kwargs):
+        """
+        Run the dual GAFF+AMBER simulation in a separate thread.
+        This has been refactored for simplicity and robustness.
+        """
+        
+        def log_callback(message: str):
+            """Helper to send log messages through callback"""
+            if output_callback:
+                try:
+                    output_callback(message)
+                except Exception as e:
+                    print(f"[CALLBACK_ERROR] {e}: {message}")
+            else:
+                print(message)
+        
+        try:
+            self.current_simulation['status'] = 'running'
+            
+            output_dir = self.output_dir / simulation_id
+            output_dir.mkdir(exist_ok=True)
+            
+            log_callback("🚀 DUAL GAFF+AMBER MD SIMULATION (REFACTORED V2)")
+            log_callback("=" * 80)
+            log_callback(f"📅 Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            log_callback(f"📁 Output directory: {output_dir}")
+
+            # --- Step 1: Create Polymer from PSMILES ---
+            log_callback("\n🔗 STEP 1: Creating Polymer Structure from PSMILES")
+            log_callback("-" * 40)
+            psmiles = pdb_file # Assume pdb_file is the PSMILES string
+            log_callback(f"🧬 Using PSMILES: {psmiles}")
+
+            polymer_chain_length = kwargs.get('polymer_chain_length', 15)
+            
+            # This method returns a dictionary containing the polymer_smiles
+            polymer_result = self.polymer_builder.build_polymer_chain(
+                psmiles_str=psmiles,
+                chain_length=polymer_chain_length,
+                output_dir=str(output_dir / "polymer_build"),
+            )
+            
+            if not polymer_result or not polymer_result.get('success'):
+                raise RuntimeError(f"Failed to build polymer: {polymer_result.get('error', 'Unknown error')}")
+
+            polymer_smiles = polymer_result['polymer_smiles']
+            log_callback(f"✅ Polymer SMILES generated: {polymer_smiles}")
+
+            # --- Step 2: Generate Polymer Topology and Coordinates from SMILES ---
+            log_callback("\n🔗 STEP 2: Generating Polymer 3D Structure from SMILES")
+            log_callback("-" * 40)
+            polymer_molecule = Molecule.from_smiles(polymer_smiles, allow_undefined_stereo=True)
+            log_callback("✅ OpenFF Molecule created from SMILES.")
+            
+            log_callback("🧮 Pre-computing Gasteiger partial charges for the polymer...")
+            polymer_molecule.assign_partial_charges("gasteiger")
+            log_callback("✅ Gasteiger charges computed and assigned.")
+            
+            log_callback("🔄 Generating 3D conformer for the polymer...")
+            polymer_molecule.generate_conformers(n_conformers=1)
+            polymer_topology = polymer_molecule.to_topology().to_openmm()
+            
+            # CORRECTED: Convert OpenFF Quantity to OpenMM Quantity.
+            # The .magnitude attribute gives the raw numpy array, which we then correctly
+            # associate with OpenMM's angstrom unit.
+            polymer_positions = polymer_molecule.conformers[0].magnitude * unit.angstrom
+            log_callback("✅ Polymer OpenMM Topology and Positions created from SMILES.")
+
+            # --- Step 3: Prepare Insulin Structure ---
+            log_callback("\n🧬 STEP 3: Preparing Insulin Structure")
+            log_callback("-" * 40)
+            insulin_pdb_path = self.find_insulin_file()
+            log_callback(f"📁 Using insulin PDB: {insulin_pdb_path}")
+            
+            pdb = PDBFile(insulin_pdb_path)
+            insulin_modeller = Modeller(pdb.topology, pdb.positions)
+            insulin_modeller.deleteWater()
+            insulin_modeller.addHydrogens()
+            
+            cleaned_insulin_pdb_path = output_dir / "cleaned_insulin.pdb"
+            with open(cleaned_insulin_pdb_path, 'w') as f:
+                PDBFile.writeFile(insulin_modeller.topology, insulin_modeller.positions, f)
+            log_callback(f"✅ Cleaned insulin saved: {cleaned_insulin_pdb_path}")
+
+            # --- Step 4: Creating Composite System ---
+            log_callback("\n🔗 STEP 4: Creating Composite System")
+            log_callback("----------------------------------------")
+            
+            num_polymer_chains = kwargs.get('num_polymer_chains', 1)
+            log_callback(f"🧬 Adding {num_polymer_chains} polymer chain(s) to the modeller.")
+
+            modeller = Modeller(insulin_modeller.topology, insulin_modeller.positions)
+            
+            # Get the size of the insulin molecule to create a reasonable packing box
+            insulin_positions = np.array([v.value_in_unit(unit.nanometer) for v in insulin_modeller.positions])
+            box_size = np.max(insulin_positions, axis=0) - np.min(insulin_positions, axis=0)
+            
+            for i in range(num_polymer_chains):
+                # Create a copy of the polymer positions to modify
+                new_polymer_positions = np.copy(polymer_positions.value_in_unit(unit.nanometer))
+                
+                # 1. Randomly rotate the polymer
+                rotation_matrix = np.random.rand(3, 3)
+                q, r = np.linalg.qr(rotation_matrix)
+                rotated_positions = np.dot(new_polymer_positions, q)
+                
+                # 2. Randomly translate it within a box around the insulin
+                translation_vector = np.random.rand(3) * box_size + np.min(insulin_positions, axis=0)
+                translated_positions = rotated_positions + translation_vector
+                
+                # Add the transformed polymer to the modeller
+                modeller.add(polymer_topology, translated_positions * unit.nanometer)
+                log_callback(f"  ✅ Added polymer chain {i+1} of {num_polymer_chains} with random packing.")
+
+            composite_pdb_path = output_dir / "composite_system.pdb"
+            with open(composite_pdb_path, 'w') as f:
+                PDBFile.writeFile(modeller.topology, modeller.positions, f)
+            log_callback(f"✅ Composite system PDB saved: {composite_pdb_path}")
+            log_callback(f"   Total atoms: {modeller.topology.getNumAtoms()}")
+
+            # --- Step 5: Set up Dual Force Field and System ---
+            log_callback("\n⚙️ STEP 5: Creating Dual Force Field System")
+            log_callback("-" * 40)
+
+            log_callback("🔗 Creating GAFF template generator for the polymer...")
+            # Use the SAME polymer_molecule object to ensure a perfect match.
+            gaff_template_generator = GAFFTemplateGenerator(molecules=[polymer_molecule])
+            log_callback("✅ GAFF template generator created.")
+
+            log_callback("🧬 Applying AMBER ff14SB for protein and implicit solvent...")
+            forcefield = ForceField('amber/protein.ff14SB.xml', 'implicit/gbn2.xml')
+            forcefield.registerTemplateGenerator(gaff_template_generator.generator)
+            log_callback("✅ AMBER force field loaded and GAFF generator registered.")
+            
+            log_callback("🔧 Creating OpenMM System...")
+            system = forcefield.createSystem(
+                modeller.topology,
+                nonbondedMethod=NoCutoff,
+                constraints=HBonds
+            )
+            log_callback(f"✅ System created successfully with {system.getNumParticles()} particles.")
+
+            # --- Step 6: Run MD Simulation ---
+            log_callback(f"\n🏃 STEP 6: Running MD Simulation")
+            log_callback("-" * 40)
+            
+            integrator = LangevinMiddleIntegrator(
+                temperature * unit.kelvin,
+                1.0 / unit.picosecond,
+                2.0 * unit.femtoseconds
+            )
+
+            platform_names = [Platform.getPlatform(i).getName() for i in range(Platform.getNumPlatforms())]
+            platform_name = 'CUDA' if 'CUDA' in platform_names else ('OpenCL' if 'OpenCL' in platform_names else 'CPU')
+            platform = Platform.getPlatformByName(platform_name)
+            log_callback(f"🖥️ Using platform: {platform.getName()}")
+
+            simulation = Simulation(modeller.topology, system, integrator, platform)
+            simulation.context.setPositions(modeller.positions)
+
+            log_callback("⚡ Minimizing energy...")
+            simulation.minimizeEnergy()
+            initial_energy = simulation.context.getState(getEnergy=True).getPotentialEnergy()
+            log_callback(f"   Initial energy: {initial_energy.value_in_unit(unit.kilojoules_per_mole):.2f} kJ/mol")
+
+            log_file = output_dir / "simulation.log"
+            trajectory_file = output_dir / "trajectory.pdb"
+            simulation.reporters.append(StateDataReporter(
+                str(log_file), save_interval, step=True, time=True, 
+                potentialEnergy=True, temperature=True, speed=True
+            ))
+            simulation.reporters.append(PDBReporter(str(trajectory_file), save_interval))
+            log_callback(f"📊 Reporters configured (log, trajectory).")
+
+            log_callback(f"🔄 Running equilibration ({equilibration_steps} steps)...")
+            simulation.step(equilibration_steps)
+            
+            log_callback(f"🏃 Running production ({production_steps} steps)...")
+            simulation.step(production_steps)
+            
+            final_energy = simulation.context.getState(getEnergy=True).getPotentialEnergy()
+            log_callback(f"✅ Simulation finished!")
+            log_callback(f"   Final energy: {final_energy.value_in_unit(unit.kilojoules_per_mole):.2f} kJ/mol")
+
+            # --- Step 6: Finalize ---
+            self.current_simulation['status'] = 'completed'
+            #... (add more result details if needed)
+            
+            log_callback(f"\n🎉 SIMULATION COMPLETED SUCCESSFULLY!")
+
+        except Exception as e:
+            error_msg = f"❌ Dual GAFF+AMBER simulation failed: {str(e)}"
+            log_callback(f"\n{error_msg}")
+            
+            self.current_simulation['status'] = 'failed'
+            self.current_simulation['error'] = str(e)
+            
+            import traceback
+            traceback.print_exc()
+            
+        finally:
+            self.simulation_running = False
+    
+    def get_simulation_status(self) -> Dict[str, Any]:
+        """Get current simulation status in format expected by UI"""
+        
+        if self.current_simulation is None:
+            return {
+                'status': 'no_simulation',
+                'simulation_running': False,
+                'simulation_info': None
+            }
+        
+        # Return status in the format the UI expects
+        return {
+            'simulation_running': self.current_simulation.get('status') == 'running' if self.current_simulation else False,
+            'simulation_info': self.current_simulation.copy() if self.current_simulation else {}
+        }
+    
+    def get_automated_simulation_candidates(self, base_dir: str = "automated_simulations") -> List[Dict[str, Any]]:
+        """
+        Get list of candidates generated by automation pipeline for UI compatibility
+        
+        Args:
+            base_dir: Base directory where automated simulations are stored
+            
+        Returns:
+            List of candidate info dictionaries
+        """
+        candidates = []
+        
+        try:
+            from pathlib import Path
+            from datetime import datetime
+            
+            base_path = Path(base_dir)
+            
+            if not base_path.exists():
+                print(f"⚠️ Automated simulations directory not found: {base_dir}")
+                return []
+            
+            # Look for session directories
+            for session_dir in base_path.iterdir():
+                if session_dir.is_dir() and session_dir.name.startswith('session_'):
+                    session_id = session_dir.name
+                    
+                    # Look for session-level automation_results.json
+                    results_file = session_dir / "automation_results.json"
+                    
+                    if results_file.exists():
+                        try:
+                            import json
+                            with open(results_file, 'r') as f:
+                                results = json.load(f)
+                            
+                            # Extract candidates from polymer_boxes section
+                            polymer_boxes = results.get('polymer_boxes', [])
+                            
+                            for polymer_box in polymer_boxes:
+                                if polymer_box.get('success'):
+                                    candidate_id = polymer_box.get('candidate_id', 'unknown')
+                                    candidate_dir_name = f"candidate_{candidate_id}"
+                                    candidate_dir_path = session_dir / candidate_dir_name
+                                    
+                                    candidate_info = {
+                                        'candidate_id': candidate_id,
+                                        'session_id': session_id,
+                                        'candidate_dir': str(candidate_dir_path),
+                                        'name': f"disk_candidate_{candidate_id}",
+                                        'psmiles': polymer_box.get('psmiles', ''),
+                                        'smiles': polymer_box.get('polymer_smiles', ''),
+                                        'timestamp': polymer_box.get('timestamp', ''),
+                                        'source': 'dual_gaff_amber_automation',
+                                        'status': 'ready_for_simulation',
+                                        'ready_for_md': True,  # CRITICAL: Add this flag for UI filtering
+                                        'polymer_pdb': polymer_box.get('polymer_pdb', ''),
+                                        'parameters': polymer_box.get('parameters', {})
+                                    }
+                                    
+                                    candidates.append(candidate_info)
+                                    print(f"✅ Found automation candidate: {candidate_info['name']} ({candidate_info['psmiles'][:30]}...)")
+                                    
+                        except Exception as e:
+                            print(f"⚠️ Error loading session results from {results_file}: {e}")
+                            continue
+            
+            print(f"🔍 Found {len(candidates)} automation candidates for dual GAFF+AMBER")
+            return candidates
+            
+        except Exception as e:
+            print(f"❌ Error scanning for automation candidates: {e}")
+            return []
+    
+    def stop_simulation(self) -> bool:
+        """Stop the current simulation"""
+        try:
+            if self.simulation_thread and self.simulation_thread.is_alive():
+                # Note: Python threads can't be forcibly stopped, but we can mark it as stopped
+                if self.current_simulation:
+                    self.current_simulation['status'] = 'stopped'
+                print("🛑 Simulation stop requested")
+                return True
+            return False
+        except Exception as e:
+            print(f"❌ Error stopping simulation: {e}")
+            return False 

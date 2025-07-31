@@ -37,7 +37,7 @@ try:
                 del st.session_state.psmiles_processor
             
             # Reinitialize
-            from core.psmiles_processor import PSMILESProcessor
+            from insulin_ai import PSMILESProcessor
             processor = PSMILESProcessor()
             st.session_state.psmiles_processor = processor
             

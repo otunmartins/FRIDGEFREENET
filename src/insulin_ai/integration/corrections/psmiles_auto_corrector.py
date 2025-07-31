@@ -27,7 +27,7 @@ try:
     if parent_dir not in sys.path:
         sys.path.append(parent_dir)
     
-    from core.enhanced_chemical_repair import EnhancedChemicalRepair, repair_chemical_structure
+    from insulin_ai.core.enhanced_chemical_repair import EnhancedChemicalRepair, repair_chemical_structure
     ENHANCED_REPAIR_AVAILABLE = True
 except ImportError as e:
     ENHANCED_REPAIR_AVAILABLE = False

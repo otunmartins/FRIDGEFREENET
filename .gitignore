@@ -2,6 +2,7 @@
 __pycache__/
 *.py[cod]
 *$py.class
+*.md
 
 # C extensions
 *.so
@@ -223,7 +224,6 @@ env*/
 .venv*/
 
 # Dependencies that might be installed locally
-PSP/
 node_modules/
 
 # Generated outputs

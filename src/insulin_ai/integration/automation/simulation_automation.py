@@ -3,7 +3,7 @@
 Automated Simulation Pipeline for PSMILES Candidates
 
 This module automates the following workflow:
-1. Create simulation boxes filled with polymers for each PSMILES candidate using PSP
+1. Create simulation boxes filled with polymers for each PSMILES candidate using DirectPolymerBuilder
 2. Create simulation boxes where insulin is flanked by polymer boxes with proper cleaning
 
 Integrates with the PSMILES generation pipeline to execute immediately after candidate generation.
@@ -20,12 +20,12 @@ from datetime import datetime
 
 # Import required modules
 try:
-    from core.psmiles_generator import PSMILESGenerator
+    from insulin_ai import PSMILESGenerator
 except ImportError:
     PSMILESGenerator = None
 
 try:
-    from core.simulation_manager import SimulationManager
+    from insulin_ai.core.simulation_manager import SimulationManager
 except ImportError:
     SimulationManager = None
 
@@ -157,10 +157,7 @@ class SimulationAutomation:
                 
                 # Copy the polymer.pdb to expected location for compatibility
                 polymer_pdb_target = os.path.join(molecules_dir, "polymer_chain.pdb")
-                if result['pdb_file'] != polymer_pdb_target:
-                    import shutil
-                    shutil.copy2(result['pdb_file'], polymer_pdb_target)
-                    print(f"📋 Copied to: {polymer_pdb_target}")
+                self.safe_copy_file(result['pdb_file'], polymer_pdb_target, print)
                 
                 return {
                     'success': True,
@@ -367,23 +364,28 @@ def get_insulin_pdb_files() -> Dict[str, str]:
     """Get available insulin PDB files from the integration directory"""
     insulin_files = {}
     
-    # Look for insulin PDB files in common locations
+    # Get the project root (src/insulin_ai/) by going up from current file location
+    current_file = Path(__file__)  # automation/simulation_automation.py
+    project_root = current_file.parent.parent  # goes up to src/insulin_ai/
+    
+    # Look for insulin PDB files in common locations (relative to project_root)
     search_paths = [
-        "integration/data/insulin",
-        "data/insulin", 
-        "insulin_structures",
-        "pdb_files"
+        project_root / "integration" / "data" / "insulin",
+        project_root / "data" / "insulin", 
+        project_root / "insulin_structures",
+        project_root / "pdb_files"
     ]
     
     for search_path in search_paths:
-        if os.path.exists(search_path):
-            for file in os.listdir(search_path):
-                if file.endswith('.pdb') and 'insulin' in file.lower():
-                    insulin_files[file] = os.path.join(search_path, file)
+        if search_path.exists():
+            for file in search_path.iterdir():
+                if file.suffix == '.pdb' and 'insulin' in file.name.lower():
+                    insulin_files[file.name] = str(file)
     
     # Default fallback insulin file  
     if not insulin_files:
-        insulin_files['insulin_default.pdb'] = "integration/data/insulin/insulin_default.pdb"
+        default_path = project_root / "integration" / "data" / "insulin" / "insulin_default.pdb"
+        insulin_files['insulin_default.pdb'] = str(default_path)
     
     return insulin_files
 
@@ -414,17 +416,6 @@ class SimulationAutomationPipeline:
         self.dependencies_available = True
         self.missing_dependencies = []
         
-        try:
-            # PSP for polymer building
-            import psp.AmorphousBuilder as ab
-            self.psp_builder = ab
-            print("✅ PSP AmorphousBuilder imported successfully")
-            
-        except ImportError as e:
-            print(f"⚠️ PSP AmorphousBuilder not available: {e}")
-            self.missing_dependencies.append("psp.AmorphousBuilder")
-            self.dependencies_available = False
-            
         try:
             # PDBFixer for insulin cleaning
             from pdbfixer import PDBFixer
@@ -468,6 +459,47 @@ class SimulationAutomationPipeline:
             print(f"⚠️ Some dependencies missing: {self.missing_dependencies}")
             print("⚠️ Simulation automation will run in limited mode")
     
+    @staticmethod
+    def safe_copy_file(src: str, dst: str, logger_func=None) -> bool:
+        """
+        Safely copy a file, avoiding same-file errors.
+        
+        Args:
+            src: Source file path
+            dst: Destination file path  
+            logger_func: Optional logging function
+            
+        Returns:
+            bool: True if copy occurred, False if files were the same
+        """
+        def log(msg):
+            if logger_func:
+                logger_func(msg)
+            else:
+                print(msg)
+        
+        # Normalize paths to avoid issues with relative/absolute paths
+        src_abs = os.path.abspath(src)
+        dst_abs = os.path.abspath(dst)
+        
+        if src_abs == dst_abs:
+            log(f"   ℹ️ Source and destination are the same file - no copy needed")
+            return False
+        
+        # Ensure source exists
+        if not os.path.exists(src):
+            raise FileNotFoundError(f"Source file not found: {src}")
+        
+        # Create destination directory if needed
+        dst_dir = os.path.dirname(dst)
+        if dst_dir:  # Only create directory if it's not empty (not current directory)
+            os.makedirs(dst_dir, exist_ok=True)
+        
+        # Perform the copy
+        shutil.copy2(src, dst)
+        log(f"   ✅ File copied: {src} → {dst}")
+        return True
+    
     def create_polymer_simulation_box(self, 
                                     psmiles: str, 
                                     candidate_id: str,
@@ -478,7 +510,7 @@ class SimulationAutomationPipeline:
                                     timeout_minutes: int = 5,
                                     output_callback: Optional[Callable] = None) -> Dict[str, Any]:
         """
-        Create simulation box filled with polymers using PSP
+        Create simulation box filled with polymers using DirectPolymerBuilder
         
         Args:
             psmiles: PSMILES string for the polymer
@@ -499,11 +531,6 @@ class SimulationAutomationPipeline:
             else:
                 print(msg)
         
-        # NOTE: We don't require PSP anymore! We use DirectPolymerBuilder as fallback
-        # Just log PSP availability status but continue with our fallback methods
-        if not hasattr(self, 'psp_builder') or not self.dependencies_available:
-            log(f"⚠️ PSP AmorphousBuilder not available - using DirectPolymerBuilder fallback")
-        
         try:
             log(f"🔧 Creating polymer simulation box for candidate {candidate_id}")
             log(f"   PSMILES: {psmiles}")
@@ -514,42 +541,54 @@ class SimulationAutomationPipeline:
             candidate_dir = self.session_dir / f"candidate_{candidate_id}"
             candidate_dir.mkdir(exist_ok=True)
             
-            # Use efficient MoleculeBuilder instead of wasteful AmorphousBuilder
-            log(f"   🧬 Using PSP MoleculeBuilder (much more efficient!)")
+            # Use DirectPolymerBuilder (bypasses PSP completely)
+            log(f"   🧬 Using DirectPolymerBuilder (no PSP dependency)")
             log(f"   ⏰ Max build time: {timeout_minutes} minutes")
             
-            from utils.molecule_builder_utils import build_single_polymer_chain
+            from utils.direct_polymer_builder import DirectPolymerBuilder
             
             # Add timeout handling
             import time
             start_time = time.time()
             
             try:
-                # Create single polymer chain directly (no waste!)
+                # Create single polymer chain using DirectPolymerBuilder
                 polymer_output_dir = str(candidate_dir / 'molecules')
-                result = build_single_polymer_chain(
-                    psmiles=psmiles,
-                    length=polymer_length,
-                    output_dir=polymer_output_dir
+                builder = DirectPolymerBuilder()
+                result = builder.build_polymer_chain(
+                    psmiles_str=psmiles,
+                    chain_length=polymer_length,
+                    output_dir=polymer_output_dir,
+                    candidate_id=candidate_id
                 )
                 
                 build_time = time.time() - start_time
                 
                 if not result['success']:
-                    raise Exception(f"MoleculeBuilder failed: {result.get('error', 'Unknown error')}")
+                    raise Exception(f"DirectPolymerBuilder failed: {result.get('error', 'Unknown error')}")
                 
                 log(f"   ✅ Single polymer chain created in {build_time:.1f}s")
-                log(f"   📁 Output: {result['polymer_pdb']}")
+                log(f"   📁 Output: {result['pdb_file']}")
+                if 'polymer_smiles' in result:
+                    log(f"   🧬 Polymer SMILES: {result['polymer_smiles'][:50]}...")
                 
                 # Set polymer_pdb for the rest of the function
-                polymer_pdb = result['polymer_pdb']
+                polymer_pdb = result['pdb_file']
+                # **CRITICAL: Capture the polymer chain SMILES for MD simulation use**
+                polymer_smiles = result.get('polymer_smiles')
+                if not polymer_smiles:
+                    log(f"   ⚠️ No polymer_smiles in result - enhanced MD may not work")
+                else:
+                    log(f"   ✅ Polymer chain SMILES captured for enhanced MD")
                 
-            except Exception as psp_error:
+            except Exception as builder_error:
                 build_time = time.time() - start_time
                 if build_time > timeout_minutes * 60:
-                    log(f"   ⏰ MoleculeBuilder may have timed out after {build_time:.1f}s")
+                    log(f"   ⏰ DirectPolymerBuilder may have timed out after {build_time:.1f}s")
                 else:
-                    log(f"   ❌ MoleculeBuilder failed after {build_time:.1f}s: {psp_error}")
+                    log(f"   ❌ DirectPolymerBuilder failed after {build_time:.1f}s: {builder_error}")
+                # Initialize polymer_smiles to None for the exception case
+                polymer_smiles = None
                 raise
             
             # Verify the polymer PDB file exists
@@ -563,6 +602,7 @@ class SimulationAutomationPipeline:
                 'polymer_pdb': polymer_pdb,
                 'candidate_id': candidate_id,
                 'psmiles': psmiles,
+                'polymer_smiles': polymer_smiles,  # **ENHANCED: Now includes actual polymer chain SMILES!**
                 'output_dir': str(candidate_dir),
                 'parameters': {
                     'polymer_length': polymer_length,
@@ -637,24 +677,78 @@ class SimulationAutomationPipeline:
             
             log(f"   Preprocessing insulin PDB with PDBFixer...")
             
-            # Preprocess insulin PDB (remove water, add missing atoms/hydrogens)
+            # Smart insulin processing (preserves correctly formatted files, fixes broken ones)
             candidate_dir = Path(polymer_pdb).parent
             processed_insulin_dir = candidate_dir / "processed_insulin"
             processed_insulin_dir.mkdir(exist_ok=True)
             
-            processed_insulin_path = processed_insulin_dir / f"insulin_processed_{candidate_id}.pdb"
+            processed_insulin_path = processed_insulin_dir / f"insulin_smart_processed_{candidate_id}.pdb"
             
-            # Use existing PDB preprocessing function
-            preprocess_result = self.preprocess_pdb(
-                pdb_path=insulin_pdb,
-                remove_water=True,
-                remove_heterogens=False,  # Keep important residues
-                add_missing_residues=True,
-                add_missing_atoms=True,
-                add_missing_hydrogens=True,
-                ph=7.4,
-                output_callback=lambda msg: log(f"      {msg}")
-            )
+            # Use smart insulin fixer instead of destructive PDBFixer preprocessing
+            try:
+                from ..analysis.smart_insulin_fixer import smart_insulin_fix_for_simulation
+                log(f"   🧠 Using comprehensive smart insulin fixer for simulation...")
+                
+                # Use the comprehensive simulation fix that handles both structure and force field
+                smart_fix_result = smart_insulin_fix_for_simulation(
+                    insulin_pdb, 
+                    polymer_molecules=None,  # No polymer molecules needed for insulin-only fix
+                    output_callback=lambda msg: log(f"      {msg}")
+                )
+                
+                if smart_fix_result['success']:
+                    log(f"      ✅ Comprehensive smart fix successful!")
+                    log(f"      📁 Fixed PDB: {smart_fix_result['fixed_pdb_path']}")
+                    log(f"      🔧 Method: {smart_fix_result.get('method', 'comprehensive')}")
+                    
+                    preprocess_result = {
+                        'success': True,
+                        'output_file': smart_fix_result['fixed_pdb_path'],
+                        'method': 'comprehensive_smart_fix',
+                        'enhanced_fix': True,
+                        'forcefield_ready': smart_fix_result.get('forcefield') is not None,
+                        'system_ready': smart_fix_result.get('system') is not None
+                    }
+                    
+                else:
+                    log(f"      ❌ Comprehensive smart fix failed: {smart_fix_result.get('error', 'Unknown error')}")
+                    # Fallback to basic smart fix
+                    from ..analysis.smart_insulin_fixer import smart_insulin_fix
+                    log(f"      🔄 Falling back to basic smart insulin fixer...")
+                    smart_fixed_path = smart_insulin_fix(insulin_pdb, str(processed_insulin_path))
+                    preprocess_result = {
+                        'success': True,
+                        'output_file': smart_fixed_path,
+                        'method': 'basic_smart_insulin_fixer',
+                        'enhanced_fix': False,
+                        'fallback_used': True
+                    }
+                    
+            except ImportError:
+                log(f"   ⚠️ Comprehensive smart fixer not available - using basic smart fixer...")
+                try:
+                    from ..analysis.smart_insulin_fixer import smart_insulin_fix
+                    smart_fixed_path = smart_insulin_fix(insulin_pdb, str(processed_insulin_path))
+                    preprocess_result = {
+                        'success': True,
+                        'output_file': smart_fixed_path,
+                        'method': 'basic_smart_insulin_fixer',
+                        'enhanced_fix': False
+                    }
+                    log(f"      ✅ Basic smart processing successful")
+                except ImportError:
+                    log(f"   ⚠️ Smart fixer not available - using PDBFixer (may corrupt CYX residues)...")
+                    # Final fallback to original method if smart fixer not available
+                    preprocess_result = self.preprocess_pdb(
+                        pdb_path=insulin_pdb,
+                        remove_water=True,
+                        remove_heterogens=False,  # Keep important residues
+                        add_missing_residues=True,
+                        add_missing_atoms=True,
+                        add_missing_hydrogens=False,
+                        ph=7.4,
+                        output_callback=lambda msg: log(f"      {msg}")
+                    )
             
             if not preprocess_result.get('success'):
                 raise Exception(f"Insulin preprocessing failed: {preprocess_result.get('error')}")
@@ -672,8 +766,11 @@ class SimulationAutomationPipeline:
             
             log(f"   📁 Copying processed insulin: {processed_output_file} → {processed_insulin_path}")
             
-            # Copy the processed file to our expected location
-            shutil.copy(processed_output_file, processed_insulin_path)
+            # Use safe copy utility to avoid same-file errors
+            copy_occurred = self.safe_copy_file(processed_output_file, str(processed_insulin_path), log)
+            if not copy_occurred:
+                # Update the processed_insulin_path to point to the actual file when no copy occurred
+                processed_insulin_path = Path(processed_output_file)
             
             log(f"   ✅ Insulin preprocessed and cleaned")
             

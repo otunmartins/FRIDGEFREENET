@@ -1,33 +1,85 @@
-# Create an OpenFF Molecule object for benzene from SMILES
+# Create an OpenFF Molecule object with proper stereochemistry handling
 from openff.toolkit import Molecule
 from rdkit import Chem
-your_mol = Chem.MolFromPDBFile('./automated_simulations/session_f949cc8c/candidate_001_e36e15/molecules/packmol/polymer.pdb')
-smiles = Chem.MolToSmiles(your_mol)
-molecule = Molecule.from_smiles(smiles)
+from rdkit.Chem import AllChem
+
+# Original SMILES
+original_smiles = 'COCC=C[PH](=O)(O)(O)C(=O)OCC=C[PH](=O)(O)(O)C(=O)OCC=C[PH](=O)(O)(O)C(=O)OCC=C[PH](=O)(O)(O)C(=O)OCC=C[PH](=O)(O)(O)C(C)=O'
+
+# Method 1: Try with explicit stereochemistry
+try:
+    # Create RDKit molecule
+    rdkit_mol = Chem.MolFromSmiles(original_smiles)
+    if rdkit_mol is None:
+        raise ValueError("Invalid SMILES")
+
+    # Add hydrogens and generate 3D coordinates
+    rdkit_mol = Chem.AddHs(rdkit_mol)
+    AllChem.EmbedMolecule(rdkit_mol, randomSeed=42)
+    Chem.AssignStereochemistry(rdkit_mol, cleanIt=True, force=True)
+    
+    # Remove hydrogens to get cleaner SMILES
+    rdkit_mol = Chem.RemoveHs(rdkit_mol)
+    
+    # Convert back to SMILES
+    new_smiles = Chem.MolToSmiles(rdkit_mol, isomericSmiles=True)
+    print(f"Generated SMILES with stereochemistry: {new_smiles}")
+    
+    # Create OpenFF molecule with undefined stereo allowed
+    molecule = Molecule.from_smiles(new_smiles, allow_undefined_stereo=True)
+    print("Successfully created molecule with processed SMILES")
+
+except Exception as e:
+    print(f"Method 1 failed: {e}")
+    
+    # Method 2: Fallback to manual stereochemistry
+    try:
+        # Manually specify all E (trans) double bonds
+        manual_smiles = 'COC/C=C/[PH](=O)(O)(O)C(=O)OC/C=C/[PH](=O)(O)(O)C(=O)OC/C=C/[PH](=O)(O)(O)C(=O)OC/C=C/[PH](=O)(O)(O)C(=O)OC/C=C/[PH](=O)(O)(O)C(C)=O'
+        molecule = Molecule.from_smiles(manual_smiles, allow_undefined_stereo=True)
+        print("Successfully created molecule with manual stereochemistry")
+    except Exception as e2:
+        print(f"Method 2 failed: {e2}")
+        
+        # Method 3: Final fallback - original SMILES with undefined stereo allowed
+        molecule = Molecule.from_smiles(original_smiles, allow_undefined_stereo=True)
+        print("Using original SMILES with undefined stereochemistry allowed")
+
+# Assign partial charges
 molecule.assign_partial_charges("gasteiger")
 
 # Create the GAFF template generator
-from openmmforcefields.generators import (
-    GAFFTemplateGenerator,
-)
+from openmmforcefields.generators import GAFFTemplateGenerator
 gaff = GAFFTemplateGenerator(molecules=molecule)
 
+# Fix PDB file first using PDBFixer
+from pdbfixer import PDBFixer
+from openmm.app import PDBFile, ForceField
+
+print("Fixing PDB file...")
+fixer = PDBFixer("./automated_simulations/session_83fad177/candidate_005_54d3d9/molecules/insulin_polymer_composite_005_54d3d9.pdb")
+fixer.findMissingResidues()
+fixer.findNonstandardResidues()
+fixer.findMissingAtoms()
+fixer.addMissingAtoms()
+fixer.addMissingHydrogens(7.0)  # Add at pH 7.0
+
+# Save the fixed file
+PDBFile.writeFile(fixer.topology, fixer.positions, open('fixed_insulin.pdb', 'w'))
+print("PDB file fixed and saved as 'fixed_insulin.pdb'")
+
 # Create an OpenMM ForceField object with AMBER ff14SB for implicit solvent
-# Remove explicit water models - not needed for implicit solvent
-from openmm.app import ForceField
 forcefield = ForceField(
     "amber/protein.ff14SB.xml",
-    "implicit/gbn2.xml",  # Generalized Born implicit solvent model
+    "amber/tip3p_standard.xml",   # Standard residue templates
+    "implicit/gbn2.xml",          # Generalized Born implicit solvent model
 )
 
 # Register the GAFF template generator
 forcefield.registerTemplateGenerator(gaff.generator)
 
-# You can now parameterize an OpenMM Topology object that contains the specified molecule.
-# forcefield will load the appropriate GAFF parameters when needed, and antechamber
-# will be used to generate small molecule parameters on the fly.
-from openmm.app import PDBFile
-pdbfile = PDBFile("./automated_simulations/session_f949cc8c/candidate_001_e36e15/molecules/insulin_polymer_composite_001_e36e15_preprocessed.pdb")
+# Load the fixed PDB file
+pdbfile = PDBFile('fixed_insulin.pdb')
 
 # Create system with implicit solvent parameters
 from openmm import app
@@ -69,12 +121,9 @@ minimized_energy = state.getPotentialEnergy()
 print(f"Minimized potential energy: {minimized_energy}")
 
 # Set up reporters for trajectory and energy output
-# PDB trajectory reporter (save every 1000 steps)
 pdb_reporter = PDBReporter('trajectory_implicit.pdb', 1000)
 simulation.reporters.append(pdb_reporter)
 
-# State data reporter for energy output (every 100 steps)
-# Note: volume/density not meaningful for implicit solvent
 state_reporter = StateDataReporter(
     'simulation_log_implicit.txt', 
     100,  # Report every 100 steps
@@ -88,7 +137,6 @@ state_reporter = StateDataReporter(
 )
 simulation.reporters.append(state_reporter)
 
-# Console reporter to see PE every 100 steps
 console_reporter = StateDataReporter(
     None,  # Output to console
     100,   # Report every 100 steps  

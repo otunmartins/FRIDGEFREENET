@@ -305,7 +305,7 @@ def force_refresh_psmiles_processor() -> tuple[bool, str]:
             importlib.reload(sys.modules['core.psmiles_processor'])
         
         # Create new instance with latest functionality
-        from core.psmiles_processor import PSMILESProcessor
+        from insulin_ai import PSMILESProcessor
         new_processor = PSMILESProcessor()
         
         # Verify it has all required methods

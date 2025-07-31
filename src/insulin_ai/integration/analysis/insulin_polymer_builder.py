@@ -36,61 +36,44 @@ def build_insulin_polymer_composite(
     os.makedirs(output_dir, exist_ok=True)
     
     try:
-        # Step 1: Build polymer structure using PSP
-        print("🔧 Step 1: Building polymer structure with PSP...")
+        # Step 1: Build polymer structure using DirectPolymerBuilder
+        print("🔧 Step 1: Building polymer structure with DirectPolymerBuilder...")
         
-        # Import PSP
-        import psp.AmorphousBuilder as ab
+        # Import DirectPolymerBuilder
+        from utils.direct_polymer_builder import DirectPolymerBuilder
         
-        # Create polymer input
-        input_data = {
-            'ID': ['polymer'],
-            'smiles': [psmiles],
-            'Len': [polymer_length],
-            'Num': [num_polymer_molecules],
-            'NumConf': [1],
-            'LeftCap': ['H'],
-            'RightCap': ['H'],
-            'Loop': [False]
-        }
+        # Create polymer using DirectPolymerBuilder
+        builder = DirectPolymerBuilder()
         
-        input_df = pd.DataFrame(input_data)
+        # Create molecules subdirectory for consistency
+        molecules_dir = os.path.join(output_dir, 'molecules')
+        os.makedirs(molecules_dir, exist_ok=True)
         
-        builder = ab.Builder(
-            input_df,
-            ID_col="ID",
-            SMILES_col="smiles",
-            NumMole="Num",
-            Length='Len',
-            NumConf='NumConf',
-            OutFile='polymer_structure',
-            OutDir=output_dir,
-            density=density,
-            box_type='c',
-            tol_dis=2.0
+        # Build polymer chain
+        result = builder.build_polymer_chain(
+            psmiles_str=psmiles,
+            chain_length=polymer_length,
+            output_dir=molecules_dir,
+            candidate_id='polymer'
         )
         
-        builder.Build()
+        if not result['success']:
+            raise Exception(f"DirectPolymerBuilder failed: {result.get('error', 'Unknown error')}")
+            
+        print(f"✅ Polymer chain created: {result['pdb_file']}")
         
-        # Step 2: Find the generated polymer PDB file
-        print("🔍 Step 2: Locating polymer structure files...")
+        # Step 2: Get the polymer PDB file path from DirectPolymerBuilder result
+        print("🔍 Step 2: Using polymer structure from DirectPolymerBuilder...")
         
-        molecules_dir = os.path.join(output_dir, 'molecules')
-        polymer_pdb = None
-        
-        if os.path.exists(molecules_dir):
-            for file in os.listdir(molecules_dir):
-                if file.endswith('.pdb') and 'polymer' in file.lower():
-                    polymer_pdb = os.path.join(molecules_dir, file)
-                    break
+        polymer_pdb = result['pdb_file']
         
         if not polymer_pdb or not os.path.exists(polymer_pdb):
             return {
                 'success': False,
-                'error': 'Polymer PDB file not found after PSP build'
+                'error': 'Polymer PDB file not found after DirectPolymerBuilder'
             }
         
-        print(f"   Found polymer PDB: {polymer_pdb}")
+        print(f"   Using polymer PDB: {polymer_pdb}")
         
         # Step 3: Create large box configuration with random edges using PACKMOL
         print("🏗️ Step 3: Creating large box with random edges using PACKMOL...")
@@ -136,7 +119,7 @@ def build_insulin_polymer_composite(
     except ImportError:
         return {
             'success': False,
-            'error': 'PSP package not available. Please install PSP.'
+            'error': 'DirectPolymerBuilder not available. Missing dependency.'
         }
     except Exception as e:
         return {

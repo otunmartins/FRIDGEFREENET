@@ -32,6 +32,12 @@ try:
 except ImportError:
     OPENMMFORCEFIELDS_AVAILABLE = False
 
+try:
+    from .chiral_center_fixer import create_openff_molecule_with_chiral_fix
+    CHIRAL_FIXER_AVAILABLE = True
+except ImportError:
+    CHIRAL_FIXER_AVAILABLE = False
+
 def preprocess_polymer_pdb(pdb_file: str) -> str:
     """
     Preprocess polymer PDB with PDBFixer to establish proper connectivity
@@ -88,8 +94,12 @@ def create_molecule_from_smiles_robust(smiles: str):
         
         print(f"   🧪 Creating molecule from SMILES: {smiles[:50]}...")
         
-        # Create molecule from SMILES
-        molecule = Molecule.from_smiles(smiles, allow_undefined_stereo=True)
+        # Create molecule from SMILES with chiral center fixing
+        if CHIRAL_FIXER_AVAILABLE:
+            molecule = create_openff_molecule_with_chiral_fix(smiles, verbose=True)
+        else:
+            # Fallback to original method with allow_undefined_stereo
+            molecule = Molecule.from_smiles(smiles, allow_undefined_stereo=True)
         
         print(f"   ✅ Created molecule: {molecule.n_atoms} atoms, {molecule.n_bonds} bonds")
         return molecule
