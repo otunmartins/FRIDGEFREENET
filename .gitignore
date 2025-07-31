@@ -231,3 +231,23 @@ node_modules/
 output_*.csv
 results_*.json
 analysis_*.html 
+
+# Vector database and ChromaDB files
+*.bin
+*.sqlite3
+demo_vector_db/
+**/demo_vector_db/**
+chroma.sqlite3
+
+# RAG and literature analysis results
+demo_rag_results/
+rag_literature_results/
+**/demo_rag_results/**
+**/rag_literature_results/**
+literature_analysis_*.json
+
+# ML model caches and embeddings
+*.pkl
+*.pickle
+embeddings_cache/
+model_cache/ 
