@@ -514,7 +514,9 @@ class DualGaffAmberIntegration:
                 log_callback("✅ Energy minimization complete.")
                 # End of Selection
                 initial_energy = simulation.context.getState(getEnergy=True).getPotentialEnergy()
-                log_callback(f"   Initial energy: {initial_energy.value_in_unit(unit.kilojoules_per_mole):.2f} kJ/mol")
+                initial_energy_kj_mol = initial_energy.value_in_unit(unit.kilojoules_per_mole)
+                log_callback(f"   Initial energy: {initial_energy_kj_mol:.2f} kJ/mol")
+                self.current_simulation['initial_energy'] = initial_energy_kj_mol  # Store initial energy
 
                 log_file = output_dir / "simulation.log"
                 trajectory_file = output_dir / "trajectory.pdb"
@@ -538,12 +540,21 @@ class DualGaffAmberIntegration:
                 simulation.step(production_steps)
                 
                 final_energy = simulation.context.getState(getEnergy=True).getPotentialEnergy()
+                final_energy_kj_mol = final_energy.value_in_unit(unit.kilojoules_per_mole)
                 log_callback(f"✅ Simulation finished!")
-                log_callback(f"   Final energy: {final_energy.value_in_unit(unit.kilojoules_per_mole):.2f} kJ/mol")
+                log_callback(f"   Final energy: {final_energy_kj_mol:.2f} kJ/mol")
 
                 # --- Step 6: Finalize ---
                 self.current_simulation['status'] = 'completed'
-                #... (add more result details if needed)
+                self.current_simulation['final_energy'] = final_energy_kj_mol  # Store the actual final energy!
+                
+                # Store output files for post-processing
+                output_files = []
+                if trajectory_file.exists():
+                    output_files.append(str(trajectory_file))
+                if log_file.exists():
+                    output_files.append(str(log_file))
+                self.current_simulation['output_files'] = output_files
                 
                 log_callback(f"\n🎉 SIMULATION COMPLETED SUCCESSFULLY!")
 
@@ -648,6 +659,40 @@ class DualGaffAmberIntegration:
                 remaining = max(0, timeout_seconds - elapsed)
                 output_callback(f"⏳ Still waiting... {remaining/60:.1f} minutes remaining")
     
+    def get_simulation_results(self, simulation_id: str) -> Dict[str, Any]:
+        """Get simulation results in the format expected by active learning."""
+        
+        if not self.current_simulation or self.current_simulation.get('id') != simulation_id:
+            return {
+                'success': False,
+                'error': f'No simulation found with ID: {simulation_id}'
+            }
+        
+        # Check if simulation is completed
+        status = self.current_simulation.get('status', 'unknown')
+        
+        if status == 'completed':
+            # Return results in the format expected by post-processing
+            return {
+                'success': True,
+                'simulation_id': simulation_id,
+                'initial_energy': self.current_simulation.get('initial_energy'),
+                'final_energy': self.current_simulation.get('final_energy'),
+                'frames_saved': self.current_simulation.get('frames_saved'),
+                'output_files': self.current_simulation.get('output_files', []),
+                'simulation_info': self.current_simulation.copy()
+            }
+        elif status == 'failed':
+            return {
+                'success': False,
+                'error': self.current_simulation.get('error', 'Simulation failed')
+            }
+        else:
+            return {
+                'success': False,
+                'error': f'Simulation not completed yet. Status: {status}'
+            }
+
     def is_simulation_running(self) -> bool:
         """Check if a simulation is currently running"""
         return self.simulation_running and self.current_simulation and self.current_simulation.get('status') == 'running'

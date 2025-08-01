@@ -43,6 +43,12 @@ class SimpleActiveLearningOrchestrator:
         self.iteration_callbacks: List[Callable] = []
         self.completion_callbacks: List[Callable] = []
         
+        # Initialize MD simulation system early to ensure interface compatibility
+        from integration.analysis.dual_gaff_amber_integration import DualGaffAmberIntegration
+        self.dual_simulator = DualGaffAmberIntegration(
+            output_dir=str(self.storage_path / "dual_gaff_amber_simulations")
+        )
+        
         logger.info(f"SimpleActiveLearningOrchestrator initialized - Max iterations: {max_iterations}")
         if config:
             logger.info(f"Configuration loaded: Literature Mining ({config['literature_mining']['openai_model']}), "
@@ -535,12 +541,8 @@ class SimpleActiveLearningOrchestrator:
                        f"Temp: {temperature}K | "
                        f"Total time: {md_config.get('total_time_ns', 1.25):.1f} ns")
             
-            # Use the EXACT same integration the MD Simulation UI tab uses - dual GAFF+AMBER approach
-            dual_simulator = DualGaffAmberIntegration(
-                output_dir=str(self.storage_path / "dual_gaff_amber_simulations")
-            )
-            
-            if not dual_simulator.dependencies_ok:
+            # dual_simulator is already initialized in __init__
+            if not self.dual_simulator.dependencies_ok:
                 logger.error("Dual GAFF AMBER dependencies not available")
                 raise RuntimeError("Dual GAFF AMBER dependencies required - no fallbacks allowed")
             
@@ -562,21 +564,22 @@ class SimpleActiveLearningOrchestrator:
                     logger.info(f"✅ Valid PSMILES for {molecule['id']}: {psmiles}")
                     
                     # Use the configured simulation parameters from the UI
-                    simulation_id = dual_simulator.run_md_simulation_async(
+                    simulation_id = self.dual_simulator.run_md_simulation_async(
                         pdb_file=psmiles,  # The UI passes PSMILES string
                         temperature=temperature,
                         equilibration_steps=equilibration_steps,
                         production_steps=production_steps,  
                         save_interval=save_interval,
                         output_prefix=f"al_{molecule['id']}",
-                        polymer_chain_length=10   # Keep shorter chains for active learning speed
+                        polymer_chain_length=10,   # Keep shorter chains for active learning speed
+                        num_polymer_chains=3
                     )
                     
                     # Wait for simulation to actually complete (not just start!)
                     logger.info(f"⏳ Waiting for MD simulation {simulation_id} to complete...")
                     
                     # Use proper wait method instead of just 2 seconds
-                    simulation_status = dual_simulator.wait_for_simulation_completion(
+                    simulation_status = self.dual_simulator.wait_for_simulation_completion(
                         simulation_id, 
                         output_callback=lambda msg: logger.info(f"   {msg}"),
                         timeout_minutes=30  # 30 minute timeout for active learning
@@ -588,7 +591,7 @@ class SimpleActiveLearningOrchestrator:
                             'molecule_id': molecule['id'],
                             'success': True,
                             'simulation_id': simulation_id,
-                            'final_energy': results.get('final_energy', -1200.0),
+                            'final_energy': results.get('final_energy'),
                             'temperature': temperature,
                             'pressure': 1.0,
                             'density': 1.1,
@@ -598,6 +601,15 @@ class SimpleActiveLearningOrchestrator:
                         })
                         successful_simulations += 1
                         logger.info(f"✅ MD simulation {simulation_id} completed successfully!")
+                        
+                        # Run post-processing analysis to extract performance metrics
+                        logger.info(f"🔬 Running post-processing analysis for {simulation_id}...")
+                        analysis_results = self._run_postprocessing_analysis(simulation_id, molecule)
+                        if analysis_results:
+                            simulation_results[-1]['analysis_results'] = analysis_results
+                            logger.info(f"✅ Post-processing analysis completed for {simulation_id}")
+                        else:
+                            logger.warning(f"⚠️ Post-processing analysis failed for {simulation_id}")
                     else:
                         error_msg = simulation_status.get('error', 'Unknown error')
                         raise RuntimeError(f"Simulation {simulation_id} failed: {error_msg}")
@@ -629,50 +641,181 @@ class SimpleActiveLearningOrchestrator:
             logger.error(f"MD simulation failed: {e}")
             raise RuntimeError(f"MD simulation failed: {e}")
     
+    def _run_postprocessing_analysis(self, simulation_id: str, molecule: Dict[str, Any]) -> Dict[str, Any]:
+        """Run lightweight post-processing analysis suitable for active learning"""
+        try:
+            logger.info(f"   🔬 Running lightweight post-processing for active learning...")
+            
+            # Get simulation results from the dual simulator
+            simulation_results = self.dual_simulator.get_simulation_results(simulation_id)
+            
+            if not simulation_results or not simulation_results.get('success'):
+                logger.warning(f"   ⚠️ No valid simulation results for {simulation_id}")
+                return None
+            
+            # Extract key metrics for active learning (no MM-GBSA needed!)
+            analysis_results = {
+                'simulation_id': simulation_id,
+                'success': True,
+                'molecule_info': molecule,
+                'metrics': {}
+            }
+            
+            # Basic energy analysis
+            if 'final_energy' in simulation_results and 'initial_energy' in simulation_results:
+                energy_change = simulation_results['final_energy'] - simulation_results['initial_energy']
+                analysis_results['metrics']['energy_change'] = energy_change
+                analysis_results['metrics']['final_energy'] = simulation_results['final_energy']
+                analysis_results['metrics']['energy_stability'] = abs(energy_change) < 1000  # kJ/mol threshold
+                
+                logger.info(f"   📊 Energy change: {energy_change:.2f} kJ/mol")
+            
+            # Extract trajectory file info for future analysis if needed
+            if 'output_files' in simulation_results:
+                trajectory_files = [f for f in simulation_results['output_files'] if f.endswith('.dcd')]
+                if trajectory_files:
+                    analysis_results['trajectory_file'] = trajectory_files[0]
+                    logger.info(f"   📁 Trajectory saved: {trajectory_files[0]}")
+            
+            # Assign a simple fitness score for active learning
+            # Higher score = better candidate for further exploration
+            fitness_score = 0.5  # Default neutral score
+            
+            if 'energy_stability' in analysis_results['metrics']:
+                if analysis_results['metrics']['energy_stability']:
+                    fitness_score += 0.3  # Bonus for stable energy
+                else:
+                    fitness_score -= 0.2  # Penalty for unstable energy
+            
+            # Add polymer-specific metrics
+            psmiles = molecule.get('psmiles', '')
+            if psmiles:
+                # Simple complexity score based on PSMILES length
+                complexity = len(psmiles.replace('[*]', ''))
+                analysis_results['metrics']['complexity'] = complexity
+                
+                # Prefer moderate complexity (not too simple, not too complex)
+                if 10 <= complexity <= 50:
+                    fitness_score += 0.2
+                elif complexity > 100:
+                    fitness_score -= 0.1
+                    
+                logger.info(f"   🧬 Polymer complexity: {complexity} chars")
+            
+            analysis_results['fitness_score'] = max(0.0, min(1.0, fitness_score))
+            
+            logger.info(f"   ✅ Lightweight analysis completed - fitness score: {fitness_score:.3f}")
+            return analysis_results
+            
+        except Exception as e:
+            logger.error(f"   ❌ Post-processing analysis error: {e}")
+            return None
+    
 
     
     def _generate_new_prompt(self, literature_results: Dict[str, Any], 
                            generated_molecules: Dict[str, Any], 
                            simulation_results: Dict[str, Any],
                            target_properties: Dict[str, float]) -> str:
-        """Generate a new prompt for the next iteration based on results."""
+        """Generate a new prompt for the next iteration based on comprehensive results including post-processing analysis."""
         
-        # Extract insights from results
+        # Extract insights from literature results
         materials_found = literature_results.get('materials_found', [])
         mechanisms = literature_results.get('stabilization_mechanisms', [])
-        properties = simulation_results.get('properties_computed', {})
         
-        # Analyze performance against targets
-        performance_analysis = []
-        for prop, target_value in target_properties.items():
-            actual_value = properties.get(prop, 0.0)
-            if actual_value < target_value * 0.8:  # Below 80% of target
-                performance_analysis.append(f"improve {prop} (current: {actual_value:.2f}, target: {target_value:.2f})")
-            elif actual_value > target_value * 1.2:  # Above 120% of target
-                performance_analysis.append(f"optimize {prop} balance (current: {actual_value:.2f})")
+        # Extract post-processing analysis results from simulation results
+        key_improvements = []
         
-        # Build new prompt
-        prompt_parts = [
-            "Design improved polymers for insulin delivery that:"
-        ]
+        # Analyze each simulation result for post-processing insights
+        for sim_result in simulation_results.get('simulation_results', []):
+            if sim_result.get('success') and 'analysis_results' in sim_result:
+                analysis = sim_result['analysis_results']
+                key_metrics = analysis.get('key_metrics', {})
+                
+                # Insulin stability analysis
+                insulin_rmsd = key_metrics.get('insulin_rmsd', 0.0)
+                stability_score = key_metrics.get('insulin_stability_score', 0.0)
+                if insulin_rmsd > 3.0:  # High RMSD indicates instability
+                    key_improvements.append("enhance insulin structural stability")
+                if stability_score < 0.7:  # Low stability score
+                    key_improvements.append("improve protein conformation preservation")
+                
+                # Partitioning and transfer efficiency
+                transfer_efficiency = key_metrics.get('transfer_efficiency', 0.0)
+                if transfer_efficiency < 0.5:  # Poor transfer
+                    key_improvements.append("increase polymer-insulin affinity for better encapsulation")
+                
+                # Diffusion and release kinetics
+                diffusion_coeff = key_metrics.get('diffusion_coefficient', 0.0)
+                release_rate = key_metrics.get('release_rate', 0.0)
+                if diffusion_coeff < 0.01:  # Too slow diffusion
+                    key_improvements.append("optimize mesh size for controlled insulin release")
+                elif diffusion_coeff > 0.1:  # Too fast diffusion
+                    key_improvements.append("reduce initial burst release through tighter crosslinking")
+                
+                # Interaction strength
+                binding_energy = key_metrics.get('binding_energy', 0.0)
+                if abs(binding_energy) < 10.0:  # Weak binding
+                    key_improvements.append("strengthen polymer-insulin interactions")
+                elif abs(binding_energy) > 100.0:  # Too strong binding
+                    key_improvements.append("balance binding strength for triggered release")
+                
+                # pH/temperature responsiveness
+                ph_sensitivity = key_metrics.get('ph_sensitivity', 0.0)
+                swelling_ratio = key_metrics.get('swelling_ratio', 1.0)
+                if ph_sensitivity < 0.3:  # Low pH response
+                    key_improvements.append("enhance pH-responsive behavior for targeted release")
+                if swelling_ratio < 1.5:  # Low swelling
+                    key_improvements.append("increase hydrogel swelling capacity")
+                elif swelling_ratio > 10.0:  # Excessive swelling
+                    key_improvements.append("control excessive swelling to maintain structural integrity")
         
-        if performance_analysis:
-            prompt_parts.append(f"- {' and '.join(performance_analysis)}")
-        
-        if mechanisms:
-            prompt_parts.append(f"- utilize insights on {mechanisms[0]}")
-        
-        if materials_found:
-            prompt_parts.append(f"- and are inspired by {materials_found[0]}")
-        
-        # Add specific improvements based on simulation results
+        # Energy analysis from simulation
         avg_energy = simulation_results.get('average_energy', 0)
-        if avg_energy > -200:  # High energy suggests instability
-            prompt_parts.append("- focus on thermodynamically stable configurations")
+        if avg_energy > -1000:  # High energy suggests poor stability
+            key_improvements.append("achieve lower energy configurations for system stability")
         
-        new_prompt = " ".join(prompt_parts)
+        # Build comprehensive new prompt
+        prompt_parts = ["Design improved polymers for insulin delivery"]
         
-        logger.info(f"Generated new prompt: {new_prompt[:150]}...")
+        # Add specific improvements based on analysis
+        if key_improvements:
+            # Remove duplicates and limit to top 3 improvements
+            unique_improvements = list(dict.fromkeys(key_improvements))[:3]
+            prompt_parts.append(f"that {', '.join(unique_improvements)}")
+        
+        # Add literature-derived insights
+        if mechanisms:
+            mechanism_text = mechanisms[0] if len(mechanisms) > 0 else "advanced stabilization mechanisms"
+            prompt_parts.append(f"utilizing {mechanism_text}")
+        
+        # Add material inspiration
+        if materials_found:
+            material_text = materials_found[0] if len(materials_found) > 0 else "novel biomaterial approaches"
+            prompt_parts.append(f"inspired by {material_text}")
+        
+        # Add specific chemical functionality based on performance gaps
+        chemical_features = []
+        
+        # Check for specific functional group needs
+        if any("pH-responsive" in imp for imp in key_improvements):
+            chemical_features.append("ionizable side chains")
+        if any("insulin affinity" in imp for imp in key_improvements):
+            chemical_features.append("hydrophobic domains for protein interaction")
+        if any("crosslinking" in imp for imp in key_improvements):
+            chemical_features.append("crosslinkable moieties")
+        if any("swelling" in imp for imp in key_improvements):
+            chemical_features.append("hydrophilic segments")
+            
+        if chemical_features:
+            prompt_parts.append(f"incorporating {' and '.join(chemical_features)}")
+        
+        # Finalize prompt
+        new_prompt = " ".join(prompt_parts) + "."
+        
+        logger.info(f"📝 Generated new prompt based on analysis: {new_prompt[:200]}...")
+        logger.info(f"🎯 Key improvements identified: {', '.join(key_improvements[:3])}")
+        
         return new_prompt
     
     def _calculate_iteration_score(self, literature_results: Dict[str, Any],
