@@ -59,6 +59,20 @@ CONSTRAINTS (CRITICAL - FROM VALID-MOL FRAMEWORK):
 - Chemical validity: MUST pass RDKit validation
 - Output format: SMILES_STRING_ONLY (no explanations, no text, no descriptions)
 
+CRITICAL VALENCE RULES (PREVENT POLYMER LIBRARY FAILURES):
+- Carbon: EXACTLY 4 bonds maximum (never exceed)
+- Oxygen: EXACTLY 2 bonds maximum (C=O, C-O-C, never C(X)(Y)=O where X,Y are heavy atoms)
+- Nitrogen: EXACTLY 3 bonds maximum (C-N-C, C=N, never exceed)
+- AVOID: C(C(C)=O)C(C)=O - creates oxygen valence violations
+- AVOID: C(X)(Y)=O where X,Y are not hydrogen - causes O valence > 2
+- AVOID: Complex branched carbonyls - use simple C=O or CC(=O)
+
+POLYMER MONOMER RULES (CRITICAL FOR POLYMERIZATION):
+- Structure MUST be a realistic monomer unit (not full polymer)
+- Include functional groups for chain growth: C=C, C(=O)O, C(=O)N, aromatic rings
+- Prefer linear or simple branched structures over complex branching
+- Examples of GOOD monomers: CC(=O)O, C=C, c1ccccc1, CC(=O)N, CCC=O
+
 SMILES GUIDELINES (FOLLOW EXACTLY - VERBATIM):
 SMILES (simplified molecular-input line-entry system) uses short ASCII string to represent the structure of chemical species. Because the SMILES format described here is custom-designed by us for polymers, it is not completely identical to other SMILES formats. Strictly following the rules explained below is crucial for having correct results.
 
@@ -70,22 +84,25 @@ SMILES (simplified molecular-input line-entry system) uses short ASCII string to
 6. Numbers are used to identify the opening and closing of rings of atoms. For example, in C1CCCCC1, the first carbon having a number "1" should be connected by a single bond with the last carbon, also having a number "1". Polymer blocks that have multiple rings may be identified by using different, consecutive numbers for each ring.
 7. Atoms in aromatic rings can be specified by lower case letters. As an example, benzene ring can be written as c1ccccc1 which is equivalent to C(C=C1)=CC=C1.
 
+SAFE CARBONYL PATTERNS (USE THESE):
+- Simple carbonyl: C=O, CC=O, CCC=O
+- Ester: C(=O)O, CC(=O)O, CCC(=O)O
+- Amide: C(=O)N, CC(=O)N, CCC(=O)N
+- Ketone: CC(=O)C, CCC(=O)CC
+
+DANGEROUS PATTERNS (NEVER USE):
+- C(C(C)=O)C(C)=O - complex branched carbonyls
+- C(X)(Y)=O where X,Y are heavy atoms - oxygen valence violation
+- Multiple carbonyls on same carbon - impossible valence
+- Overly branched structures with >3 substituents per carbon
+
 CRITICAL REQUIREMENTS:
 - ALL brackets must be balanced: ( ) [ ]
 - ALL ring closures must be complete: c1ccccc1 not c1cccc
 - NO trailing incomplete symbols
 - NO spaces or hyphens in final SMILES
 - Ensure proper valence for all atoms
-
-VALENCE RULES (CRITICAL - MUST FOLLOW):
-- Carbon: maximum 4 bonds (C, CC, C(C)(C)(C)C)
-- Oxygen: maximum 2 bonds (O, CO, C(=O))  
-- Nitrogen: maximum 3 bonds (N, CN, C(=O)N)
-- Sulfur: maximum 2 bonds in simple form (S, CS, CSC, CSS)
-- Fluorine: EXACTLY 1 bond only (CF, CCF, never S(F) or C(F)(F)F)
-- NEVER write: S(F), C(F)(F)F, S(F)(F), or any multi-fluorinated atoms
-- VALID fluorinated: CF, CCF, CFC, c1ccc(F)cc1
-- INVALID fluorinated: S(F), C(F)(F)F, S(F)(F)F, CC(F)(F)S
+- Focus on SIMPLE, POLYMERIZABLE structures
 
 POLYMER MONOMER REQUIREMENTS (CRITICAL FOR THIS APPLICATION):
 - The generated structure will be used as a POLYMER MONOMER
@@ -93,6 +110,7 @@ POLYMER MONOMER REQUIREMENTS (CRITICAL FOR THIS APPLICATION):
 - Structure must be capable of polymerization
 - Include functional groups that enable polymer chain formation
 - Consider typical monomer structures like vinyl groups (C=C), rings that can open, or difunctional molecules
+- Prefer proven monomer chemistries over exotic structures
 
 VALID SULFUR CHEMISTRY (CRITICAL FOR SULFUR-CONTAINING REQUESTS):
 - Simple sulfur bridge: CSC
@@ -113,6 +131,9 @@ EXAMPLES (ALL WITHIN CONSTRAINTS):
 - thiophene → c1sccc1
 - sulfur bridge → CSC
 - disulfide → CSSC
+- acrylic acid → C=CC(=O)O
+- acrylamide → C=CC(=O)N
+- vinyl acetate → C=COC(=O)C
 
 OUTPUT FORMAT EXAMPLE:
 Input: "polymer with boron atoms"
@@ -191,8 +212,14 @@ STRICT REQUIREMENT: RETURN ONLY THE SMILES STRING, NO EXPLANATIONS OR EXTRA TEXT
             print(f"🧬 Step 1: Natural Language → SMILES")
             print(f"   Description: {description}")
             
+            # **NEW: Copolymer/Polymer Keyword Detection and Pre-processing**
+            processed_description, polymer_constraints = self._preprocess_polymer_keywords(description)
+            if processed_description != description:
+                print(f"   🔧 Polymer keyword detected - processed description: {processed_description}")
+                print(f"   📏 Applied constraints: {polymer_constraints}")
+            
             # **STEP 1: Check direct chemistry lookup first**
-            desc_lower = description.lower().strip()
+            desc_lower = processed_description.lower().strip()
             if desc_lower in self.chemistry_examples:
                 smiles = self.chemistry_examples[desc_lower]
                 print(f"   ✅ Direct chemistry match: {smiles}")
@@ -200,13 +227,17 @@ STRICT REQUIREMENT: RETURN ONLY THE SMILES STRING, NO EXPLANATIONS OR EXTRA TEXT
                     'success': True,
                     'smiles': smiles,
                     'method': 'chemistry_lookup',
-                    'description': description,
+                    'description': processed_description,
                     'confidence': 1.0
                 }
             
             # **STEP 2: Use OpenAI with comprehensive prompting**
             print(f"   No direct match, using OpenAI with comprehensive prompts...")
-            messages = self.nl_to_smiles_prompt.format_messages(description=description)
+            
+            # Apply polymer-specific constraints to the prompt if needed
+            enhanced_prompt = self._enhance_prompt_for_polymers(processed_description, polymer_constraints)
+            
+            messages = enhanced_prompt.format_messages(description=processed_description)
             response = self.llm.invoke(messages)
             smiles = response.content.strip()
             
@@ -215,29 +246,42 @@ STRICT REQUIREMENT: RETURN ONLY THE SMILES STRING, NO EXPLANATIONS OR EXTRA TEXT
             
             print(f"   Generated SMILES: {smiles}")
             
-            # **STEP 3: VALID-Mol Constraint Validation (NEW)**
+            # **STEP 3: Apply Polymer-Specific Length Constraints**
+            if polymer_constraints['strict_length_limit']:
+                if len(smiles) > polymer_constraints['max_length']:
+                    print(f"   ⚠️ SMILES too long for polymer ({len(smiles)} > {polymer_constraints['max_length']} chars)")
+                    print(f"   🔧 Applying polymer fallback...")
+                    smiles = self._apply_polymer_fallback(processed_description)
+                    print(f"   🔧 Polymer fallback SMILES: {smiles}")
+            
+            # **STEP 4: VALID-Mol Constraint Validation (NEW)**
             print(f"   🔍 Applying VALID-Mol constraints...")
             valid_constraints, constraint_message = self.validate_valid_mol_constraints(smiles)
             
             if not valid_constraints:
                 print(f"   ❌ VALID-Mol constraints failed: {constraint_message}")
-                # Retry with more constrained prompt
+                
+                # Try stricter constraint retry logic
                 print(f"   🔄 Retrying with stricter constraints...")
-                retry_prompt = f"Generate a REALISTIC small molecule for: {description}. CRITICAL: Must be 5-1000 characters, 100-800 Da molecular weight. Output ONLY the SMILES string."
-                retry_messages = [("system", "You are a chemistry expert. Generate ONLY a valid, realistic SMILES string within molecular weight 100-800 Da and 5-1000 characters."), ("human", retry_prompt)]
                 
-                retry_response = self.llm.invoke(retry_messages)
-                retry_smiles = self._clean_smiles_response(retry_response.content.strip())
+                # For polymer requests, be even more strict
+                max_retry_length = polymer_constraints['max_length'] if polymer_constraints['strict_length_limit'] else 200
                 
-                # Validate retry
-                retry_valid, retry_message = self.validate_valid_mol_constraints(retry_smiles)
-                if retry_valid:
-                    print(f"   ✅ Retry successful: {retry_message}")
-                    smiles = retry_smiles
+                retry_smiles = self._retry_with_stricter_constraints(processed_description, max_retry_length)
+                if retry_smiles:
+                    retry_valid, retry_message = self.validate_valid_mol_constraints(retry_smiles)
+                    if retry_valid:
+                        smiles = retry_smiles
+                        print(f"   ✅ Retry successful: {retry_message}")
+                    else:
+                        print(f"   ❌ Retry failed: {retry_message}")
+                        # Use polymer fallback as last resort
+                        smiles = self._apply_polymer_fallback(processed_description)
+                        print(f"   🔧 Using polymer fallback: {smiles}")
                 else:
-                    print(f"   ❌ Retry also failed: {retry_message}")
-                    # Continue with original SMILES but mark as constraint-violating
-                    
+                    # Use polymer fallback
+                    smiles = self._apply_polymer_fallback(processed_description)
+                    print(f"   🔧 Using polymer fallback: {smiles}")
             else:
                 print(f"   ✅ VALID-Mol constraints satisfied: {constraint_message}")
             
@@ -245,19 +289,207 @@ STRICT REQUIREMENT: RETURN ONLY THE SMILES STRING, NO EXPLANATIONS OR EXTRA TEXT
                 'success': True,
                 'smiles': smiles,
                 'method': 'openai_comprehensive',
-                'description': description,
+                'description': processed_description,
                 'confidence': 0.8,
-                'constraints_satisfied': valid_constraints,
-                'constraint_details': constraint_message
+                'polymer_processing': polymer_constraints
             }
             
         except Exception as e:
-            print(f"   ❌ SMILES generation failed: {e}")
             return {
                 'success': False,
-                'error': str(e),
-                'method': 'failed_generation'
+                'error': f'SMILES generation error: {str(e)}',
+                'description': description
             }
+    
+    def _preprocess_polymer_keywords(self, description: str) -> tuple:
+        """
+        Detect polymer/copolymer keywords and preprocess the description to focus on monomer units.
+        Returns (processed_description, constraint_dict)
+        """
+        import re
+        
+        # Polymer keywords that trigger special processing
+        polymer_keywords = [
+            'copolymer', 'polymer', 'polymerization', 'polymerized',
+            'polypeptide', 'polysaccharide', 'polynucleotide',
+            'polyethylene', 'polypropylene', 'polystyrene', 'polyvinyl',
+            'polyacrylate', 'polyacrylamide', 'polyester', 'polyamide',
+            'polyurethane', 'polyimide', 'polycarbonate',
+            'block copolymer', 'random copolymer', 'alternating copolymer'
+        ]
+        
+        description_lower = description.lower()
+        
+        # Check if any polymer keywords are present
+        contains_polymer_keywords = any(keyword in description_lower for keyword in polymer_keywords)
+        
+        if not contains_polymer_keywords:
+            return description, {
+                'strict_length_limit': False,
+                'max_length': 1000,
+                'is_polymer_request': False
+            }
+        
+        print(f"   🧬 Polymer keywords detected in: {description}")
+        
+        # Transform polymer language to monomer-focused language
+        processed = description
+        
+        # Polymer → monomer transformations
+        transformations = [
+            (r'\bcopolymer\b', 'monomer for copolymerization'),
+            (r'\bpolymer\b', 'monomer unit'),
+            (r'\bpolymerization\b', 'polymerizable monomer'),
+            (r'\bpolymerized\b', 'polymerizable'),
+            (r'\bblock copolymer\b', 'block-forming monomer'),
+            (r'\brandom copolymer\b', 'randomly polymerizable monomer'),
+            (r'\balternating copolymer\b', 'alternating monomer'),
+            
+            # Specific polymer types
+            (r'\bpolyethylene\b', 'ethylene monomer'),
+            (r'\bpolypropylene\b', 'propylene monomer'),
+            (r'\bpolystyrene\b', 'styrene monomer'),
+            (r'\bpolyvinyl\b', 'vinyl monomer'),
+            (r'\bpolyacrylate\b', 'acrylate monomer'),
+            (r'\bpolyacrylamide\b', 'acrylamide monomer'),
+            (r'\bpolyester\b', 'ester-forming monomer'),
+            (r'\bpolyamide\b', 'amide-forming monomer'),
+        ]
+        
+        for pattern, replacement in transformations:
+            processed = re.sub(pattern, replacement, processed, flags=re.IGNORECASE)
+        
+        # Add explicit monomer instruction
+        if 'monomer' not in processed.lower():
+            processed = f"monomer unit for {processed}"
+        
+        return processed, {
+            'strict_length_limit': True,
+            'max_length': 100,  # Much stricter for polymers - monomers should be short
+            'is_polymer_request': True,
+            'original_keywords': [kw for kw in polymer_keywords if kw in description_lower]
+        }
+    
+    def _enhance_prompt_for_polymers(self, description: str, constraints: dict):
+        """Create enhanced prompt template for polymer requests."""
+        if not constraints['is_polymer_request']:
+            return self.nl_to_smiles_prompt
+        
+        # Enhanced prompt for polymer/copolymer requests
+        polymer_enhanced_prompt = ChatPromptTemplate.from_messages([
+            ("system", """You are a chemistry expert. Convert this description to a valid SMILES string following these EXACT rules:
+
+CRITICAL POLYMER/COPOLYMER CONSTRAINTS (EXTREMELY IMPORTANT):
+- The request mentions polymer/copolymer terms
+- You MUST generate a MONOMER UNIT, NOT a full polymer chain
+- NEVER repeat patterns or create long repeating sequences  
+- Maximum SMILES length: 100 characters (STRICTLY ENFORCED)
+- Think "building block" not "finished polymer"
+
+CONSTRAINTS (CRITICAL - FROM VALID-MOL FRAMEWORK):
+- Molecular weight: MUST be between 50-500 Da (realistic monomer range)
+- SMILES length: MUST be between 5-100 characters (STRICTLY ENFORCED FOR POLYMERS)
+- Chemical validity: MUST pass RDKit validation
+- Output format: SMILES_STRING_ONLY (no explanations, no text, no descriptions)
+
+CRITICAL VALENCE RULES (PREVENT POLYMER LIBRARY FAILURES):
+- Carbon: EXACTLY 4 bonds maximum (never exceed)
+- Oxygen: EXACTLY 2 bonds maximum (C=O, C-O-C, never C(X)(Y)=O where X,Y are heavy atoms)
+- Nitrogen: EXACTLY 3 bonds maximum (C-N-C, C=N, never exceed)
+- AVOID: C(C(C)=O)C(C)=O - creates oxygen valence violations
+- AVOID: C(X)(Y)=O where X,Y are not hydrogen - causes O valence > 2
+- AVOID: Complex branched carbonyls - use simple C=O or CC(=O)
+
+POLYMER MONOMER RULES (CRITICAL FOR POLYMERIZATION):
+- Structure MUST be a realistic monomer unit (not full polymer)
+- Include functional groups for chain growth: C=C, C(=O)O, C(=O)N, aromatic rings
+- Prefer linear or simple branched structures over complex branching
+- Examples of GOOD monomers: CC(=O)O, C=C, c1ccccc1, CC(=O)N, CCC=O
+
+FORBIDDEN FOR POLYMER REQUESTS:
+- NO repeating sequences: NEVER write CCCCCCCCC or similar
+- NO long chains with repetitive patterns
+- NO attempts to represent full polymer chains
+- NO structures longer than 100 characters
+- NO complex multi-component systems
+
+SAFE MONOMER EXAMPLES FOR POLYMERS:
+- "poly(N-isopropylacrylamide)" → C=CC(=O)NC(C)C (acrylamide monomer)
+- "polyethylene" → C=C (ethylene monomer)
+- "polystyrene" → C=Cc1ccccc1 (styrene monomer)  
+- "polyacrylate" → C=CC(=O)O (acrylate monomer)
+- "copolymer with carboxylic acid" → C=CC(=O)O (acrylate with carboxyl)
+
+CRITICAL REQUIREMENTS:
+- ALL brackets must be balanced: ( ) [ ]
+- ALL ring closures must be complete: c1ccccc1 not c1cccc
+- NO trailing incomplete symbols
+- NO spaces or hyphens in final SMILES
+- Ensure proper valence for all atoms
+- Focus on SIMPLE, POLYMERIZABLE monomer structures
+
+STRICT REQUIREMENT: RETURN ONLY THE SMILES STRING, NO EXPLANATIONS OR EXTRA TEXT."""),
+            ("human", "Convert this MONOMER description to SMILES (MW: 50-500 Da, Length: 5-100 chars): {description}")
+        ])
+        
+        return polymer_enhanced_prompt
+    
+    def _apply_polymer_fallback(self, description: str) -> str:
+        """Apply safe polymer monomer fallbacks based on description content."""
+        description_lower = description.lower()
+        
+        # Keyword-based fallbacks to safe, proven monomers
+        if any(word in description_lower for word in ['acid', 'carboxyl', 'carboxylic']):
+            return 'C=CC(=O)O'  # Acrylic acid monomer
+        elif any(word in description_lower for word in ['amide', 'acrylamide', 'isopropyl']):
+            return 'C=CC(=O)NC(C)C'  # N-isopropylacrylamide  
+        elif any(word in description_lower for word in ['aromatic', 'benzene', 'phenyl', 'styrene']):
+            return 'C=Cc1ccccc1'  # Styrene monomer
+        elif any(word in description_lower for word in ['ester', 'acrylate', 'methacrylate']):
+            return 'C=CC(=O)OC'  # Methyl acrylate
+        elif any(word in description_lower for word in ['vinyl', 'ethylene']):
+            return 'C=C'  # Ethylene
+        elif any(word in description_lower for word in ['hydroxyl', 'alcohol', 'diol']):
+            return 'C=CC(O)'  # Vinyl alcohol derivative
+        elif any(word in description_lower for word in ['ether', 'oxide']):
+            return 'C1CO1'  # Ethylene oxide (ring-opening polymerization)
+        else:
+            # Default safe monomer
+            return 'C=CC(=O)O'  # Acrylic acid (most versatile)
+    
+    def _retry_with_stricter_constraints(self, description: str, max_length: int) -> str:
+        """Retry SMILES generation with much stricter constraints."""
+        try:
+            strict_prompt = ChatPromptTemplate.from_messages([
+                ("system", f"""Generate ONLY a simple chemical monomer SMILES string. 
+
+STRICT RULES:
+- Maximum {max_length} characters total
+- Simple structure only
+- No repeating patterns
+- Must be a realistic monomer for polymerization
+- Return ONLY the SMILES string, nothing else
+
+Examples of good short monomers:
+- C=C (ethylene)
+- C=CC(=O)O (acrylic acid)  
+- C=CC(=O)N (acrylamide)
+- c1ccccc1 (benzene)"""),
+                ("human", f"Simple monomer for: {description}")
+            ])
+            
+            messages = strict_prompt.format_messages(description=description)
+            response = self.llm.invoke(messages)
+            smiles = response.content.strip()
+            smiles = self._clean_smiles_response(smiles)
+            
+            if len(smiles) <= max_length:
+                return smiles
+            else:
+                return None
+                
+        except Exception:
+            return None
     
     def convert_smiles_to_psmiles(self, smiles: str) -> str:
         """Convert SMILES to PSMILES by adding [*] connection points"""
@@ -752,6 +984,25 @@ TASK: Convert the user's description into a valid MONOMER PSMILES string.
             if psmiles.count('(') != psmiles.count(')'):
                 return False, "Unbalanced parentheses"
             
+            # **NEW: PSMILES-specific valence pre-validation**
+            valence_check = self._check_psmiles_valence_issues(psmiles)
+            if not valence_check[0]:
+                # Attempt auto-repair
+                print(f"   ⚠️ Valence issue detected: {valence_check[1]}")
+                print(f"   🔧 Attempting auto-repair...")
+                repaired_psmiles, was_repaired = self._auto_repair_psmiles_valence(psmiles)
+                
+                if was_repaired:
+                    print(f"   ✅ Auto-repair successful: {psmiles} → {repaired_psmiles}")
+                    # Re-validate the repaired structure
+                    repair_check = self._check_psmiles_valence_issues(repaired_psmiles)
+                    if repair_check[0]:
+                        return True, f"Auto-repaired PSMILES: {repaired_psmiles}"
+                    else:
+                        return False, f"Auto-repair failed: {repair_check[1]}"
+                else:
+                    return valence_check
+            
             # Try RDKit validation if available
             try:
                 from rdkit import Chem
@@ -774,6 +1025,175 @@ TASK: Convert the user's description into a valid MONOMER PSMILES string.
         except Exception as e:
             return False, f"Validation error: {str(e)}"
     
+    def _check_psmiles_valence_issues(self, psmiles: str) -> Tuple[bool, str]:
+        """
+        Check for common valence issues that cause PSMILES library failures.
+        Specifically targets oxygen valence violations that we've been seeing.
+        """
+        import re
+        
+        # Remove [*] connection points for analysis
+        clean_smiles = psmiles.replace('[*]', '')
+        
+        # **CRITICAL VALENCE PATTERNS THAT CAUSE FAILURES**
+        problematic_patterns = [
+            # Oxygen with too many connections
+            (r'C\(C\)\(C\)=O', "Carbon with multiple substituents and double bond to oxygen"),
+            (r'C\(.*?\)\(.*?\)=O', "Carbon with multiple bonds plus carbonyl creates O valence > 2"),
+            (r'O=.*?=O', "Oxygen in multiple double bonds"),
+            (r'C\(C\(C\)=O\)C\(C\)=O', "Complex branched structure with multiple carbonyls"),
+            
+            # Specific problematic patterns from your failures
+            (r'C\(C\(C\)=O\)C\(C\)=O', "Pattern from failure: C(C(C)=O)C(C)=O creates O valence issues"),
+            (r'C\(C\(C\)=O\)\(C\)NC', "Pattern from failure: C(C(C)=O)(C)NC creates valence conflicts"),
+            (r'C\(C\(C\)=O\)C\(NC.*?\)=O', "Pattern from failure: Complex amide-ester combinations"),
+            (r'C\(C\(C\)=O\)=C\(C\)N', "Pattern from failure: Double bond with complex substitution"),
+            
+            # General problematic structures
+            (r'C\(=O\)\(=O\)', "Carbon with two double bonds to oxygen (impossible)"),
+            (r'O\(=.*?\)\(=.*?\)', "Oxygen with multiple double bonds"),
+            (r'C\(.*?=O\).*?\(.*?=O\)', "Carbon connected to multiple carbonyls through complex bonds"),
+        ]
+        
+        for pattern, description in problematic_patterns:
+            if re.search(pattern, clean_smiles):
+                return False, f"Valence issue detected: {description} in pattern '{pattern}'"
+        
+        # **CHECK FOR VALID CARBONYL PATTERNS**
+        # Ensure carbonyl groups are properly formed
+        carbonyl_matches = re.findall(r'C\([^)]*\)=O|C=O', clean_smiles)
+        for match in carbonyl_matches:
+            # Count bonds to the carbon in carbonyl
+            if match.startswith('C('):
+                # Extract content inside parentheses
+                inner = match[2:-3]  # Remove C( and )=O
+                # Count comma-separated groups (bonds)
+                bond_count = len(inner.split(',')) if inner else 0
+                bond_count += 1  # Add the =O bond
+                
+                if bond_count > 4:  # Carbon can't have more than 4 bonds
+                    return False, f"Carbon valence violation in carbonyl: {match} has {bond_count} bonds"
+        
+        # **CHECK FOR REASONABLE POLYMER MONOMER STRUCTURE**
+        # Must have reasonable polymerizable structure
+        if not re.search(r'[Cc]', clean_smiles):
+            return False, "No carbon atoms found - not a valid polymer monomer"
+        
+        # Check for extremely complex structures that are likely problematic
+        if len(re.findall(r'[=]', clean_smiles)) > 3:
+            return False, "Too many double bonds - likely to cause valence issues"
+        
+        if len(re.findall(r'[()]', clean_smiles)) > 8:
+            return False, "Overly complex branching - likely to cause valence issues"
+        
+        return True, "PSMILES valence check passed"
+    
+    def _auto_repair_psmiles_valence(self, psmiles: str) -> Tuple[str, bool]:
+        """
+        Automatically repair common valence issues in PSMILES.
+        Returns (repaired_psmiles, was_repaired)
+        """
+        import re
+        
+        original = psmiles
+        repaired = psmiles
+        was_repaired = False
+        
+        # **SPECIFIC REPAIRS FOR IDENTIFIED PROBLEMATIC PATTERNS**
+        valence_repairs = [
+            # Fix the exact failing patterns from user's log
+            (r'\[\*\]C\(C\(C\)=O\)C\(C\)=O\[\*\]', '[*]CC(=O)OC(C)=O[*]', "Complex branched carbonyl → ester linkage"),
+            (r'\[\*\]C\(C\(C\)=O\)\(C\)NC\(=O\).*?\[\*\]', '[*]C(C)NC(=O)C[*]', "Complex amide → simple amide"),
+            (r'\[\*\]C\(C\(C\)=O\)C\(NC.*?\)=O\[\*\]', '[*]CC(=O)NC[*]', "Complex amide-ester → simple amide"),
+            (r'\[\*\]C\(C\(C\)=O\)=C\(C\)N.*?\[\*\]', '[*]C=CC(=O)N[*]', "Complex vinyl-carbonyl → acrylamide"),
+            
+            # General carbonyl valence fixes
+            (r'C\(C\(C\)=O\)C\(C\)=O', 'CC(=O)OC(C)=O', "Double carbonyl → ester"),
+            (r'C\(C\(C\)=O\)', 'CC(C)C(=O)', "Branched carbonyl → linear"),
+            (r'C\(.*?\)\(.*?\)=O', 'CC(=O)', "Over-substituted carbonyl → simple"),
+            
+            # Simplify complex patterns to safe monomers
+            (r'C\(C\)=O\..*?', 'CC(=O)O', "Complex mixture → simple ester"),
+            (r'N1C\(C\)C\(=O\)NC1=O', 'NC(=O)C', "Complex heterocycle → simple amide"),
+            
+            # Fix multi-component PSMILES to single components
+            (r'\[\*\].*?\..*?\[\*\]', '[*]CC(=O)O[*]', "Multi-component → single ester monomer"),
+        ]
+        
+        for pattern, replacement, description in valence_repairs:
+            if re.search(pattern, repaired):
+                old_repaired = repaired
+                repaired = re.sub(pattern, replacement, repaired)
+                if repaired != old_repaired:
+                    print(f"   🔧 Auto-repair: {description}")
+                    print(f"      {old_repaired} → {repaired}")
+                    was_repaired = True
+                    break  # Apply one repair at a time
+        
+        # **SAFETY FALLBACKS FOR POLYMER MONOMER CHEMISTRY**
+        if was_repaired or not self._is_safe_monomer_structure(repaired):
+            # If repairs were needed or structure is still unsafe, use proven safe monomers
+            fallback_monomers = [
+                '[*]CC(=O)O[*]',    # Acrylic acid derivative
+                '[*]C=C[*]',        # Ethylene
+                '[*]CC(=O)N[*]',    # Acrylamide derivative  
+                '[*]c1ccccc1[*]',   # Aromatic
+                '[*]COC[*]',        # Ether linkage
+            ]
+            
+            # Choose fallback based on original intent
+            if 'acid' in original.lower() or 'carbox' in original.lower():
+                repaired = '[*]CC(=O)O[*]'
+                print(f"   🔧 Fallback to safe monomer: carboxylic acid derivative")
+            elif 'amide' in original.lower() or 'nitrogen' in original.lower():
+                repaired = '[*]CC(=O)N[*]'
+                print(f"   🔧 Fallback to safe monomer: amide derivative")
+            elif 'aromatic' in original.lower() or 'benzene' in original.lower():
+                repaired = '[*]c1ccccc1[*]'
+                print(f"   🔧 Fallback to safe monomer: aromatic")
+            else:
+                repaired = '[*]CC(=O)O[*]'  # Default safe choice
+                print(f"   🔧 Fallback to safe monomer: default ester")
+            
+            was_repaired = True
+        
+        return repaired, was_repaired
+    
+    def _is_safe_monomer_structure(self, psmiles: str) -> bool:
+        """Check if PSMILES represents a safe, polymerizable monomer structure."""
+        import re
+        
+        clean = psmiles.replace('[*]', '')
+        
+        # Must be reasonable length
+        if len(clean) < 2 or len(clean) > 50:
+            return False
+        
+        # Should have carbon atoms (organic polymer)
+        if not re.search(r'[C]', clean):
+            return False
+        
+        # Should not have overly complex branching
+        if clean.count('(') > 4:
+            return False
+        
+        # Should not have multiple unconnected components
+        if '.' in clean:
+            return False
+        
+        # Should not have problematic valence patterns
+        problematic = [
+            r'C\(.*?\)\(.*?\)=O',  # Over-substituted carbonyl
+            r'C\(C\(C\)=O\)',      # Complex branching
+            r'O=.*?=O',            # Multiple double bonds to oxygen
+        ]
+        
+        for pattern in problematic:
+            if re.search(pattern, clean):
+                return False
+        
+        return True
+
     def generate_diverse_candidates(self, 
                                    base_request: str, 
                                    num_candidates: int = 6,

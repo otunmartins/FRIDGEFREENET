@@ -33,6 +33,9 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple, TypedDict, Literal
 from dataclasses import dataclass, field
 
+# Set up logger
+logger = logging.getLogger(__name__)
+
 # Core dependencies
 try:
     import numpy as np
@@ -707,83 +710,142 @@ Keep technical but accessible for researchers.
     
     def _generate_psmiles_prompt(self, analysis_results: Dict[str, Any]) -> str:
         """
-        Generate a simple natural language prompt for PSMILES generation based on literature analysis.
+        Generate enhanced technical chemistry prompt using LLM domain-knowledge embedded prompting.
         
-        Args:
-            analysis_results: Results from literature analysis
-            
-        Returns:
-            Simple natural language description for the PSMILES generation system
+        Based on "Integrating Chemistry Knowledge in Large Language Models via Prompt Engineering" (Liu et al., 2024)
+        and advanced prompting strategies for technical chemistry descriptions.
         """
         
-        # Extract key materials and mechanisms from analysis
-        materials_found = analysis_results.get("materials_found", [])
-        mechanisms = analysis_results.get("stabilization_mechanisms", [])
-        research_question = analysis_results.get("research_question", "")
+        # Extract polymer information from literature analysis
+        polymer_types = analysis_results.get('polymer_types', ['polymer'])
+        application_details = analysis_results.get('application_details', [])
+        mechanisms = analysis_results.get('mechanisms', [])
         
-        # Build a concise, natural language description
-        prompt_parts = []
+        # Primary polymer for the description
+        primary_polymer = polymer_types[0] if polymer_types else 'polymer'
         
-        # Start with base description
-        prompt_parts.append("biocompatible polymer for insulin delivery")
+        # Build context for LLM chemistry expert
+        context_info = []
+        if application_details:
+            context_info.append(f"Application: {', '.join(application_details)}")
+        if mechanisms:
+            context_info.append(f"Mechanisms: {', '.join(mechanisms)}")
         
-        # Add key functional groups from materials found
-        functional_groups = []
-        for material in materials_found[:3]:  # Use top 3 materials
-            material_lower = material.lower()
-            if "trehalose" in material_lower or "hydroxyl" in material_lower:
-                functional_groups.append("hydroxyl groups")
-            if "peg" in material_lower or "ether" in material_lower:
-                functional_groups.append("ether linkages")
-            if "amide" in material_lower or "protein" in material_lower:
-                functional_groups.append("amide groups")
-            if "chitosan" in material_lower or "amino" in material_lower:
-                functional_groups.append("amino groups")
-            if "plga" in material_lower or "ester" in material_lower:
-                functional_groups.append("ester groups")
-            if "aromatic" in material_lower or "benzyl" in material_lower:
-                functional_groups.append("aromatic rings")
+        context_str = f" ({'; '.join(context_info)})" if context_info else ""
         
-        # Add mechanisms-based features
-        for mechanism in mechanisms[:2]:  # Use top 2 mechanisms
-            mechanism_lower = mechanism.lower()
-            if "hydrogen" in mechanism_lower and "hydroxyl groups" not in functional_groups:
-                functional_groups.append("hydroxyl groups")
-            if "hydrophobic" in mechanism_lower and "aromatic rings" not in functional_groups:
-                functional_groups.append("hydrophobic segments")
-            if "thermal" in mechanism_lower and "ester groups" not in functional_groups:
-                functional_groups.append("thermal-stable bonds")
+        # **DOMAIN-KNOWLEDGE EMBEDDED PROMPTING FOR TECHNICAL CHEMISTRY**
+        try:
+            # Use LLM to generate technical chemistry description instead of hardcoded mappings
+            if hasattr(self, 'llm') and self.llm is not None:
+                chemistry_expert_prompt = f"""You are a materials chemistry expert specializing in biomedical polymers and drug delivery systems.
+
+Your task: Generate a highly technical, chemistry-focused description of "{primary_polymer}" for insulin delivery applications{context_str}.
+
+CRITICAL REQUIREMENTS:
+- Use precise chemical nomenclature and structural descriptions
+- Include specific functional groups, bonding patterns, and molecular mechanisms
+- Mention polymerization types, crosslinking strategies, and material properties
+- Focus on insulin-relevant chemistry (e.g., protein stabilization, pH responsiveness, biocompatibility mechanisms)
+- Avoid generic terms like "biocompatible polymer" - be chemically specific
+- Length: 10-15 words maximum for conciseness
+
+EXAMPLES OF TECHNICAL LANGUAGE TO EMULATE:
+- "β(1→4)-linked glucosamine polymer with deacetylated chitin backbone and cationic amino groups"
+- "anionic polysaccharide featuring calcium-crosslinkable guluronic acid residues with mannuronic acid blocks"
+- "thermoreversible gellan gum with pH-responsive carboxylate functionality and divalent cation crosslinks"
+
+Generate technical description:"""
+
+                try:
+                    # Get technical description from LLM
+                    response = self.llm.invoke(chemistry_expert_prompt)
+                    technical_description = response.content.strip()
+                    
+                    # Clean and validate the response
+                    if technical_description and len(technical_description.split()) > 3:
+                        logger.info(f"✅ Generated technical chemistry description: {technical_description}")
+                        return technical_description
+                    else:
+                        logger.warning("LLM generated insufficient technical description, using fallback")
+                        
+                except Exception as e:
+                    logger.warning(f"LLM chemistry description failed: {e}, using fallback")
+            
+            # Enhanced fallback with basic technical language (still better than original)
+            return f"{primary_polymer} with controlled molecular architecture for insulin delivery"
+            
+        except Exception as e:
+            logger.error(f"Error in technical chemistry description generation: {e}")
+            # Simple fallback
+            return f"{primary_polymer} for insulin delivery"
+    
+    def _generate_literature_based_technical_prompt(self, analysis_results: Dict[str, Any]) -> str:
+        """
+        Generate technical prompt from literature analysis when enhanced describer unavailable.
+        """
         
-        # Combine functional groups naturally
-        if functional_groups:
-            unique_groups = list(dict.fromkeys(functional_groups))[:3]  # Remove duplicates, max 3
-            if len(unique_groups) == 1:
-                prompt_parts.append(f"with {unique_groups[0]}")
-            elif len(unique_groups) == 2:
-                prompt_parts.append(f"with {unique_groups[0]} and {unique_groups[1]}")
-            else:
-                prompt_parts.append(f"with {', '.join(unique_groups[:-1])}, and {unique_groups[-1]}")
+        polymer_types = analysis_results.get('polymer_types', ['polymer'])
+        mechanisms = analysis_results.get('mechanisms', [])
+        application_details = analysis_results.get('application_details', [])
         
-        # Add application-specific properties
-        if "thermal" in research_question.lower() or any("thermal" in m.lower() for m in mechanisms):
-            prompt_parts.append("for thermal stability")
-        elif "transdermal" in research_question.lower() or "patch" in research_question.lower():
-            prompt_parts.append("for transdermal delivery")
-        elif "controlled" in research_question.lower() or any("controlled" in m.lower() for m in mechanisms):
-            prompt_parts.append("with controlled release properties")
+        # Extract technical insights from synthesis results
+        synthesis = analysis_results.get('synthesis', {})
+        key_findings = synthesis.get('key_findings', []) if isinstance(synthesis, dict) else []
         
-        # Combine into natural language description
-        prompt = " ".join(prompt_parts)
+        # Build technical description from literature insights
+        primary_polymer = polymer_types[0] if polymer_types else 'polymer'
         
-        # Ensure it's not too long (PSMILES system expects concise descriptions)
-        if len(prompt) > 150:
-            # Fallback to shorter version
-            if functional_groups:
-                prompt = f"biocompatible polymer for insulin delivery with {functional_groups[0]}"
-            else:
-                prompt = "biocompatible polymer for insulin delivery with thermal stability"
+        # Start with polymer-specific technical language
+        if 'chitosan' in primary_polymer.lower():
+            technical_desc = 'β(1→4)-linked glucosamine polymer with deacetylated amino groups providing cationic charge density'
+        elif 'alginate' in primary_polymer.lower():
+            technical_desc = 'anionic polysaccharide with alternating guluronic and mannuronic acid residues enabling calcium-mediated crosslinking'
+        elif 'plga' in primary_polymer.lower():
+            technical_desc = 'biodegradable poly(lactic-co-glycolic acid) copolymer with tunable degradation kinetics'
+        elif 'hyaluronic' in primary_polymer.lower():
+            technical_desc = 'anionic glycosaminoglycan with CD44 receptor targeting capability and high water retention'
+        elif 'peg' in primary_polymer.lower():
+            technical_desc = 'polyethylene glycol with stealth properties and protein-resistant surface characteristics'
+        else:
+            technical_desc = f'specialized {primary_polymer} with engineered molecular architecture'
         
-        return prompt
+        # Add mechanism-specific details
+        if mechanisms:
+            if any('pH' in m.lower() for m in mechanisms):
+                technical_desc += ' featuring pH-responsive swelling behavior triggered by physiological pH transitions'
+            if any('swell' in m.lower() for m in mechanisms):
+                technical_desc += ' utilizing osmotic pressure-driven matrix expansion for controlled drug release'
+            if any('diffus' in m.lower() for m in mechanisms):
+                technical_desc += ' enabling Fickian diffusion through polymeric network with tunable mesh size'
+            if any('degrad' in m.lower() for m in mechanisms):
+                technical_desc += ' incorporating hydrolyzable linkages for predictable biodegradation kinetics'
+        
+        # Add application-specific technical details
+        if application_details:
+            app_detail = application_details[0].lower()
+            if 'transdermal' in app_detail or 'patch' in app_detail:
+                technical_desc += ' optimized for percutaneous insulin delivery with enhanced skin permeation'
+            elif 'oral' in app_detail:
+                technical_desc += ' designed for gastrointestinal insulin protection and intestinal absorption enhancement'
+            elif 'nasal' in app_detail:
+                technical_desc += ' formulated for rapid nasal absorption with minimal enzymatic degradation'
+            elif 'injectable' in app_detail:
+                technical_desc += ' configured for in situ gelation forming sustained-release depot'
+        
+        # Incorporate key literature findings if available
+        if key_findings and len(key_findings) > 0:
+            # Add most relevant finding
+            finding = key_findings[0] if isinstance(key_findings, list) else str(key_findings)
+            if len(finding) > 20:  # Only add substantial findings
+                technical_desc += f' incorporating {finding.lower()}'
+        
+        # Ensure insulin delivery specificity
+        if 'insulin' not in technical_desc.lower():
+            technical_desc += ' specifically engineered for controlled insulin delivery applications'
+        
+        return technical_desc
+    
+
     
     def get_material_recommendations(self, 
                                    application: str = "insulin_delivery_patch") -> List[MaterialsInsight]:

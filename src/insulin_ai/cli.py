@@ -264,7 +264,7 @@ def test_installation():
     ]
     
     optional_tests = [
-        ("MD Integration", lambda: __import__("insulin_ai.integration.analysis.simple_md_integration")),
+        ("MD Integration", lambda: __import__("insulin_ai.integration.analysis.dual_gaff_amber_integration")),
         ("Simulation Automation", lambda: __import__("insulin_ai.integration.automation.simulation_automation")),
     ]
     

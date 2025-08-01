@@ -18,11 +18,11 @@ from pathlib import Path
 
 # Import existing piecewise generation systems
 try:
-    from ..psmiles_generator import EnhancedPSMILESGenerator
+    from ..psmiles_generator import PSMILESGenerator
     PSMILES_GENERATOR_AVAILABLE = True
 except ImportError:
     PSMILES_GENERATOR_AVAILABLE = False
-    logging.warning("EnhancedPSMILESGenerator not available")
+    logging.warning("PSMILESGenerator not available")
 
 try:
     from ..psmiles_processor import PSMILESProcessor
@@ -32,11 +32,11 @@ except ImportError:
     logging.warning("PSMILESProcessor not available")
 
 try:
-    from ..psmiles_diversification import PSMILESDiversifier
+    from ..psmiles_diversification import CandidateOrchestrator
     PSMILES_DIVERSIFIER_AVAILABLE = True
 except ImportError:
     PSMILES_DIVERSIFIER_AVAILABLE = False
-    logging.warning("PSMILESDiversifier not available")
+    logging.warning("CandidateOrchestrator not available")
 
 # Import active learning infrastructure
 from .state_manager import IterationState, LiteratureResults, GeneratedMolecules
@@ -111,17 +111,17 @@ class AutomatedPiecewiseGeneration:
     
     def _initialize_generation_systems(self):
         """Initialize available PSMILES generation systems."""
-        # Initialize Enhanced PSMILES Generator
+        # Initialize PSMILES Generator
         if PSMILES_GENERATOR_AVAILABLE:
             try:
-                self.psmiles_generator = EnhancedPSMILESGenerator(
+                self.psmiles_generator = PSMILESGenerator(
                     model_type="openai",
                     openai_model="gpt-4o-mini",  # More cost-effective
                     temperature=0.7  # Higher temperature for creativity
                 )
-                logger.info("EnhancedPSMILESGenerator initialized")
+                logger.info("PSMILESGenerator initialized")
             except Exception as e:
-                logger.warning(f"Failed to initialize EnhancedPSMILESGenerator: {e}")
+                logger.warning(f"Failed to initialize PSMILESGenerator: {e}")
                 self.psmiles_generator = None
         else:
             self.psmiles_generator = None
@@ -140,10 +140,10 @@ class AutomatedPiecewiseGeneration:
         # Initialize PSMILES Diversifier
         if PSMILES_DIVERSIFIER_AVAILABLE:
             try:
-                self.psmiles_diversifier = PSMILESDiversifier()
-                logger.info("PSMILESDiversifier initialized")
+                self.psmiles_diversifier = CandidateOrchestrator()
+                logger.info("CandidateOrchestrator initialized")
             except Exception as e:
-                logger.warning(f"Failed to initialize PSMILESDiversifier: {e}")
+                logger.warning(f"Failed to initialize CandidateOrchestrator: {e}")
                 self.psmiles_diversifier = None
         else:
             self.psmiles_diversifier = None

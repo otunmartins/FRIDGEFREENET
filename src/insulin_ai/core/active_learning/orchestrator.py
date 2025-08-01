@@ -71,7 +71,7 @@ class ActiveLearningOrchestrator:
         self.psmiles_generation = AutomatedPiecewiseGeneration() 
         self.md_simulation = AutomatedMDSimulation()
         self.post_processing = AutomatedPostProcessing()
-        self.rag_analyzer = RAGPropertyAnalyzer()
+        # Note: Removed rag_analyzer - RAG functionality moved to literature mining
         
         # Callbacks for monitoring
         self.iteration_callbacks: List[Callable[[IterationState], None]] = []
@@ -130,9 +130,9 @@ class ActiveLearningOrchestrator:
                             logger.error(f"Error in iteration callback: {e}")
                     
                     # Prepare next iteration if needed
-                    if current_state.rag_analysis and current_state.rag_analysis.next_iteration_prompt:
+                    if current_state.next_iteration_prompt:
                         next_state = self.state_manager.create_new_iteration(
-                            initial_prompt=current_state.rag_analysis.next_iteration_prompt,
+                            initial_prompt=current_state.next_iteration_prompt,
                             target_properties=current_state.target_properties
                         )
                         # Calculate improvement over previous iteration
@@ -187,13 +187,13 @@ class ActiveLearningOrchestrator:
         Args:
             state: Current iteration state
         """
-        # Step 1: Literature Mining
-        state.update_status(IterationStatus.LITERATURE_MINING, "Starting literature mining")
+        # Step 1: Literature Mining (includes web search, benchmarks, improvement analysis)
+        state.update_status(IterationStatus.LITERATURE_MINING, "Starting enhanced literature mining")
         state.literature_results = await self.literature_mining.run_automated_mining(
             state, self.decision_engine
         )
         
-        # Step 2: Piecewise Generation
+        # Step 2: Piecewise Generation  
         state.update_status(IterationStatus.PIECEWISE_GENERATION, "Starting molecule generation")
         state.generated_molecules = await self.psmiles_generation.run_automated_generation(
             state, self.decision_engine
@@ -211,9 +211,9 @@ class ActiveLearningOrchestrator:
             state, self.decision_engine
         )
         
-        # Step 5: RAG Analysis
-        state.update_status(IterationStatus.RAG_ANALYSIS, "Starting RAG analysis")
-        state.rag_analysis = await self.rag_analyzer.run_automated_analysis(
+        # Step 5: Simple Prompt Creation for Next Iteration
+        state.update_status(IterationStatus.PROMPT_CREATION, "Creating next iteration prompt")
+        state.next_iteration_prompt = await self._create_next_iteration_prompt(
             state, self.decision_engine
         )
         
@@ -222,6 +222,99 @@ class ActiveLearningOrchestrator:
         
         # Save updated state
         self.state_manager.save_state(state)
+    
+    async def _create_next_iteration_prompt(self, state: IterationState, 
+                                          decision_engine: LLMDecisionEngine) -> str:
+        """Create a simple prompt for the next literature mining iteration.
+        
+        Args:
+            state: Current iteration state
+            decision_engine: LLM decision engine
+            
+        Returns:
+            String prompt for next iteration
+        """
+        try:
+            # Extract key information from current iteration
+            current_performance = getattr(state.computed_properties, 'performance_score', 0.0) if state.computed_properties else 0.0
+            
+            # Get improvement suggestions from literature results
+            improvement_suggestions = []
+            if state.literature_results and hasattr(state.literature_results, 'improvement_suggestions'):
+                improvement_suggestions = state.literature_results.improvement_suggestions[:3]  # Top 3
+            
+            # Get successful elements to preserve
+            successful_elements = []
+            if current_performance > 0.7:  # If performance is good, preserve elements
+                successful_elements.append("Current molecular structure shows promising performance")
+                if state.generated_molecules:
+                    successful_elements.append(f"Generated {len(state.generated_molecules)} viable candidates")
+            
+            # Create simple prompt focusing on next iteration improvements
+            prompt_parts = [
+                f"# Iteration {state.iteration_number + 1} - Enhanced Material Discovery",
+                "",
+                f"## Previous Iteration Results:",
+                f"- Performance Score: {current_performance:.2f}",
+                f"- Generated Molecules: {len(state.generated_molecules) if state.generated_molecules else 0}",
+                "",
+                "## Focus Areas for This Iteration:",
+            ]
+            
+            # Add improvement suggestions
+            if improvement_suggestions:
+                for i, suggestion in enumerate(improvement_suggestions, 1):
+                    prompt_parts.append(f"{i}. {suggestion}")
+            else:
+                # Default improvements if none available
+                prompt_parts.extend([
+                    "1. Enhance molecular stability for insulin delivery",
+                    "2. Improve biocompatibility and safety profile", 
+                    "3. Optimize drug release kinetics and delivery efficiency"
+                ])
+            
+            prompt_parts.extend([
+                "",
+                "## Search Strategy:",
+                "Focus on materials and approaches that address the above areas.",
+                "Prioritize recent research (2020+) and practical synthesis methods.",
+                "",
+                "## Target Properties:",
+            ])
+            
+            # Add target properties
+            if state.target_properties:
+                for prop_name, target_value in state.target_properties.items():
+                    prompt_parts.append(f"- {prop_name}: {target_value}")
+            else:
+                prompt_parts.extend([
+                    "- Stability: >90% retention at room temperature for 24h",
+                    "- Biocompatibility: Non-toxic, minimal immune response",
+                    "- Delivery efficiency: >80% drug release within target timeframe"
+                ])
+            
+            return "\n".join(prompt_parts)
+            
+        except Exception as e:
+            logger.warning(f"Failed to create LLM-generated prompt: {e}")
+            # Fallback to simple prompt
+            return self._create_fallback_prompt(state)
+    
+    def _create_fallback_prompt(self, state: IterationState) -> str:
+        """Create a simple fallback prompt if LLM generation fails."""
+        return f"""# Iteration {state.iteration_number + 1} - Material Discovery
+
+## Objective:
+Find improved materials for insulin delivery patches based on previous iteration results.
+
+## Focus:
+- Enhanced stability and biocompatibility
+- Practical synthesis approaches  
+- Recent research developments (2020+)
+
+## Performance Target:
+Improve upon previous iteration's score of {getattr(state.computed_properties, 'performance_score', 0.0):.2f}
+"""
     
     def _calculate_overall_score(self, state: IterationState) -> float:
         """Calculate overall performance score for the iteration.
@@ -400,7 +493,7 @@ from .automated_literature_mining import AutomatedLiteratureMining
 from .automated_piecewise_generation import AutomatedPiecewiseGeneration
 from .automated_md_simulation import AutomatedMDSimulation
 from .automated_post_processing import AutomatedPostProcessing
-from .rag_property_analyzer import RAGPropertyAnalyzer
+# Note: Removed RAGPropertyAnalyzer import - functionality moved to literature mining
 
 
 # Test functionality

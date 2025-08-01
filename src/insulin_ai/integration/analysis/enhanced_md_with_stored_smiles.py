@@ -24,7 +24,7 @@ except ImportError:
 
 # Import MD simulation components
 try:
-    from integration.analysis.simple_md_integration import SimpleMDIntegration
+    from integration.analysis.dual_gaff_amber_integration import DualGaffAmberIntegration
     MD_INTEGRATION_AVAILABLE = True
 except ImportError:
     MD_INTEGRATION_AVAILABLE = False
@@ -57,7 +57,7 @@ class EnhancedMDWithStoredSMILES:
         self.openmm_available = OPENMM_AVAILABLE
         
         # Initialize base MD integration if available
-        self.md_integration = SimpleMDIntegration() if MD_INTEGRATION_AVAILABLE else None
+        self.md_integration = DualGaffAmberIntegration() if MD_INTEGRATION_AVAILABLE else None
         
     def get_simulation_readiness_status(self) -> Dict[str, Any]:
         """Check readiness for MD simulation with stored SMILES approach"""

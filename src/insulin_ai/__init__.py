@@ -17,18 +17,8 @@ from .core.literature_mining_system import MaterialsLiteratureMiner
 from .core.psmiles_generator import PSMILESGenerator
 from .core.psmiles_processor import PSMILESProcessor
 
-# Integration systems
-try:
-    from .integration.analysis.simple_md_integration import SimpleMDIntegration
-    MD_AVAILABLE = True
-except ImportError:
-    MD_AVAILABLE = False
-
-try:
-    from .integration.automation.simulation_automation import SimulationAutomation
-    AUTOMATION_AVAILABLE = True
-except ImportError:
-    AUTOMATION_AVAILABLE = False
+# Integration modules  
+from .integration.analysis.dual_gaff_amber_integration import DualGaffAmberIntegration
 
 # Define public API
 __all__ = [
@@ -39,8 +29,7 @@ __all__ = [
     "PSMILESProcessor",
     
     # Integration systems (if available)
-    "SimpleMDIntegration",
-    "SimulationAutomation",
+    "DualGaffAmberIntegration",
     
     # Version and metadata
     "__version__",

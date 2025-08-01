@@ -60,22 +60,17 @@ try:
 except ImportError:
     PROPER_OPENMM_AVAILABLE = False
 
-# Import MM-GBSA calculator
-try:
-    from .insulin_mmgbsa_calculator import InsulinMMGBSACalculator
-    MMGBSA_AVAILABLE = True
-except ImportError:
-    MMGBSA_AVAILABLE = False
+# InsulinMMGBSACalculator removed as no longer needed
+MMGBSA_AVAILABLE = False
 
 class MDSimulationIntegration:
     """Integrated MD simulation system for insulin-AI app with MM-GBSA analysis"""
     
-    def __init__(self, output_dir: str = "integrated_md_simulations", enable_mmgbsa: bool = True):
+    def __init__(self, output_dir: str = "integrated_md_simulations"):
         """Initialize the MD simulation integration system
         
         Args:
             output_dir: Directory for MD simulation outputs
-            enable_mmgbsa: Whether to automatically run MM-GBSA after MD completion
         """
         
         # Check dependencies
@@ -97,16 +92,8 @@ class MDSimulationIntegration:
             self.openmm_simulator = ProperOpenMMSimulator(str(self.output_dir))
             print(f"⚠️  Using complex fallback system")
         
-        # Initialize MM-GBSA calculator if available
-        self.enable_mmgbsa = enable_mmgbsa and MMGBSA_AVAILABLE
-        if self.enable_mmgbsa:
-            mmgbsa_output_dir = self.output_dir / "mmgbsa_results"
-            self.mmgbsa_calculator = InsulinMMGBSACalculator(str(mmgbsa_output_dir))
-            print(f"🧮 MM-GBSA calculator enabled")
-        else:
-            self.mmgbsa_calculator = None
-            if enable_mmgbsa and not MMGBSA_AVAILABLE:
-                print(f"⚠️  MM-GBSA requested but not available")
+        # MMGBSA calculator removed as no longer needed
+        self.mmgbsa_calculator = None
         
         # Output streaming setup
         self.output_queue = queue.Queue()

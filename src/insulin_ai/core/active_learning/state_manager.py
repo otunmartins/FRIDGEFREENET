@@ -27,7 +27,7 @@ class IterationStatus(Enum):
     PIECEWISE_GENERATION = "piecewise_generation"
     MD_SIMULATION = "md_simulation" 
     POST_PROCESSING = "post_processing"
-    RAG_ANALYSIS = "rag_analysis"
+    PROMPT_CREATION = "prompt_creation"
     COMPLETED = "completed"
     FAILED = "failed"
 
@@ -165,7 +165,10 @@ class IterationState:
     generated_molecules: Optional[GeneratedMolecules] = None
     simulation_results: Optional[SimulationResults] = None
     computed_properties: Optional[ComputedProperties] = None
-    rag_analysis: Optional[RAGAnalysis] = None
+    rag_analysis: Optional[RAGAnalysis] = None  # Keep for backward compatibility
+    
+    # New simplified prompt generation
+    next_iteration_prompt: Optional[str] = None
     
     # Performance metrics
     overall_score: float = 0.0
@@ -176,6 +179,10 @@ class IterationState:
     warnings: List[str] = None
     reasoning_log: List[str] = None
     
+    # Target properties for this iteration
+    target_properties: Dict[str, float] = None
+    initial_prompt: Optional[str] = None
+    
     def __post_init__(self):
         """Initialize empty lists to avoid mutable default arguments"""
         if self.errors is None:
@@ -184,6 +191,8 @@ class IterationState:
             self.warnings = []
         if self.reasoning_log is None:
             self.reasoning_log = []
+        if self.target_properties is None:
+            self.target_properties = {}
         if self.start_time is None:
             self.start_time = datetime.now()
     

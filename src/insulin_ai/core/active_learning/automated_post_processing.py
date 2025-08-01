@@ -25,11 +25,11 @@ except ImportError:
     logging.warning("ComprehensivePostProcessor not available")
 
 try:
-    from .property_scoring import PropertyScorer, TargetPropertyScores, MDSimulationProperties
+    from .property_scoring import PropertyScoring, TargetPropertyScores, MDSimulationProperties
     PROPERTY_SCORER_AVAILABLE = True
 except ImportError:
     PROPERTY_SCORER_AVAILABLE = False
-    logging.warning("PropertyScorer not available")
+    logging.warning("PropertyScoring not available")
 
 # Import active learning infrastructure
 from .state_manager import IterationState, SimulationResults, ComputedProperties
@@ -120,10 +120,10 @@ class AutomatedPostProcessing:
         # Initialize Property Scorer
         if PROPERTY_SCORER_AVAILABLE:
             try:
-                self.property_scorer = PropertyScorer()
-                logger.info("PropertyScorer initialized")
+                self.property_scorer = PropertyScoring()
+                logger.info("PropertyScoring initialized")
             except Exception as e:
-                logger.warning(f"Failed to initialize PropertyScorer: {e}")
+                logger.warning(f"Failed to initialize PropertyScoring: {e}")
                 self.property_scorer = None
         else:
             self.property_scorer = None

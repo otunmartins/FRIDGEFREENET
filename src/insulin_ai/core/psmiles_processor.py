@@ -246,6 +246,21 @@ class PSMILESProcessor:
                                 'original_psmiles': psmiles_string,
                                 'suggestion': 'Use the SMILES repair system or try a different structure'
                             }
+                    elif "Auto-repaired PSMILES:" in validation_msg:
+                        # Handle new valence auto-repair system
+                        import re
+                        match = re.search(r'Auto-repaired PSMILES:\s*([^\s]+)', validation_msg)
+                        if match:
+                            repaired_psmiles = match.group(1)
+                            print(f"   🔧 Using valence-repaired PSMILES: {repaired_psmiles}")
+                            psmiles_string = repaired_psmiles
+                        else:
+                            return {
+                                'success': False,
+                                'error': f'Auto-repair parsing failed: {validation_msg}',
+                                'original_psmiles': psmiles_string,
+                                'suggestion': 'Try a simpler chemical structure'
+                            }
                     else:
                         # No repair available, return error
                         return {

@@ -50,10 +50,9 @@ except ImportError:
 # Import MD simulation integration - USING NEW SIMPLE WORKING SYSTEM
 try:
     # Import our NEW SIMPLE WORKING system based on openmm_test.py
-    from integration.analysis.simple_md_integration import SimpleMDIntegration
-    from integration.analysis.test_real_md_simulation import find_test_pdb_file
+    from integration.analysis.dual_gaff_amber_integration import DualGaffAmberIntegration
     MD_INTEGRATION_AVAILABLE = True
-    print("✅ Simple Working MD Integration imported successfully (based on openmm_test.py)")
+    print("✅ Dual GAFF/AMBER Integration imported successfully")
 except ImportError as e:
     # Fallback to old streamlined system
     try:
@@ -528,10 +527,10 @@ def initialize_systems(openai_model='gpt-4o', temperature=0.7):
         # Initialize MD simulation integration if available
         if MD_INTEGRATION_AVAILABLE:
             try:
-                systems['md_integration'] = SimpleMDIntegration()
-                print("✅ Simple Working MD Integration initialized successfully (uses openmm_test.py approach)")
+                systems['md_integration'] = DualGaffAmberIntegration()
+                print("✅ Dual GAFF/AMBER Integration initialized successfully")
             except Exception as e:
-                print(f"⚠️ Simple Working MD Integration failed to initialize: {e}")
+                print(f"⚠️ Dual GAFF/AMBER Integration failed to initialize: {e}")
                 print(f"   Error type: {type(e).__name__}")
                 print(f"   Consider installing missing dependencies or check module compatibility")
                 systems['md_integration'] = None

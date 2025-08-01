@@ -75,13 +75,8 @@ except ImportError as e:
     logging.warning(f"SciPy/scikit-learn not available: {e}")
     SCIPY_AVAILABLE = False
 
-# Import MM-GBSA calculator
-try:
-    from .insulin_mmgbsa_calculator import InsulinMMGBSACalculator
-    MMGBSA_AVAILABLE = True
-except ImportError:
-    logging.warning("Base MM-GBSA calculator not available: InsulinMMGBSACalculator not found.")
-    MMGBSA_AVAILABLE = False
+# MM-GBSA calculator removed as no longer needed
+MMGBSA_AVAILABLE = False
 
 class InsulinComprehensiveAnalyzer:
     """

@@ -37,12 +37,8 @@ except ImportError:
     COMPREHENSIVE_ANALYZER_AVAILABLE = False
     logging.warning("Comprehensive analyzer not available")
 
-try:
-    from .insulin_mmgbsa_calculator import InsulinMMGBSACalculator
-    MMGBSA_AVAILABLE = True
-except ImportError:
-    MMGBSA_AVAILABLE = False
-    logging.warning("MM-GBSA calculator not available")
+# InsulinMMGBSACalculator removed as no longer needed
+MMGBSA_AVAILABLE = False
 
 try:
     from .openmm_md_simulator import OpenMMInsulinSimulator
@@ -86,11 +82,8 @@ class ComprehensivePostProcessor:
         else:
             self.comprehensive_analyzer = None
         
-        if MMGBSA_AVAILABLE:
-            mmgbsa_output = self.output_dir / "mmgbsa_analysis"
-            self.mmgbsa_calculator = InsulinMMGBSACalculator(str(mmgbsa_output))
-        else:
-            self.mmgbsa_calculator = None
+        # MMGBSA calculator removed as no longer needed
+        self.mmgbsa_calculator = None
         
         if BASIC_ANALYZER_AVAILABLE:
             basic_output = self.output_dir / "basic_analysis"

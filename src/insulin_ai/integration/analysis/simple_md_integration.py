@@ -36,12 +36,7 @@ try:
 except ImportError:
     SIMPLE_WORKING_AVAILABLE = False
 
-# Import MM-GBSA calculator (keep this feature)
-try:
-    from .insulin_mmgbsa_calculator import InsulinMMGBSACalculator
-    MMGBSA_AVAILABLE = True
-except ImportError:
-    MMGBSA_AVAILABLE = False
+# MM-GBSA calculator removed as no longer needed
 
 
 class SimpleMDIntegration:
@@ -58,7 +53,7 @@ class SimpleMDIntegration:
     - No complex fallbacks or over-engineering
     """
     
-    def __init__(self, output_dir: str = "simple_md_simulations", enable_mmgbsa: bool = True):
+    def __init__(self, output_dir: str = "simple_md_simulations"):
         """Initialize the simple MD integration system"""
         
         # Check dependencies
@@ -73,17 +68,6 @@ class SimpleMDIntegration:
         
         # Initialize simple working simulator (REPLACEMENT for ProperOpenMMSimulator)
         self.simple_simulator = SimpleWorkingMDSimulator(str(self.output_dir))
-        
-        # Initialize MM-GBSA calculator if available (keep this feature)
-        self.enable_mmgbsa = enable_mmgbsa and MMGBSA_AVAILABLE
-        if self.enable_mmgbsa:
-            mmgbsa_output_dir = self.output_dir / "mmgbsa_results"
-            self.mmgbsa_calculator = InsulinMMGBSACalculator(str(mmgbsa_output_dir))
-            print(f"🧮 MM-GBSA calculator enabled")
-        else:
-            self.mmgbsa_calculator = None
-            if enable_mmgbsa and not MMGBSA_AVAILABLE:
-                print(f"⚠️  MM-GBSA requested but not available")
         
         # Output streaming setup (keep for UI compatibility)
         self.output_queue = queue.Queue()

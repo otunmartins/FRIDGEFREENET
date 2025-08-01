@@ -510,12 +510,24 @@ class EnhancedActiveLearningOrchestrator:
         # Use initial prompt or generate from previous iteration
         prompt = initial_prompt or "Search for advanced drug delivery polymer materials"
         
-        # Run automated literature mining
-        literature_results = await self.literature_mining.run_automated_mining(state, self.decision_engine)
+        # Add target properties to state temporarily for automated components
+        original_target_properties = getattr(state, 'target_properties', None)
+        state.target_properties = self.target_properties
         
-        # Update state
-        state.literature_results = literature_results
-        state.reasoning_log.append(f"Literature mining completed: {len(literature_results.papers_analyzed) if literature_results.papers_analyzed else 0} papers analyzed")
+        try:
+            # Run automated literature mining
+            literature_results = await self.literature_mining.run_automated_mining(state, self.decision_engine)
+            
+            # Update state
+            state.literature_results = literature_results
+            state.reasoning_log.append(f"Literature mining completed: {len(literature_results.papers_analyzed) if literature_results.papers_analyzed else 0} papers analyzed")
+            
+        finally:
+            # Restore original target properties or remove if didn't exist
+            if original_target_properties is not None:
+                state.target_properties = original_target_properties
+            elif hasattr(state, 'target_properties'):
+                delattr(state, 'target_properties')
         
         return state
     
@@ -527,12 +539,24 @@ class EnhancedActiveLearningOrchestrator:
         if state.literature_results and state.literature_results.key_insights:
             generation_context += f". Key insights: {'; '.join(state.literature_results.key_insights[:3])}"
         
-        # Run automated piecewise generation
-        generated_molecules = await self.psmiles_generation.run_automated_generation(state, self.decision_engine)
+        # Add target properties to state temporarily for automated components
+        original_target_properties = getattr(state, 'target_properties', None)
+        state.target_properties = self.target_properties
         
-        # Update state
-        state.generated_molecules = generated_molecules
-        state.reasoning_log.append(f"Molecule generation completed: {len(generated_molecules.molecules) if generated_molecules.molecules else 0} molecules generated")
+        try:
+            # Run automated piecewise generation
+            generated_molecules = await self.psmiles_generation.run_automated_generation(state, self.decision_engine)
+            
+            # Update state
+            state.generated_molecules = generated_molecules
+            state.reasoning_log.append(f"Molecule generation completed: {len(generated_molecules.molecules) if generated_molecules.molecules else 0} molecules generated")
+            
+        finally:
+            # Restore original target properties or remove if didn't exist
+            if original_target_properties is not None:
+                state.target_properties = original_target_properties
+            elif hasattr(state, 'target_properties'):
+                delattr(state, 'target_properties')
         
         return state
     
@@ -542,12 +566,24 @@ class EnhancedActiveLearningOrchestrator:
         if not state.generated_molecules or not state.generated_molecules.molecules:
             raise ValueError("No molecules available for MD simulation")
         
-        # Run automated MD simulation
-        simulation_results = await self.md_simulation.run_automated_simulation(state, self.decision_engine)
+        # Add target properties to state temporarily for automated components
+        original_target_properties = getattr(state, 'target_properties', None)
+        state.target_properties = self.target_properties
         
-        # Update state
-        state.simulation_results = simulation_results
-        state.reasoning_log.append("MD simulation completed successfully")
+        try:
+            # Run automated MD simulation
+            simulation_results = await self.md_simulation.run_automated_simulation(state, self.decision_engine)
+            
+            # Update state
+            state.simulation_results = simulation_results
+            state.reasoning_log.append("MD simulation completed successfully")
+            
+        finally:
+            # Restore original target properties or remove if didn't exist
+            if original_target_properties is not None:
+                state.target_properties = original_target_properties
+            elif hasattr(state, 'target_properties'):
+                delattr(state, 'target_properties')
         
         return state
     
@@ -557,29 +593,41 @@ class EnhancedActiveLearningOrchestrator:
         if not state.simulation_results:
             raise ValueError("No simulation results available for post-processing")
         
-        # Run automated post-processing
-        computed_properties = await self.post_processing.run_automated_processing(state, self.decision_engine)
+        # Add target properties to state temporarily for automated components
+        original_target_properties = getattr(state, 'target_properties', None)
+        state.target_properties = self.target_properties
         
-        # Update state
-        state.computed_properties = computed_properties
-        
-        # Calculate overall score
-        if computed_properties.target_scores:
-            if hasattr(computed_properties.target_scores, 'overall_score'):
-                state.overall_score = computed_properties.target_scores.overall_score
-            else:
-                # Calculate from individual scores
-                scores = []
-                if hasattr(computed_properties.target_scores, 'biocompatibility'):
-                    scores.append(computed_properties.target_scores.biocompatibility)
-                if hasattr(computed_properties.target_scores, 'degradation_rate'):
-                    scores.append(computed_properties.target_scores.degradation_rate)
-                if hasattr(computed_properties.target_scores, 'mechanical_strength'):
-                    scores.append(computed_properties.target_scores.mechanical_strength)
-                
-                state.overall_score = sum(scores) / len(scores) if scores else 0.5
-        
-        state.reasoning_log.append(f"Post-processing completed: Overall score {state.overall_score:.3f}")
+        try:
+            # Run automated post-processing
+            computed_properties = await self.post_processing.run_automated_processing(state, self.decision_engine)
+            
+            # Update state
+            state.computed_properties = computed_properties
+            
+            # Calculate overall score
+            if computed_properties.target_scores:
+                if hasattr(computed_properties.target_scores, 'overall_score'):
+                    state.overall_score = computed_properties.target_scores.overall_score
+                else:
+                    # Calculate from individual scores
+                    scores = []
+                    if hasattr(computed_properties.target_scores, 'biocompatibility'):
+                        scores.append(computed_properties.target_scores.biocompatibility)
+                    if hasattr(computed_properties.target_scores, 'degradation_rate'):
+                        scores.append(computed_properties.target_scores.degradation_rate)
+                    if hasattr(computed_properties.target_scores, 'mechanical_strength'):
+                        scores.append(computed_properties.target_scores.mechanical_strength)
+                    
+                    state.overall_score = sum(scores) / len(scores) if scores else 0.5
+            
+            state.reasoning_log.append(f"Post-processing completed: Overall score {state.overall_score:.3f}")
+            
+        finally:
+            # Restore original target properties or remove if didn't exist
+            if original_target_properties is not None:
+                state.target_properties = original_target_properties
+            elif hasattr(state, 'target_properties'):
+                delattr(state, 'target_properties')
         
         return state
     
