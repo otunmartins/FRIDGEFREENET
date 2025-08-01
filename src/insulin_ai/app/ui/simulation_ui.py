@@ -765,16 +765,17 @@ def render_automated_candidates_section():
                     with col2:
                         st.markdown("##### 🔧 Simulation Configuration")
                         
-                        # Per-candidate controls
+                        # Per-candidate controls with unique keys
+                        unique_suffix = f"{candidate.get('source', 'unknown')}_{candidate.get('timestamp', '')}_{i}"
                         auto_chain_length = st.slider(
-                            "Chain Length", 3, 50, 15, key=f"len_{candidate.get('id', i)}"
+                            "Chain Length", 3, 50, 15, key=f"len_{unique_suffix}"
                         )
                         auto_num_chains = st.slider(
-                            "Number of Chains", 1, 100, 3, key=f"num_{candidate.get('id', i)}"
+                            "Number of Chains", 1, 100, 3, key=f"num_{unique_suffix}"
                         )
                         auto_simulation_type = st.selectbox(
                             "Simulation Type", ["Quick Test", "Standard", "Extended"],
-                            index=1, key=f"type_{candidate.get('id', i)}"
+                            index=1, key=f"type_{unique_suffix}"
                         )
 
                         # Per-candidate system size preview
@@ -791,7 +792,7 @@ def render_automated_candidates_section():
 
                         if st.button(
                             "🚀 Run Simulation",
-                            key=f"run_{candidate.get('id', i)}",
+                            key=f"run_{unique_suffix}",
                             type="primary"
                         ):
                             run_dual_gaff_amber_on_candidate_enhanced(
@@ -3661,16 +3662,17 @@ def render_automated_candidates_section():
                     with col2:
                         st.markdown("##### 🔧 Simulation Configuration")
                         
-                        # Per-candidate controls
+                        # Per-candidate controls with unique keys
+                        unique_suffix = f"{candidate.get('source', 'unknown')}_{candidate.get('timestamp', '')}_{i}"
                         auto_chain_length = st.slider(
-                            "Chain Length", 3, 50, 15, key=f"len_{candidate.get('id', i)}"
+                            "Chain Length", 3, 50, 15, key=f"len_{unique_suffix}"
                         )
                         auto_num_chains = st.slider(
-                            "Number of Chains", 1, 100, 3, key=f"num_{candidate.get('id', i)}"
+                            "Number of Chains", 1, 100, 3, key=f"num_{unique_suffix}"
                         )
                         auto_simulation_type = st.selectbox(
                             "Simulation Type", ["Quick Test", "Standard", "Extended"],
-                            index=1, key=f"type_{candidate.get('id', i)}"
+                            index=1, key=f"type_{unique_suffix}"
                         )
 
                         # Per-candidate system size preview
@@ -3687,7 +3689,7 @@ def render_automated_candidates_section():
 
                         if st.button(
                             "🚀 Run Simulation",
-                            key=f"run_{candidate.get('id', i)}",
+                            key=f"run_{unique_suffix}",
                             type="primary"
                         ):
                             run_dual_gaff_amber_on_candidate_enhanced(

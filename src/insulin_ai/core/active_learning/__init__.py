@@ -7,6 +7,7 @@ that combine literature mining, molecular generation, MD simulation, and RAG-bas
 """
 
 from .orchestrator import ActiveLearningOrchestrator
+from .simple_orchestrator import SimpleActiveLearningOrchestrator
 from .state_manager import IterationState, StateManager, IterationStatus
 from .decision_engine import LLMDecisionEngine
 from .loop_controller import LoopController, ConvergenceConfig, ResourceLimits, QualityGates
@@ -14,6 +15,7 @@ from .property_scoring import PropertyScoring, MDSimulationProperties, TargetPro
 
 __all__ = [
     'ActiveLearningOrchestrator',
+    'SimpleActiveLearningOrchestrator',
     'IterationState', 
     'StateManager',
     'IterationStatus',

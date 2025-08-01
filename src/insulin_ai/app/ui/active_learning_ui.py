@@ -1,8 +1,8 @@
 """
-Active Learning UI Module - Phase 1
+Simple Active Learning UI Module
 
-This module provides the user interface for the new active learning system,
-including orchestrator control, real-time monitoring, and iteration visualization.
+This module provides the user interface for the simple active learning system,
+connecting literature mining → PSMILES generation → MD simulation → new prompt.
 """
 
 import streamlit as st
@@ -12,72 +12,43 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import json
-import asyncio
+import logging
 from datetime import datetime
 from typing import Dict, List, Any, Optional
 import os
 
-# Import the active learning system
-try:
-    # Try multiple import paths to handle different execution contexts
-    try:
-        from insulin_ai.core.active_learning import (
-            ActiveLearningOrchestrator, 
-            StateManager, 
-            LLMDecisionEngine,
-            LoopController,
-            ConvergenceConfig,
-            ResourceLimits,
-            QualityGates,
-            IterationStatus
-        )
-    except ImportError:
-        # Fallback import for different path contexts
-        import sys
-        from pathlib import Path
-        
-        # Add the project root to the path
-        project_root = Path(__file__).parent.parent.parent.parent
-        if str(project_root) not in sys.path:
-            sys.path.insert(0, str(project_root))
-        
-        from insulin_ai.core.active_learning import (
-            ActiveLearningOrchestrator, 
-            StateManager, 
-            LLMDecisionEngine,
-            LoopController,
-            ConvergenceConfig,
-            ResourceLimits,
-            QualityGates,
-            IterationStatus
-        )
-    
-    ACTIVE_LEARNING_AVAILABLE = True
-except ImportError as e:
-    ACTIVE_LEARNING_AVAILABLE = False
-    import traceback
-    IMPORT_ERROR_DETAILS = f"Import error: {e}\nTraceback: {traceback.format_exc()}"
-
+# Set up logging
+logger = logging.getLogger(__name__)
 
 def render_active_learning():
-    """Main function to render the active learning interface"""
+    """Main function to render the active learning interface that connects existing tabs"""
     st.title("🤖 Active Learning Material Discovery System")
-    st.markdown("**Phase 1**: Autonomous material discovery through intelligent iteration")
+    st.markdown("**Automated Loop**: Connects existing Literature Mining → PSMILES Generation → MD Simulation tabs")
     
-    if not ACTIVE_LEARNING_AVAILABLE:
-        st.error("❌ Active Learning system is not available. Please check the installation.")
-        if 'IMPORT_ERROR_DETAILS' in globals():
-            with st.expander("🔍 Import Error Details"):
-                st.code(IMPORT_ERROR_DETAILS, language="python")
+    # Important clarification
+    st.info("🔗 **This connects your existing working tabs without modifications:** Uses the same functions as Literature Mining tab, PSMILES Generation tab, and MD Simulation tab")
+    
+    # Check if we can import the simple orchestrator
+    try:
+        from src.insulin_ai.core.active_learning.simple_orchestrator import SimpleActiveLearningOrchestrator
+        simple_active_learning_available = True
+    except ImportError as e:
+        simple_active_learning_available = False
+        import_error = str(e)
+    
+    if not simple_active_learning_available:
+        st.error("❌ Active Learning orchestrator is not available. Please check the installation.")
+        with st.expander("🔍 Import Error Details"):
+            st.code(import_error, language="python")
         
         # Show manual installation instructions
         with st.expander("🛠️ Troubleshooting"):
             st.markdown("""
             **Possible Solutions:**
             
-            1. **Run the Phase 1 test script first:**
+            1. **Check that the orchestrator exists:**
             ```bash
-            python test_active_learning_phase1_simple.py
+            ls src/insulin_ai/core/active_learning/simple_orchestrator.py
             ```
             
             2. **Check if you're in the right directory:**
@@ -110,180 +81,253 @@ def render_active_learning():
         
         # Basic configuration
         max_iterations = st.number_input("Max Iterations", min_value=1, max_value=20, value=5)
+        storage_path = st.text_input("Storage Path", value="active_learning_results")
         
-        # Convergence settings
-        st.subheader("Convergence Settings")
-        convergence_patience = st.number_input("Patience (iterations without improvement)", min_value=1, max_value=10, value=3)
-        score_threshold = st.slider("Target Score Threshold", min_value=0.5, max_value=1.0, value=0.9, step=0.05)
+        st.markdown("---")
         
-        # Resource limits
-        st.subheader("Resource Limits")
-        max_memory_gb = st.number_input("Max Memory (GB)", min_value=1, max_value=32, value=8)
-        max_time_hours = st.number_input("Max Time (hours)", min_value=0.5, max_value=24.0, value=4.0, step=0.5)
+        # Literature Mining Settings (Enhanced with all options from Literature Mining UI)
+        st.subheader("📚 Literature Mining Settings")
+        lit_max_papers = st.number_input("Max Papers to Analyze", min_value=5, max_value=50, value=10, 
+                                       help="Number of papers to retrieve and analyze per iteration")
         
-        # Quality gates
-        st.subheader("Quality Gates")
-        min_confidence = st.slider("Min Decision Confidence", min_value=0.1, max_value=1.0, value=0.3, step=0.1)
-        max_error_rate = st.slider("Max Error Rate", min_value=0.0, max_value=0.5, value=0.2, step=0.05)
+        # Search strategy from Literature Mining UI
+        lit_search_strategy = st.selectbox("Search Strategy", 
+                                         ["Comprehensive (3000 tokens)", "Fast (1000 tokens)", "Focused (specific mechanisms)"],
+                                         index=0, help="Literature search depth and token limit")
+        
+        lit_recent_only = st.checkbox("Focus on recent publications (2020+)", value=True,
+                                    help="Only search papers from recent years")
+        lit_include_patents = st.checkbox("Include patent literature", value=False,
+                                        help="Include patents in literature search")
+        
+        lit_openai_model = st.selectbox("Literature Analysis Model", 
+                                      ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo"], 
+                                      index=1, help="OpenAI model for literature analysis")
+        lit_temperature = st.slider("Literature LLM Temperature", 0.0, 1.0, 0.7, 0.1,
+                                   help="Temperature for literature analysis LLM")
+        
+        st.markdown("---")
+        
+        # PSMILES Generation Settings (Enhanced with all options from PSMILES Generation UI)
+        st.subheader("🧪 PSMILES Generation Settings")
+        psmiles_model = st.selectbox("PSMILES Generation Model",
+                                   ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo"],
+                                   index=0, help="OpenAI model for PSMILES generation")
+        psmiles_temperature = st.slider("PSMILES LLM Temperature", 0.0, 1.0, 0.7, 0.1,
+                                       help="Temperature for PSMILES generation")
+        psmiles_num_candidates = st.slider("Number of candidates per iteration", 1, 10, 1,
+                                         help="How many PSMILES candidates to generate per iteration")
+        psmiles_max_retries = st.number_input("Max Generation Retries", min_value=1, max_value=10, value=5,
+                                            help="Maximum retries for PSMILES generation")
+        psmiles_enable_functionalization = st.checkbox("Multi-step functionalization", value=True,
+                                                      help="Enable multi-step functionalization process")
+        psmiles_max_repair_attempts = st.number_input("Max Repair Attempts", min_value=1, max_value=10, value=3,
+                                                     help="Maximum attempts to repair invalid PSMILES")
+        
+        st.markdown("---")
+        
+        # MD Simulation Settings (Enhanced with all options from Simulation UI)
+        st.subheader("⚛️ MD Simulation Settings")
+        
+        # Simulation method selection (from Simulation UI)
+        md_simulation_method = st.selectbox(
+            "Force Field Approach",
+            options=["Dual GAFF+AMBER (Recommended)", "Enhanced (Stored SMILES)", "Standard (Legacy)"],
+            index=0,  # Default to dual approach
+            help="""
+            • **🚀 Dual GAFF+AMBER**: GAFF for polymers + AMBER for insulin (Fixed CYS/CYX issues)
+            • **⚡ Enhanced**: Uses pre-stored SMILES data for faster setup
+            • **🔧 Standard**: Original approach (may have template generator issues)
+            """
+        )
+        
+        md_temperature = st.slider("Temperature (K)", 250, 400, 310, 5,
+                                 help="Simulation temperature in Kelvin (physiological = 310 K)")
+        
+        # Equilibration options (from Simulation UI)
+        equilibration_options = {
+            "Quick Test (250 ps)": 125000,
+            "Short (500 ps) - Recommended": 250000,
+            "Medium (1000 ps)": 500000,
+            "Long (2000 ps)": 1000000,
+            "Extended (4000 ps)": 2000000
+        }
+        md_equilibration_selection = st.selectbox(
+            "Equilibration Duration",
+            list(equilibration_options.keys()),
+            index=0,
+            help="Equilibration phase duration (2 fs timestep)"
+        )
+        md_equilibration_steps = equilibration_options[md_equilibration_selection]
+        
+        # Production options (from Simulation UI)
+        production_options = {
+            "Quick Test (1 ns)": 500000,
+            "Short (2.5 ns)": 1250000,
+            "Medium (5 ns) - Recommended": 2500000,
+            "Long (10 ns)": 5000000,
+            "Extended (25 ns)": 12500000
+        }
+        md_production_selection = st.selectbox(
+            "Production Duration",
+            list(production_options.keys()),
+            index=0,
+            help="Production phase duration (2 fs timestep)"
+        )
+        md_production_steps = production_options[md_production_selection]
+        
+        # Save interval options (from Simulation UI)
+        save_options = {
+            "Frequent (1 ps)": 500,
+            "Normal (2 ps) - Recommended": 1000,
+            "Sparse (4 ps)": 2000,
+            "Very Sparse (8 ps)": 4000
+        }
+        md_save_selection = st.selectbox(
+            "Frame Saving Frequency",
+            list(save_options.keys()),
+            index=1,
+            help="How often to save trajectory frames"
+        )
+        md_save_interval = save_options[md_save_selection]
+        
+        md_max_simulations = st.number_input("Max Simulations per Iteration", min_value=1, max_value=10, value=3,
+                                           help="Maximum number of simulations to run per iteration")
+        md_timeout = st.number_input("Simulation Timeout (minutes)", min_value=5, max_value=120, value=30,
+                                   help="Timeout for individual simulations")
+        
+        # Calculate and display timing information
+        eq_time_ns = md_equilibration_steps * 2 / 1000000
+        prod_time_ns = md_production_steps * 2 / 1000000
+        total_time_ns = eq_time_ns + prod_time_ns
+        st.caption(f"⏱️ **Total simulation time: {total_time_ns:.1f} ns**")
+        
+        st.markdown("---")
+        
+        # Advanced Options
+        st.subheader("🔬 Advanced Options")
+        enable_parallel_processing = st.checkbox("Enable Parallel Processing", value=False,
+                                                help="Run multiple simulations in parallel")
+        save_intermediate_results = st.checkbox("Save Intermediate Results", value=True,
+                                               help="Save results after each stage")
+        enable_detailed_logging = st.checkbox("Enable Detailed Logging", value=True,
+                                            help="Enable verbose logging for debugging")
+        # Remove fallback option since we don't want fallbacks [[memory:4967721]]
+        
+        # Package the enhanced configuration
+        al_config = {
+            'max_iterations': max_iterations,
+            'storage_path': storage_path,
+            'literature_mining': {
+                'max_papers': lit_max_papers,
+                'search_strategy': lit_search_strategy,
+                'recent_only': lit_recent_only,
+                'include_patents': lit_include_patents,
+                'openai_model': lit_openai_model,
+                'temperature': lit_temperature
+            },
+            'psmiles_generation': {
+                'model': psmiles_model,
+                'temperature': psmiles_temperature,
+                'num_candidates': psmiles_num_candidates,
+                'max_retries': psmiles_max_retries,
+                'enable_functionalization': psmiles_enable_functionalization,
+                'max_repair_attempts': psmiles_max_repair_attempts
+            },
+            'md_simulation': {
+                'simulation_method': md_simulation_method,
+                'temperature': md_temperature,
+                'equilibration_steps': md_equilibration_steps,
+                'production_steps': md_production_steps,
+                'save_interval': md_save_interval,
+                'max_simulations': md_max_simulations,
+                'timeout_minutes': md_timeout,
+                'total_time_ns': total_time_ns
+            },
+            'advanced': {
+                'enable_parallel_processing': enable_parallel_processing,
+                'save_intermediate_results': save_intermediate_results,
+                'enable_detailed_logging': enable_detailed_logging
+            }
+        }
     
-    # Main interface tabs
-    tab1, tab2, tab3, tab4 = st.tabs(["🚀 Run Active Learning", "📊 Monitor Progress", "📋 Iteration History", "⚙️ System Status"])
+    # Main interface
+    st.header("🚀 Automated Active Learning Loop")
     
-    with tab1:
-        render_active_learning_runner(max_iterations, convergence_patience, score_threshold, 
-                                    max_memory_gb, max_time_hours, min_confidence, max_error_rate)
+    # Show which existing tabs will be used
+    st.markdown("### 🔗 Integration with Existing Tabs:")
+    col1, col2, col3 = st.columns(3)
     
-    with tab2:
-        render_progress_monitor()
+    with col1:
+        st.markdown("**📚 Literature Mining**")
+        st.markdown("Uses: `literature_mining_with_llm`")
+        st.markdown("*Same as Literature Mining tab*")
     
-    with tab3:
-        render_iteration_history()
+    with col2:
+        st.markdown("**🧪 PSMILES Generation**") 
+        st.markdown("Uses: `process_psmiles_workflow_with_autorepair`")
+        st.markdown("*Same as PSMILES Generation tab*")
     
-    with tab4:
-        render_system_status()
-
-
-def render_active_learning_runner(max_iterations, convergence_patience, score_threshold, 
-                                max_memory_gb, max_time_hours, min_confidence, max_error_rate):
-    """Render the active learning runner interface"""
-    st.header("🚀 Active Learning Loop Runner")
+    with col3:
+        st.markdown("**⚛️ MD Simulation**")
+        st.markdown("Uses: `DualGaffAmberIntegration`")
+        st.markdown("*Same as MD Simulation tab*")
     
-    # Input configuration
+    st.markdown("---")
+    
+    # Input parameters
     col1, col2 = st.columns(2)
     
     with col1:
-        st.subheader("Initial Configuration")
         initial_prompt = st.text_area(
-            "Initial Prompt",
-            value="Design a biodegradable polymer for insulin delivery with high biocompatibility and controlled degradation rate",
+            "Initial Research Prompt",
+            value="Design a biodegradable polymer for insulin delivery",
             height=100,
-            help="This prompt will seed the first iteration of the active learning loop"
-        )
-        
-        storage_path = st.text_input(
-            "Storage Path",
-            value="active_learning_results",
-            help="Directory to store iteration results and state"
+            help="Describe what kind of material you want to discover"
         )
     
     with col2:
         st.subheader("Target Properties")
+        biocompatibility = st.slider("Biocompatibility", 0.0, 1.0, 0.9, 0.1)
+        degradation_rate = st.slider("Degradation Rate", 0.0, 1.0, 0.5, 0.1)
+        stability = st.slider("Stability", 0.0, 1.0, 0.8, 0.1)
         
-        # Use realistic property ranges based on drug delivery literature
-        biocompatibility = st.slider(
-            "Biocompatibility Target", 
-            min_value=0.5, max_value=1.0, value=0.9, step=0.05,
-            help="Biocompatibility score based on molecular interactions, glass transition temperature, and surface properties"
-        )
-        
-        degradation_rate = st.slider(
-            "Degradation Rate Target", 
-            min_value=0.1, max_value=1.0, value=0.7, step=0.05,
-            help="Degradation rate score based on chain scission, water diffusion, and ester bond strength"
-        )
-        
-        mechanical_strength = st.slider(
-            "Mechanical Strength Target", 
-            min_value=0.1, max_value=1.0, value=0.6, step=0.05,
-            help="Mechanical strength score based on elastic moduli, cohesive energy, and density"
-        )
-
         target_properties = {
             "biocompatibility": biocompatibility,
             "degradation_rate": degradation_rate,
-            "mechanical_strength": mechanical_strength
+            "stability": stability
         }
-        
-        # Display property explanations
-        with st.expander("ℹ️ Property Score Explanations"):
-            st.markdown("""
-            **Biocompatibility (0-1)**: Based on glass transition temperature (optimal ~37°C), 
-            hydrogen bonding patterns, density (1.0-1.4 g/cm³), and water interaction properties.
-            
-            **Degradation Rate (0-1)**: Based on polymer chain scission rates, water diffusion 
-            coefficients, ester bond strength (~300 kJ/mol optimal), and molecular mobility.
-            
-            **Mechanical Strength (0-1)**: Based on Young's modulus (0.1-5.0 GPa), bulk/shear 
-            moduli, cohesive energy, and crystallinity balance.
-            
-            *Scores are derived from MD simulation properties using literature correlations.*
-            """)
     
-    # Configuration summary
-    with st.expander("📋 Configuration Summary"):
-        config_data = {
-            "Max Iterations": max_iterations,
-            "Convergence Patience": convergence_patience,
-            "Score Threshold": score_threshold,
-            "Max Memory (GB)": max_memory_gb,
-            "Max Time (hours)": max_time_hours,
-            "Min Confidence": min_confidence,
-            "Max Error Rate": max_error_rate,
-            "Target Properties": target_properties
-        }
-        st.json(config_data)
-    
-    # Run button and status
-    if st.button("🚀 Start Active Learning Loop", type="primary", use_container_width=True):
+    # Run button
+    if st.button("🚀 Start Active Learning Loop", type="primary"):
         if not initial_prompt.strip():
-            st.error("Please provide an initial prompt")
+            st.warning("⚠️ Please provide an initial research prompt")
             return
         
-        with st.spinner("Initializing active learning system..."):
-            run_active_learning_loop(
-                initial_prompt=initial_prompt,
-                target_properties=target_properties,
-                max_iterations=max_iterations,
-                convergence_patience=convergence_patience,
-                score_threshold=score_threshold,
-                max_memory_gb=max_memory_gb,
-                max_time_hours=max_time_hours,
-                min_confidence=min_confidence,
-                max_error_rate=max_error_rate,
-                storage_path=storage_path
-            )
+        run_active_learning_loop(
+            initial_prompt=initial_prompt,
+            target_properties=target_properties,
+            config=al_config
+        )
 
 
-def run_active_learning_loop(initial_prompt, target_properties, max_iterations, 
-                           convergence_patience, score_threshold, max_memory_gb, 
-                           max_time_hours, min_confidence, max_error_rate, storage_path):
-    """Run the active learning loop with real-time updates"""
+def run_active_learning_loop(initial_prompt, target_properties, config):
+    """Run the active learning loop that connects existing tabs"""
     
-    # Initialize configuration objects
-    convergence_config = ConvergenceConfig(
-        patience=convergence_patience,
-        score_threshold=score_threshold,
-        enable_early_stopping=True
-    )
+    # Use the orchestrator that connects existing tab functions
+    from src.insulin_ai.core.active_learning.simple_orchestrator import SimpleActiveLearningOrchestrator
     
-    resource_limits = ResourceLimits(
-        max_memory_mb=int(max_memory_gb * 1024),
-        max_time_hours=max_time_hours
-    )
-    
-    quality_gates = QualityGates(
-        min_confidence_score=min_confidence,
-        max_error_rate=max_error_rate,
-        enable_validation=True
-    )
-    
-    # Create orchestrator
-    orchestrator = ActiveLearningOrchestrator(
-        max_iterations=max_iterations,
-        storage_path=storage_path,
-        convergence_config=convergence_config,
-        resource_limits=resource_limits,
-        quality_gates=quality_gates
+    # Create orchestrator that uses existing tab workflows with full configuration
+    orchestrator = SimpleActiveLearningOrchestrator(
+        max_iterations=config['max_iterations'],
+        storage_path=config['storage_path'],
+        config=config  # Pass full configuration
     )
     
     # Create progress tracking containers
     status_container = st.container()
     progress_container = st.container()
     iteration_container = st.container()
-    
-    # Store orchestrator in session state for monitoring
-    st.session_state.active_learning_orchestrator = orchestrator
-    st.session_state.active_learning_storage_path = storage_path
     
     # Progress tracking
     progress_bar = progress_container.progress(0)
@@ -292,11 +336,11 @@ def run_active_learning_loop(initial_prompt, target_properties, max_iterations,
     
     # Callback for iteration updates
     def iteration_callback(state):
-        iteration_num = state.iteration_number
-        progress = min(iteration_num / max_iterations, 1.0)
+        iteration_num = state['iteration']
+        progress = min(iteration_num / config['max_iterations'], 1.0)
         progress_bar.progress(progress)
         
-        status_text.write(f"**Iteration {iteration_num}**: {state.status.value} - Score: {state.overall_score:.3f}")
+        status_text.write(f"**Iteration {iteration_num}**: {state['status']} - Score: {state.get('overall_score', 0):.3f}")
         
         # Display iteration details
         with iteration_display.container():
@@ -304,32 +348,34 @@ def run_active_learning_loop(initial_prompt, target_properties, max_iterations,
             
             with col1:
                 st.metric("Current Iteration", iteration_num)
-                st.metric("Status", state.status.value)
+                st.metric("Status", state['status'])
             
             with col2:
-                st.metric("Overall Score", f"{state.overall_score:.3f}")
-                if hasattr(state, 'improvement_over_previous'):
-                    st.metric("Improvement", f"{state.improvement_over_previous:.3f}")
+                st.metric("Overall Score", f"{state.get('overall_score', 0):.3f}")
+                if 'improvement_over_previous' in state:
+                    st.metric("Improvement", f"{state['improvement_over_previous']:.3f}")
             
             with col3:
-                st.metric("Errors", len(state.errors))
-                st.metric("Warnings", len(state.warnings))
+                st.metric("Errors", len(state.get('errors', [])))
+                st.metric("Warnings", 0)
             
-            # Show component completion status
+            # Show which existing tab functions are being used (defensive coding)
+            simulation_results = state.get('simulation_results') or {}
             components = {
-                "Literature Mining": state.literature_results is not None,
-                "Molecule Generation": state.generated_molecules is not None,
-                "MD Simulation": state.simulation_results is not None,
-                "Property Calculation": state.computed_properties is not None,
-                "RAG Analysis": state.rag_analysis is not None
+                "Literature Mining (existing tab)": state.get('literature_results') is not None,
+                "PSMILES Generation (existing tab)": state.get('generated_molecules') is not None,
+                "MD Simulation (existing tab)": state.get('simulation_results') is not None,
+                "Property Calculation": simulation_results.get('properties_computed') is not None if isinstance(simulation_results, dict) else False,
+                "New Prompt Generation": state.get('new_prompt') is not None
             }
             
-            st.markdown("**Component Status:**")
+            st.markdown("**Existing Tab Integration Status:**")
             component_cols = st.columns(5)
             for i, (name, completed) in enumerate(components.items()):
                 with component_cols[i]:
                     icon = "✅" if completed else "⏳"
-                    st.markdown(f"{icon} {name.split()[0]}")
+                    display_name = name.split()[0]  # Show first word
+                    st.markdown(f"{icon} {display_name}")
     
     # Completion callback
     def completion_callback(results):
@@ -339,472 +385,162 @@ def run_active_learning_loop(initial_prompt, target_properties, max_iterations,
         # Display final results
         with iteration_display.container():
             st.success("**🎉 Active Learning Loop Completed Successfully!**")
+            st.info("✅ **All existing tab functions used without modifications**")
             
             col1, col2, col3, col4 = st.columns(4)
             
             with col1:
-                st.metric("Total Iterations", results['summary']['total_iterations'])
-            with col2:
-                st.metric("Success Rate", f"{results['summary']['success_rate']:.1%}")
-            with col3:
-                st.metric("Best Score", f"{results['summary']['best_score']:.3f}")
-            with col4:
-                st.metric("Runtime", f"{results['summary']['total_runtime']:.1f}s")
+                st.metric("Total Iterations", results.get('total_iterations', 'N/A'))
             
-            # Best result details
-            if results['best_result']['iteration']:
-                st.subheader("🏆 Best Result")
-                st.json(results['best_result'])
+            with col2:
+                st.metric("Success Rate", f"{results.get('success_rate', 0)*100:.1f}%")
+            
+            with col3:
+                st.metric("Best Score", f"{results.get('best_score', 0):.3f}")
+            
+            with col4:
+                st.metric("Runtime", f"{results.get('total_runtime', 0):.1f} seconds")
     
-    # Add callbacks
+    # Register callbacks
     orchestrator.add_iteration_callback(iteration_callback)
     orchestrator.add_completion_callback(completion_callback)
     
-    # Run the loop (this is synchronous for Streamlit)
+    # Store orchestrator in session state for monitoring
+    st.session_state.active_learning_orchestrator = orchestrator
+    st.session_state.active_learning_storage_path = config['storage_path']
+    
+    # Run the active learning loop that uses existing tabs
     try:
         status_text.info("🚀 Starting active learning loop...")
+        st.info("🔄 **Active Learning Loop**: Automatically running your existing Literature Mining → PSMILES Generation → MD Simulation tabs in sequence.")
         
-        # Note: In a real deployment, you'd want to run this asynchronously
-        # For demo purposes, we'll use mock results
-        st.info("🔄 Active Learning Loop is starting...")
-        st.info("⚠️ **Demo Mode**: This would normally run the full active learning loop. "
-               "In the demo, we'll show the monitoring interface with sample data.")
-        
-        # Simulate some progress for demonstration
-        for i in range(1, min(4, max_iterations + 1)):
-            progress_bar.progress(i / max_iterations)
-            status_text.write(f"**Simulated Iteration {i}**: Running components...")
-            
-            # Create a mock state for demonstration using realistic property scoring
-            from insulin_ai.core.active_learning.property_scoring import PropertyScoring
-            
-            # Initialize property scorer
-            scorer = PropertyScoring()
-            
-            # Generate realistic MD properties based on iteration
-            if i == 1:
-                material_type = "random"  # First iteration is more random
-            elif i == 2:
-                material_type = "pla"     # Second iteration finds PLA-like
-            else:
-                material_type = "plga"    # Third iteration finds PLGA-like
-            
-            md_props = scorer.generate_mock_md_properties(material_type)
-            target_scores = scorer.score_material_properties(md_props, target_properties)
-            
-            mock_state = IterationState(iteration_number=i)
-            mock_state.overall_score = target_scores.overall_score
-            mock_state.status = IterationStatus.COMPLETED
-            
-            # Update state with realistic computed properties
-            from insulin_ai.core.active_learning.state_manager import ComputedProperties
-            mock_state.computed_properties = ComputedProperties(
-                md_properties=md_props,
-                target_scores=target_scores,
-                property_details={
-                    "biocompatibility_factors": {
-                        "glass_transition_temp": md_props.glass_transition_temp,
-                        "density": md_props.density,
-                        "hydrogen_bonding": md_props.hydrogen_bond_count
-                    },
-                    "degradation_factors": {
-                        "chain_scission_rate": md_props.chain_scission_rate,
-                        "water_diffusion": md_props.diffusion_coefficient_water,
-                        "ester_bond_strength": md_props.ester_bond_strength
-                    },
-                    "mechanical_factors": {
-                        "youngs_modulus_avg": (md_props.youngs_modulus_x + md_props.youngs_modulus_y + md_props.youngs_modulus_z) / 3,
-                        "bulk_modulus": md_props.bulk_modulus,
-                        "cohesive_energy": md_props.cohesive_energy
-                    }
-                },
-                computation_method="MD_simulation_with_literature_scoring",
-                execution_time=5.0,
-                confidence_score=0.85
+        # Run the loop that connects existing tab workflows
+        with st.spinner("🔄 Running active learning loop using existing tabs..."):
+            results = orchestrator.run_simple_loop(
+                initial_prompt=initial_prompt,
+                target_properties=target_properties
             )
-
-            iteration_callback(mock_state)
-            
-            # Small delay for demo effect
-            import time
-            time.sleep(1)
         
-        # Show completion
-        mock_results = {
-            'summary': {
-                'total_iterations': min(3, max_iterations),
-                'success_rate': 1.0,
-                'best_score': 0.8,
-                'total_runtime': 45.0
-            },
-            'best_result': {
-                'iteration': 3,
-                'score': 0.8,
-                'properties': target_properties
-            }
-        }
-        completion_callback(mock_results)
+        # Process and display results
+        if results:
+            completion_callback(results)
+            st.success("✅ Active learning loop completed successfully using existing tab workflows!")
+            
+            # Display summary
+            if 'summary' in results:
+                summary = results['summary']
+                st.metric("Total Iterations", summary.get('total_iterations', 'N/A'))
+                st.metric("Success Rate", f"{summary.get('success_rate', 0)*100:.1f}%")
+                st.metric("Best Score", f"{summary.get('best_score', 0):.3f}")
+                st.metric("Runtime", f"{summary.get('total_runtime', 0):.1f} seconds")
+        else:
+            st.warning("⚠️ Active learning loop completed but returned no results.")
         
     except Exception as e:
         st.error(f"❌ Error running active learning loop: {e}")
         st.exception(e)
+        
+        # Show troubleshooting information
+        with st.expander("🔍 Troubleshooting Information"):
+            st.code(f"""
+Error: {type(e).__name__}: {str(e)}
 
+This error occurred while running the simple active learning loop.
+Common issues:
+1. Missing dependencies (check OpenMM, RDKit, etc.)
+2. OpenAI API key issues
+3. Insufficient memory or disk space
+4. Network connectivity issues for literature mining
 
-def render_progress_monitor():
-    """Render real-time progress monitoring"""
-    st.header("📊 Progress Monitor")
-    
-    if 'active_learning_orchestrator' not in st.session_state:
-        st.info("🔄 No active learning session running. Start one in the 'Run Active Learning' tab.")
-        return
-    
-    orchestrator = st.session_state.active_learning_orchestrator
-    
-    # Auto-refresh button
-    if st.button("🔄 Refresh Status"):
-        st.rerun()
-    
-    # Get current status
-    try:
-        status = orchestrator.get_status()
-        
-        # Loop status overview
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            st.metric("Current Iteration", status['current_iteration'])
-        with col2:
-            st.metric("Total States", status['total_states'])
-        with col3:
-            st.metric("Completed", status['completed_states'])
-        with col4:
-            success_rate = status['completed_states'] / max(status['total_states'], 1)
-            st.metric("Success Rate", f"{success_rate:.1%}")
-        
-        # Component status
-        st.subheader("🔧 Component Status")
-        components_df = pd.DataFrame([
-            {"Component": k, "Status": v} 
-            for k, v in status['components_status'].items()
-        ])
-        st.dataframe(components_df, use_container_width=True)
-        
-        # Loop controller status if available
-        if 'loop_status' in status:
-            st.subheader("🎛️ Loop Controller Status")
-            loop_status = status['loop_status']
-            st.json(loop_status)
-    
-    except Exception as e:
-        st.error(f"Error getting status: {e}")
-
-
-def render_iteration_history():
-    """Render iteration history and analytics"""
-    st.header("📋 Iteration History")
-    
-    if 'active_learning_storage_path' not in st.session_state:
-        st.info("🔄 No active learning session data available.")
-        return
-    
-    storage_path = st.session_state.active_learning_storage_path
-    
-    try:
-        # Load state manager to get history
-        state_manager = StateManager(f"{storage_path}/states")
-        all_states = state_manager.get_all_states()
-        
-        if not all_states:
-            st.info("📝 No iteration history available yet.")
-            return
-        
-        # Progress chart
-        st.subheader("📈 Progress Over Time")
-        
-        iteration_data = []
-        for state in all_states:
-            iteration_data.append({
-                'Iteration': state.iteration_number,
-                'Score': state.overall_score,
-                'Status': state.status.value,
-                'Timestamp': state.start_time.strftime('%Y-%m-%d %H:%M:%S'),
-                'Errors': len(state.errors),
-                'Warnings': len(state.warnings)
-            })
-        
-        df = pd.DataFrame(iteration_data)
-        
-        # Score progression chart
-        fig = px.line(df, x='Iteration', y='Score', 
-                     title='Score Progression Across Iterations',
-                     markers=True)
-        fig.update_layout(height=400)
-        st.plotly_chart(fig, use_container_width=True)
-        
-        # Status distribution
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            status_counts = df['Status'].value_counts()
-            fig_pie = px.pie(values=status_counts.values, names=status_counts.index,
-                           title='Iteration Status Distribution')
-            st.plotly_chart(fig_pie, use_container_width=True)
-        
-        with col2:
-            fig_bar = px.bar(df, x='Iteration', y='Errors',
-                           title='Errors per Iteration')
-            st.plotly_chart(fig_bar, use_container_width=True)
-        
-        # Detailed iteration table
-        st.subheader("📊 Detailed Iteration Data")
-        st.dataframe(df, use_container_width=True)
-        
-        # Individual iteration details
-        if st.checkbox("Show Individual Iteration Details"):
-            selected_iteration = st.selectbox("Select Iteration", df['Iteration'].tolist())
+Check the logs above for more details.
+            """)
             
-            selected_state = next((s for s in all_states if s.iteration_number == selected_iteration), None)
-            if selected_state:
-                render_iteration_details(selected_state)
+            # Show system status
+            st.write("**System Status:**")
+            try:
+                st.write(f"- Orchestrator: {type(orchestrator).__name__}")
+                st.write(f"- Storage Path: {orchestrator.storage_path}")
+            except Exception as status_e:
+                st.write(f"Could not get system status: {status_e}")
+
+
+def render_active_learning_runner(max_iterations, convergence_patience, score_threshold, 
+                                max_memory_gb, max_time_hours, min_confidence, max_error_rate):
+    """Render the active learning runner interface"""
     
-    except Exception as e:
-        st.error(f"Error loading iteration history: {e}")
-        st.exception(e)
-
-
-def render_iteration_details(state):
-    """Render detailed information for a specific iteration"""
-    st.subheader(f"🔍 Iteration {state.iteration_number} Details")
-
-    # Basic info
-    col1, col2, col3 = st.columns(3)
-
+    st.subheader("🔄 Simple Active Learning Runner")
+    st.markdown("*Run autonomous material discovery loops*")
+    
+    # Input parameters
+    col1, col2 = st.columns([2, 1])
+    
     with col1:
-        st.metric("Overall Score", f"{state.overall_score:.3f}")
-        st.metric("Status", state.status.value)
-
+        initial_prompt = st.text_area(
+            "Research Objective",
+            value="Design a biodegradable polymer for insulin delivery",
+            height=100,
+            help="Describe the material discovery goal"
+        )
+        
+        # Target properties
+        with st.expander("🎯 Target Material Properties"):
+            biocompatibility = st.slider("Biocompatibility", 0.0, 1.0, 0.9, 0.1)
+            degradation_rate = st.slider("Degradation Rate", 0.0, 1.0, 0.5, 0.1)
+            stability = st.slider("Thermal Stability", 0.0, 1.0, 0.8, 0.1)
+            
+            target_properties = {
+                "biocompatibility": biocompatibility,
+                "degradation_rate": degradation_rate,
+                "stability": stability
+            }
+    
     with col2:
-        st.metric("Start Time", state.start_time.strftime('%Y-%m-%d %H:%M:%S'))
-        if state.end_time:
-            duration = (state.end_time - state.start_time).total_seconds()
-            st.metric("Duration", f"{duration:.1f}s")
-
-    with col3:
-        st.metric("Errors", len(state.errors))
-        st.metric("Warnings", len(state.warnings))
-
-    # Enhanced property display
-    if state.computed_properties:
-        st.subheader("🎯 Material Property Analysis")
+        storage_path = st.text_input("Output Directory", value="simple_active_learning_output")
         
-        # Target scores visualization
-        if state.computed_properties.target_scores:
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                score = state.computed_properties.target_scores.biocompatibility
-                st.metric("Biocompatibility", f"{score:.3f}", 
-                         delta=f"{(score - 0.5):.3f}" if score > 0.5 else None)
-            
-            with col2:
-                score = state.computed_properties.target_scores.degradation_rate
-                st.metric("Degradation Rate", f"{score:.3f}",
-                         delta=f"{(score - 0.5):.3f}" if score > 0.5 else None)
-            
-            with col3:
-                score = state.computed_properties.target_scores.mechanical_strength
-                st.metric("Mechanical Strength", f"{score:.3f}",
-                         delta=f"{(score - 0.5):.3f}" if score > 0.5 else None)
-        
-        # MD Properties display
-        if state.computed_properties.md_properties:
-            with st.expander("🔬 MD Simulation Properties"):
-                md_props = state.computed_properties.md_properties
-                
-                # Mechanical properties
-                st.subheader("Mechanical Properties")
-                mech_col1, mech_col2, mech_col3 = st.columns(3)
-                
-                with mech_col1:
-                    avg_youngs = (md_props.youngs_modulus_x + md_props.youngs_modulus_y + md_props.youngs_modulus_z) / 3
-                    st.metric("Young's Modulus (avg)", f"{avg_youngs:.2f} GPa")
-                    st.metric("Bulk Modulus", f"{md_props.bulk_modulus:.2f} GPa")
-                
-                with mech_col2:
-                    st.metric("Shear Modulus", f"{md_props.shear_modulus:.2f} GPa")
-                    st.metric("Density", f"{md_props.density:.2f} g/cm³")
-                
-                with mech_col3:
-                    st.metric("Cohesive Energy", f"{md_props.cohesive_energy:.1f} kJ/mol")
-                    st.metric("Glass Transition", f"{md_props.glass_transition_temp:.1f} K")
-                
-                # Degradation properties
-                st.subheader("Degradation Properties")
-                deg_col1, deg_col2, deg_col3 = st.columns(3)
-                
-                with deg_col1:
-                    st.metric("Chain Scission Rate", f"{md_props.chain_scission_rate:.3f} ns⁻¹")
-                    st.metric("Ester Bond Strength", f"{md_props.ester_bond_strength:.1f} kJ/mol")
-                
-                with deg_col2:
-                    st.metric("Water Diffusion", f"{md_props.diffusion_coefficient_water:.2e} cm²/s")
-                    st.metric("Water Accessibility", f"{md_props.water_accessibility:.2f}")
-                
-                with deg_col3:
-                    st.metric("Polymer RMSF", f"{md_props.rmsf_polymer:.2f} Å")
-                    st.metric("Free Volume", f"{md_props.free_volume_fraction:.2f}")
-                
-                # Biocompatibility properties
-                st.subheader("Biocompatibility Properties")
-                bio_col1, bio_col2, bio_col3 = st.columns(3)
-                
-                with bio_col1:
-                    st.metric("H-Bond Count", f"{md_props.hydrogen_bond_count:.0f}")
-                    st.metric("H-Bond Lifetime", f"{md_props.hydrogen_bond_lifetime:.1f} ps")
-                
-                with bio_col2:
-                    st.metric("Surface Area", f"{md_props.surface_area:.0f} Ų")
-                    st.metric("Drug Diffusion", f"{md_props.diffusion_coefficient_drug:.2e} cm²/s")
-                
-                with bio_col3:
-                    body_temp_diff = abs(md_props.glass_transition_temp - 310)
-                    st.metric("Tg vs Body Temp", f"{body_temp_diff:.1f} K difference")
-                    
-        # Property details in a more structured way
-        if state.computed_properties.property_details:
-            with st.expander("📊 Property Analysis Details"):
-                details = state.computed_properties.property_details
-                
-                if "biocompatibility_factors" in details:
-                    st.subheader("🩺 Biocompatibility Analysis")
-                    st.json(details["biocompatibility_factors"])
-                
-                if "degradation_factors" in details:
-                    st.subheader("⏱️ Degradation Analysis")
-                    st.json(details["degradation_factors"])
-                
-                if "mechanical_factors" in details:
-                    st.subheader("🔧 Mechanical Analysis")
-                    st.json(details["mechanical_factors"])
-
-    # Component results (existing code)
-    if state.literature_results:
-        with st.expander("📚 Literature Mining Results"):
-            st.json(state.literature_results.__dict__)
-
-    if state.generated_molecules:
-        with st.expander("🧪 Generated Molecules"):
-            st.json(state.generated_molecules.__dict__)
-
-    if state.simulation_results:
-        with st.expander("⚛️ Simulation Results"):
-            st.json(state.simulation_results.__dict__)
-
-    if state.rag_analysis:
-        with st.expander("🔍 RAG Analysis"):
-            st.json(state.rag_analysis.__dict__)
-
-    # Reasoning log
-    if state.reasoning_log:
-        with st.expander("🧠 Reasoning Log"):
-            for entry in state.reasoning_log:
-                st.text(entry)
-    
-    # Errors and warnings
-    if state.errors:
-        with st.expander("❌ Errors"):
-            for error in state.errors:
-                st.error(error)
-    
-    if state.warnings:
-        with st.expander("⚠️ Warnings"):
-            for warning in state.warnings:
-                st.warning(warning)
+        if st.button("🚀 Run Simple Loop", type="primary"):
+            run_simple_active_learning_loop(
+                initial_prompt=initial_prompt,
+                target_properties=target_properties,
+                max_iterations=max_iterations,
+                storage_path=storage_path
+            )
 
 
 def render_system_status():
-    """Render system status and health checks"""
-    st.header("⚙️ System Status")
+    """Render system status for simple active learning"""
+    st.subheader("📊 Simple System Status")
     
-    # Component availability checks
-    st.subheader("🔧 Component Availability")
-    
-    checks = {
-        "Active Learning Core": ACTIVE_LEARNING_AVAILABLE,
-        "OpenAI API Key": bool(os.getenv('OPENAI_API_KEY')),
-        "StateManager": True,
-        "DecisionEngine": True,
-        "LoopController": True,
-    }
-    
-    for component, available in checks.items():
-        status = "✅ Available" if available else "❌ Not Available"
-        color = "green" if available else "red"
-        st.markdown(f"**{component}**: :{color}[{status}]")
-    
-    # System information
-    st.subheader("💻 System Information")
-    
-    import psutil
-    import platform
-    
-    system_info = {
-        "Platform": platform.platform(),
-        "Python Version": platform.python_version(),
-        "CPU Count": psutil.cpu_count(),
-        "Memory Total": f"{psutil.virtual_memory().total / (1024**3):.1f} GB",
-        "Memory Available": f"{psutil.virtual_memory().available / (1024**3):.1f} GB",
-        "Disk Usage": f"{psutil.disk_usage('/').percent:.1f}%"
-    }
-    
-    for key, value in system_info.items():
-        st.text(f"{key}: {value}")
-    
-    # Test active learning components
-    st.subheader("🧪 Component Tests")
-    
-    if st.button("🧪 Run Component Tests"):
-        with st.spinner("Running component tests..."):
-            run_component_tests()
+    # Check if orchestrator is in session state
+    if 'active_learning_orchestrator' in st.session_state:
+        orchestrator = st.session_state.active_learning_orchestrator
+        storage_path = st.session_state.get('active_learning_storage_path', 'Unknown')
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.metric("Orchestrator Type", "Simple")
+            st.metric("Storage Path", storage_path)
+            st.metric("Max Iterations", orchestrator.max_iterations)
+        
+        with col2:
+            st.metric("Results Available", len(orchestrator.results))
+            if orchestrator.results:
+                latest_result = orchestrator.results[-1]
+                st.metric("Latest Status", latest_result.get('status', 'Unknown'))
+                st.metric("Latest Score", f"{latest_result.get('overall_score', 0):.3f}")
+    else:
+        st.info("No active learning session running")
 
 
-def run_component_tests():
-    """Run basic tests on active learning components"""
-    test_results = {}
-    
-    try:
-        # Test StateManager
-        from insulin_ai.core.active_learning.state_manager import StateManager
-        sm = StateManager("test_component_check")
-        test_results["StateManager"] = "✅ Pass"
-    except Exception as e:
-        test_results["StateManager"] = f"❌ Fail: {e}"
-    
-    try:
-        # Test DecisionEngine
-        from insulin_ai.core.active_learning.decision_engine import LLMDecisionEngine
-        de = LLMDecisionEngine()
-        test_results["DecisionEngine"] = f"✅ Pass (LLM Available: {de.llm_available})"
-    except Exception as e:
-        test_results["DecisionEngine"] = f"❌ Fail: {e}"
-    
-    try:
-        # Test LoopController
-        from insulin_ai.core.active_learning.loop_controller import LoopController
-        lc = LoopController(max_iterations=1)
-        test_results["LoopController"] = "✅ Pass"
-    except Exception as e:
-        test_results["LoopController"] = f"❌ Fail: {e}"
-    
-    # Display results
-    for component, result in test_results.items():
-        if "✅" in result:
-            st.success(f"**{component}**: {result}")
-        else:
-            st.error(f"**{component}**: {result}")
+# Legacy compatibility functions (kept for backward compatibility)
+def render_active_learning_configuration():
+    """Legacy function for backward compatibility"""
+    st.info("Using simplified configuration. See sidebar for options.")
 
+def render_iteration_details(state):
+    """Legacy function for backward compatibility"""
+    pass
 
-# For backwards compatibility with the old UI system
-def render_active_learning_ui():
-    """Backwards compatibility wrapper"""
-    render_active_learning() 
+def render_results_visualization(results):
+    """Legacy function for backward compatibility"""
+    pass 

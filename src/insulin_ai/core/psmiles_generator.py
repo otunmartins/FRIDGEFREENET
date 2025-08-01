@@ -60,12 +60,16 @@ CONSTRAINTS (CRITICAL - FROM VALID-MOL FRAMEWORK):
 - Output format: SMILES_STRING_ONLY (no explanations, no text, no descriptions)
 
 CRITICAL VALENCE RULES (PREVENT POLYMER LIBRARY FAILURES):
-- Carbon: EXACTLY 4 bonds maximum (never exceed)
+- Carbon: EXACTLY 4 bonds maximum (never exceed) 
 - Oxygen: EXACTLY 2 bonds maximum (C=O, C-O-C, never C(X)(Y)=O where X,Y are heavy atoms)
 - Nitrogen: EXACTLY 3 bonds maximum (C-N-C, C=N, never exceed)
+- Fluorine: EXACTLY 1 bond maximum (C-F, never exceed)
+- Chlorine: EXACTLY 1 bond maximum (C-Cl, never exceed)
 - AVOID: C(C(C)=O)C(C)=O - creates oxygen valence violations
 - AVOID: C(X)(Y)=O where X,Y are not hydrogen - causes O valence > 2
+- AVOID: F(X) or Cl(X) - halogens can only have one bond
 - AVOID: Complex branched carbonyls - use simple C=O or CC(=O)
+- AVOID: Multiple bonds to halogens - F and Cl must have exactly one bond
 
 POLYMER MONOMER RULES (CRITICAL FOR POLYMERIZATION):
 - Structure MUST be a realistic monomer unit (not full polymer)
@@ -249,10 +253,8 @@ STRICT REQUIREMENT: RETURN ONLY THE SMILES STRING, NO EXPLANATIONS OR EXTRA TEXT
             # **STEP 3: Apply Polymer-Specific Length Constraints**
             if polymer_constraints['strict_length_limit']:
                 if len(smiles) > polymer_constraints['max_length']:
-                    print(f"   ⚠️ SMILES too long for polymer ({len(smiles)} > {polymer_constraints['max_length']} chars)")
-                    print(f"   🔧 Applying polymer fallback...")
-                    smiles = self._apply_polymer_fallback(processed_description)
-                    print(f"   🔧 Polymer fallback SMILES: {smiles}")
+                    print(f"   ❌ SMILES too long for polymer ({len(smiles)} > {polymer_constraints['max_length']} chars)")
+                    raise ValueError(f"Generated SMILES exceeds length limit: {len(smiles)} > {polymer_constraints['max_length']}")
             
             # **STEP 4: VALID-Mol Constraint Validation (NEW)**
             print(f"   🔍 Applying VALID-Mol constraints...")
@@ -275,13 +277,10 @@ STRICT REQUIREMENT: RETURN ONLY THE SMILES STRING, NO EXPLANATIONS OR EXTRA TEXT
                         print(f"   ✅ Retry successful: {retry_message}")
                     else:
                         print(f"   ❌ Retry failed: {retry_message}")
-                        # Use polymer fallback as last resort
-                        smiles = self._apply_polymer_fallback(processed_description)
-                        print(f"   🔧 Using polymer fallback: {smiles}")
+                        raise ValueError(f"VALID-Mol constraints not satisfied: {retry_message}")
                 else:
-                    # Use polymer fallback
-                    smiles = self._apply_polymer_fallback(processed_description)
-                    print(f"   🔧 Using polymer fallback: {smiles}")
+                    print(f"   ❌ Unable to generate valid SMILES with constraints")
+                    raise ValueError(f"VALID-Mol constraints not satisfied: {constraint_message}")
             else:
                 print(f"   ✅ VALID-Mol constraints satisfied: {constraint_message}")
             
@@ -393,12 +392,16 @@ CONSTRAINTS (CRITICAL - FROM VALID-MOL FRAMEWORK):
 - Output format: SMILES_STRING_ONLY (no explanations, no text, no descriptions)
 
 CRITICAL VALENCE RULES (PREVENT POLYMER LIBRARY FAILURES):
-- Carbon: EXACTLY 4 bonds maximum (never exceed)
+- Carbon: EXACTLY 4 bonds maximum (never exceed) 
 - Oxygen: EXACTLY 2 bonds maximum (C=O, C-O-C, never C(X)(Y)=O where X,Y are heavy atoms)
 - Nitrogen: EXACTLY 3 bonds maximum (C-N-C, C=N, never exceed)
+- Fluorine: EXACTLY 1 bond maximum (C-F, never exceed)
+- Chlorine: EXACTLY 1 bond maximum (C-Cl, never exceed)
 - AVOID: C(C(C)=O)C(C)=O - creates oxygen valence violations
 - AVOID: C(X)(Y)=O where X,Y are not hydrogen - causes O valence > 2
+- AVOID: F(X) or Cl(X) - halogens can only have one bond
 - AVOID: Complex branched carbonyls - use simple C=O or CC(=O)
+- AVOID: Multiple bonds to halogens - F and Cl must have exactly one bond
 
 POLYMER MONOMER RULES (CRITICAL FOR POLYMERIZATION):
 - Structure MUST be a realistic monomer unit (not full polymer)
@@ -616,6 +619,20 @@ Examples of good short monomers:
         # Remove quotes and extra spaces
         smiles = smiles.strip().strip('"').strip("'").strip()
         
+        # CRITICAL FIX: Remove descriptive text in parentheses that causes PSMILES parsing errors
+        import re
+        # Remove text in parentheses like "(styrene)", "(fluorinated phenol)", etc.
+        smiles = re.sub(r'\s*\([^)]*\)\s*', '', smiles)
+        
+        # Remove trailing descriptive words after SMILES
+        # Split on first space and take only the SMILES part
+        smiles_parts = smiles.split()
+        if smiles_parts:
+            smiles = smiles_parts[0]
+        
+        # Final cleanup
+        smiles = smiles.strip()
+        
         return smiles
 
 class PSMILESGenerator:
@@ -763,6 +780,37 @@ TASK: Convert the user's description into a valid MONOMER PSMILES string.
             'psmiles_generation': psmiles_prompt
         }
     
+    def _clean_psmiles_response(self, psmiles: str) -> str:
+        """Clean PSMILES to remove descriptive text and ensure valid format"""
+        if not psmiles:
+            return psmiles
+        
+        # Remove descriptive text in parentheses
+        import re
+        psmiles = re.sub(r'\s*\([^)]*\)\s*', '', psmiles)
+        
+        # Remove trailing descriptive words after PSMILES
+        # Split on first space and take only the PSMILES part
+        psmiles_parts = psmiles.split()
+        if psmiles_parts:
+            psmiles = psmiles_parts[0]
+        
+        # Ensure proper [*] format
+        psmiles = psmiles.strip()
+        
+        # Fix malformed connection points
+        if psmiles.startswith('[*]') and not psmiles.endswith('[*]'):
+            # Single [*] at start, need one at end
+            psmiles = psmiles + '[*]'
+        elif not psmiles.startswith('[*]') and psmiles.endswith('[*]'):
+            # Single [*] at end, need one at start
+            psmiles = '[*]' + psmiles
+        elif not psmiles.startswith('[*]') and not psmiles.endswith('[*]'):
+            # No [*] markers, add both
+            psmiles = f'[*]{psmiles}[*]'
+        
+        return psmiles
+    
     def generate_psmiles(self, 
                         description: str, 
                         num_candidates: int = 3,
@@ -815,6 +863,7 @@ TASK: Convert the user's description into a valid MONOMER PSMILES string.
                     
                     # **STEP 3: SMILES → PSMILES**
                     psmiles = self.nl_to_psmiles.convert_smiles_to_psmiles(smiles)
+                    psmiles = self._clean_psmiles_response(psmiles)  # Clean up any descriptive text
                     
                     # **STEP 4: PSMILES Format Validation**
                     connection_count = psmiles.count('[*]')
