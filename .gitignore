@@ -162,7 +162,6 @@ openai_key*
 *secret*
 
 # Simulation outputs and temporary files
-*.pdb
 *.dcd
 *.log
 *.txt
