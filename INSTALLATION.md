@@ -1,299 +1,118 @@
-# Installation Guide for Insulin-AI
+# Installation Guide
 
-## Overview
+## Quick Start
 
-Insulin-AI is a comprehensive AI-powered drug delivery system for insulin patch materials discovery. This guide will help you install and set up the package for development or production use.
+### Option 1: Automated Installation (Recommended)
 
-## Prerequisites
-
-### System Requirements
-- **Python**: 3.8 or higher (3.9-3.11 recommended)
-- **Operating System**: Linux, macOS, or Windows
-- **Memory**: 4+ GB RAM (8+ GB recommended for MD simulations)
-- **Storage**: 2+ GB free space
-
-### External Dependencies
-
-#### OpenMM (for Molecular Dynamics)
-```bash
-# Install via conda (recommended)
-conda install -c conda-forge openmm
-
-# Or via pip (less reliable for some platforms)
-pip install openmm
-```
-
-#### RDKit (for Chemical Processing)
-```bash
-# Install via conda (recommended)
-conda install -c conda-forge rdkit
-
-# Or via pip
-pip install rdkit
-```
-
-## Installation Methods
-
-### Method 1: Install from PyPI (Recommended for Users)
-
-Once published, you can install directly from PyPI:
+Run the automated installation script:
 
 ```bash
-# Basic installation
-pip install insulin-ai
-
-# With all optional dependencies
-pip install insulin-ai[all]
-
-# With specific extras
-pip install insulin-ai[dev,analysis]
+./install_dependencies.sh
 ```
 
-### Method 2: Install from Source (For Development)
+This script will:
+- Check your Python version (3.8+ required)
+- Install conda/mamba dependencies (OpenMM, RDKit, PACKMOL, etc.)
+- Install pip dependencies from requirements.txt
+- Verify all installations
+- Set up your environment file
 
-1. **Clone the repository:**
+### Option 2: Manual Installation
+
+If you prefer manual installation:
+
+1. **Install conda dependencies:**
 ```bash
-git clone https://github.com/insulin-ai/insulin-ai.git
-cd insulin-ai
+conda install -c conda-forge openmm openmmforcefields pdbfixer rdkit packmol ambertools
 ```
 
-2. **Create and activate a virtual environment:**
+2. **Install pip dependencies:**
 ```bash
-# Using venv
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Using conda
-conda create -n insulin-ai python=3.9
-conda activate insulin-ai
+pip install -r requirements.txt
 ```
 
-3. **Install dependencies:**
+3. **Set up environment:**
 ```bash
-# Install core dependencies
-pip install -e .
-
-# Or install with development dependencies
-pip install -e .[dev]
-
-# Or install everything
-pip install -e .[all]
+cp .env.example .env  # Edit with your API keys
 ```
 
-### Method 3: Development Installation with Conda
+## Requirements Overview
 
-```bash
-# Create conda environment with major dependencies
-conda create -n insulin-ai python=3.9
-conda activate insulin-ai
+The new consolidated `requirements.txt` includes all dependencies for:
 
-# Install scientific dependencies via conda
-conda install -c conda-forge openmm rdkit numpy pandas matplotlib plotly
+- **Core Framework**: Streamlit, Flask
+- **LLM Integration**: LangChain, OpenAI, LangGraph
+- **Vector Databases**: ChromaDB, FAISS
+- **Scientific Computing**: NumPy, Pandas, SciPy, scikit-learn
+- **Molecular Simulation**: OpenMM, OpenMM ForceFields, OpenFF Toolkit, MDTraj
+- **Chemistry**: RDKit, PDBFixer, SELFIES
+- **Visualization**: Plotly, Matplotlib, py3Dmol
+- **APIs**: Semantic Scholar, PubChem
+- **Development**: pytest, python-dotenv
 
-# Install the package in development mode
-pip install -e .[dev]
-```
+## External Dependencies
 
-## Dependency Groups
-
-The package has several optional dependency groups:
-
-- **`dev`**: Development tools (pytest, black, mypy, etc.)
-- **`docs`**: Documentation building tools (sphinx, etc.)
-- **`analysis`**: Enhanced analysis tools (jupyter, mdanalysis, etc.)
-- **`gpu`**: GPU acceleration (cupy, pytorch)
-- **`all`**: All optional dependencies
-
-## Configuration
-
-### API Keys
-
-Set up your API keys as environment variables:
-
-```bash
-export OPENAI_API_KEY="your-openai-api-key-here"
-export SEMANTIC_SCHOLAR_API_KEY="your-semantic-scholar-key"  # Optional
-```
-
-Or create a `.env` file in your project directory:
-```
-OPENAI_API_KEY=your-openai-api-key-here
-SEMANTIC_SCHOLAR_API_KEY=your-semantic-scholar-key
-```
-
-### OpenMM Configuration (Optional)
-
-```bash
-# Set default OpenMM platform
-export OPENMM_DEFAULT_PLATFORM=CUDA  # or CPU, OpenCL
-```
-
-## Testing Installation
-
-### Quick Test
-```bash
-# Test basic installation
-insulin-ai test-installation
-
-# Get package info
-insulin-ai info
-```
-
-### Comprehensive Test
-```bash
-# Run test suite (if installed with dev dependencies)
-pytest
-
-# Test core functionality
-python -c "import insulin_ai; print(insulin_ai.get_package_info())"
-```
-
-## Usage
-
-### Command Line Interface
-
-```bash
-# Get help
-insulin-ai --help
-
-# Launch web interface
-insulin-ai web
-
-# Generate PSMILES
-insulin-ai generate-psmiles -m "biodegradable polymer for insulin delivery"
-
-# Mine literature
-insulin-ai mine-literature -q "insulin delivery polymers" -m 10
-```
-
-### Python API
-
-```python
-import insulin_ai
-
-# Check what's available
-print(insulin_ai.get_package_info())
-
-# Use core components
-from insulin_ai import PSMILESGenerator, MaterialsLiteratureMiner
-
-# Initialize systems
-generator = PSMILESGenerator(model_type='openai', openai_model='gpt-3.5-turbo')
-miner = MaterialsLiteratureMiner(model_type='openai')
-
-# Generate PSMILES
-result = generator.generate_truly_diverse_candidates(
-    base_request="biodegradable polymer for insulin delivery",
-    num_candidates=5
-)
-```
-
-### Web Application
-
-```bash
-# Launch the Streamlit web interface
-insulin-ai web --host localhost --port 8501
-```
-
-Then open your browser to `http://localhost:8501`
+Some dependencies must be installed via conda (not pip):
+- **OpenMM**: Molecular dynamics engine
+- **RDKit**: Chemistry toolkit
+- **PACKMOL**: Molecular packing tool
+- **AmberTools**: Force field tools
 
 ## Troubleshooting
 
 ### Common Issues
 
-#### OpenMM Installation Issues
-```bash
-# Try installing via conda-forge
-conda install -c conda-forge openmm
+1. **OpenMM not found**: Install via conda, not pip
+2. **RDKit import error**: Use conda-forge channel
+3. **PACKMOL missing**: Install via conda-forge
+4. **Platform errors**: Check OpenMM platform availability
 
-# Verify installation
-python -c "import openmm; print(openmm.Platform.getNumPlatforms())"
-```
+### Testing Installation
 
-#### RDKit Installation Issues
-```bash
-# Install via conda (most reliable)
-conda install -c conda-forge rdkit
-
-# Verify installation
-python -c "from rdkit import Chem; print('RDKit working')"
-```
-
-#### Import Errors
-```bash
-# Check if package is properly installed
-pip list | grep insulin-ai
-
-# Reinstall in development mode
-pip install -e .
-```
-
-#### Permission Errors
-```bash
-# Use user installation
-pip install --user insulin-ai
-
-# Or use virtual environment (recommended)
-python -m venv venv
-source venv/bin/activate
-pip install insulin-ai
+Run the verification script:
+```python
+python -c "
+import openmm
+import rdkit
+import langchain
+import streamlit
+print('✅ All critical packages imported successfully!')
+"
 ```
 
 ### Getting Help
 
-1. **Check the documentation**: [Documentation URL]
-2. **Run diagnostics**: `insulin-ai test-installation`
-3. **Check GitHub issues**: [GitHub Issues URL]
-4. **Contact support**: [Support Email]
+If you encounter issues:
+1. Check that you're using Python 3.8+
+2. Ensure conda/mamba is installed
+3. Try the automated installer first
+4. Check the error logs for specific missing packages
+5. Open a GitHub issue with error details
 
-## Development Setup
+## Environment Setup
 
-For contributors and developers:
+Create a `.env` file with your API keys:
 
 ```bash
-# Clone repository
-git clone https://github.com/insulin-ai/insulin-ai.git
-cd insulin-ai
+# Required for LLM features
+OPENAI_API_KEY=your_api_key_here
 
-# Install in development mode with all dependencies
-pip install -e .[dev,docs,analysis]
-
-# Install pre-commit hooks
-pre-commit install
-
-# Run tests
-pytest
-
-# Format code
-black src/ tests/
-isort src/ tests/
-
-# Type checking
-mypy src/
-
-# Build documentation
-cd docs/
-make html
+# Optional features
+LANGSMITH_API_KEY=your_langsmith_key_here
+SEMANTIC_SCHOLAR_API_KEY=your_semantic_scholar_key_here
 ```
 
-## Environment Variables Reference
+## System Requirements
 
-| Variable | Description | Required | Default |
-|----------|-------------|----------|---------|
-| `OPENAI_API_KEY` | OpenAI API key for LLM functionality | Yes | None |
-| `SEMANTIC_SCHOLAR_API_KEY` | Semantic Scholar API key | No | None |
-| `OPENMM_DEFAULT_PLATFORM` | Default OpenMM platform | No | CPU |
-| `RDKIT_ERROR_LOGGING` | RDKit logging level | No | ERROR |
-| `INSULIN_AI_CONFIG_DIR` | Custom config directory | No | Package default |
+- **Python**: 3.8+
+- **OS**: Linux, macOS, Windows (with conda)
+- **Memory**: 8GB+ RAM recommended
+- **Storage**: 5GB+ free space
+- **GPU**: Optional (CUDA for faster simulations)
 
 ## Next Steps
 
 After installation:
-
-1. **Set up API keys** (especially OpenAI)
-2. **Run the test installation** to verify everything works
-3. **Try the web interface** with `insulin-ai web`
-4. **Explore the examples** in the documentation
-5. **Check out the tutorials** for specific use cases
-
-For more detailed usage instructions, see the main README.md and documentation. 
+1. Update your `.env` file with API keys
+2. Run the application: `streamlit run src/insulin_ai/app.py`
+3. Check the documentation for usage examples 
