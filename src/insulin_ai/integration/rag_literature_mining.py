@@ -395,9 +395,9 @@ You are an expert materials scientist specializing in drug delivery systems and 
 Analyze this research question and generate a structured literature search strategy:
 
 CRITICAL ELEMENT EXCLUSIONS:
-- Do NOT search for silicon (Si), boron (B), aluminum (Al), or germanium (Ge) containing materials
+- Do NOT search for silicon (Si), aluminum (Al), or germanium (Ge) containing materials
 - EXCLUDE silicone, siloxane, organosilicon, PDMS, or any silicon-based compounds
-- Focus ONLY on biocompatible elements: C, N, O, S, P, F, Cl, Br
+- Focus ONLY on biocompatible elements: C, N, O, S, P, F, Cl, Br, B
 
 RESEARCH QUESTION: {research_question}
 
@@ -424,9 +424,9 @@ You are an expert in materials science and drug delivery systems.
 Analyze this research paper for insulin delivery material insights:
 
 CRITICAL ELEMENT EXCLUSIONS:
-- REJECT or LOWER SCORES for papers focusing on silicon (Si), boron (B), aluminum (Al), or germanium (Ge)
+- REJECT or LOWER SCORES for papers focusing on silicon (Si), aluminum (Al), or germanium (Ge)
 - EXCLUDE silicone, siloxane, organosilicon, PDMS, or silicon-based materials from recommendations
-- PRIORITIZE papers with carbon-based materials using only: C, N, O, S, P, F, Cl, Br
+- PRIORITIZE papers with carbon-based materials using only: C, N, O, S, P, F, Cl, Br, B
 
 TITLE: {title}
 ABSTRACT: {abstract}

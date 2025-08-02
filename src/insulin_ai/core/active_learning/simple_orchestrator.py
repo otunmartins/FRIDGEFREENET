@@ -777,7 +777,7 @@ class SimpleActiveLearningOrchestrator:
                     3. Contains no empty characters or spaces
                     4. Is suitable for polymer molecular dynamics simulation
                     5. **CRITICAL: Contains NO radical species or unpaired electrons**
-                    6. **CRITICAL: Uses only safe elements (C, N, O, S, P, F, Cl, Br) - NO boron (B), silicon (Si), or aluminum (Al)**
+                    6. **CRITICAL: Uses only safe elements (C, N, O, S, P, F, Cl, Br, B) - NO silicon (Si) or aluminum (Al)**
                     
                     Return only the corrected PSMILES string.
                     """

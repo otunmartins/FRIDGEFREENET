@@ -69,8 +69,8 @@ class MaterialsLiteratureMiner:
 Your task is to generate effective search queries for finding research papers about materials for fridge-free insulin delivery patches.
 
 IMPORTANT ELEMENT EXCLUSIONS:
-- Do NOT search for silicon (Si), boron (B), aluminum (Al), or germanium (Ge) containing materials
-- Focus ONLY on biocompatible elements: C, N, O, S, P, F, Cl, Br
+- Do NOT search for silicon (Si), aluminum (Al), or germanium (Ge) containing materials
+- Focus ONLY on biocompatible elements: C, N, O, S, P, F, Cl, Br, B
 - Avoid silicone, siloxane, organosilicon, or any silicon-based materials
 
 USER REQUEST: {user_request}
@@ -92,9 +92,9 @@ Search queries:"""
 Analyze this research paper abstract and determine its relevance to fridge-free insulin delivery patch development.
 
 IMPORTANT ELEMENT EXCLUSIONS:
-- REJECT papers focusing on silicon (Si), boron (B), aluminum (Al), or germanium (Ge) materials
+- REJECT papers focusing on silicon (Si), aluminum (Al), or germanium (Ge) materials
 - LOWER relevance scores for papers mentioning silicone, siloxane, or organosilicon compounds
-- PRIORITIZE papers with carbon-based organic materials using only: C, N, O, S, P, F, Cl, Br
+- PRIORITIZE papers with carbon-based organic materials using only: C, N, O, S, P, F, Cl, Br, B
 
 ABSTRACT: {abstract}
 
@@ -122,9 +122,9 @@ Analysis:"""
         material_extraction_prompt = """Extract and analyze materials information from this research abstract for insulin delivery applications.
 
 CRITICAL ELEMENT EXCLUSIONS:
-- Do NOT extract or recommend materials containing silicon (Si), boron (B), aluminum (Al), or germanium (Ge)
+- Do NOT extract or recommend materials containing silicon (Si), aluminum (Al), or germanium (Ge)
 - EXCLUDE silicone, siloxane, organosilicon, PDMS, or any silicon-based polymers
-- Focus ONLY on materials using safe biocompatible elements: C, N, O, S, P, F, Cl, Br
+- Focus ONLY on materials using safe biocompatible elements: C, N, O, S, P, F, Cl, Br, B
 
 ABSTRACT: {abstract}
 

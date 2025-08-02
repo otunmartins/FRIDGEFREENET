@@ -465,7 +465,7 @@ class SMILESSelfCorrector:
 {original_context}
 
 📋 SMILES RULES (CRITICAL - MUST FOLLOW):
-1. Atoms: C, N, O, S, P, F, Cl, Br, I (uppercase for non-aromatic, lowercase for aromatic)
+1. Atoms: C, N, O, S, P, F, Cl, Br, I, B (uppercase for non-aromatic, lowercase for aromatic)
 2. Bonds: - (single, default), = (double), # (triple), : (aromatic)
 3. Branches: Use parentheses () for branches
 4. Rings: Use numbers 1-9, each number must appear EXACTLY twice

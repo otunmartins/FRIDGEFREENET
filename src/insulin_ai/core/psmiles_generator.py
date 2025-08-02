@@ -251,7 +251,7 @@ STRICT REQUIREMENT: RETURN ONLY THE SMILES STRING, NO EXPLANATIONS OR EXTRA TEXT
             print(f"   Generated SMILES: {smiles}")
             
             # **STEP 2.5: Element exclusion check - NO silicon or other prohibited elements allowed**
-            prohibited_elements = ['[Si]', 'Si', '[B]', 'B', '[Al]', 'Al', '[Ge]', 'Ge']
+            prohibited_elements = ['[Si]', 'Si', '[Al]', 'Al', '[Ge]', 'Ge']
             if any(element in smiles for element in prohibited_elements):
                 prohibited_found = [e for e in prohibited_elements if e in smiles]
                 print(f"   ❌ Prohibited elements detected: {prohibited_found} - rejecting SMILES")
@@ -261,7 +261,7 @@ STRICT REQUIREMENT: RETURN ONLY THE SMILES STRING, NO EXPLANATIONS OR EXTRA TEXT
                     'method': 'element_exclusion_check',
                     'description': processed_description,
                     'confidence': 0.0,
-                    'error': f"Prohibited elements detected: {prohibited_found}. Only C, N, O, S, P, F, Cl, Br are allowed."
+                    'error': f"Prohibited elements detected: {prohibited_found}. Only C, N, O, S, P, F, Cl, Br, B are allowed."
                 }
             
             # **STEP 3: Apply Polymer-Specific Length Constraints**
@@ -772,7 +772,7 @@ CRITICAL RULES (ENHANCED WITH MOLLM MULTI-OBJECTIVE FRAMEWORK):
 - **NEVER use boron (B) in any form** - Boron is completely prohibited  
 - **NEVER use aluminum (Al) in any form** - Aluminum is completely prohibited
 - **NEVER use germanium (Ge) in any form** - Germanium is completely prohibited
-- Use ONLY biocompatible elements: C, N, O, S, P, F, Cl, Br
+- Use ONLY biocompatible elements: C, N, O, S, P, F, Cl, Br, B
 - Focus on carbon-based organic chemistry for safe biomedical applications
 
 **RADICAL PREVENTION RULES:**
@@ -792,7 +792,7 @@ DIVERSIFICATION STRATEGY (FROM MOLLM RESEARCH 2025):
 - Combine different heteroatoms: N, O, S, P (when appropriate and stable)
 - Use different connection patterns: linear, branched, cyclic integration
 - **ALL variations must maintain closed-shell electronic structure**
-- **ALL variations must use only permitted elements (C, N, O, S, P, F, Cl, Br)**
+- **ALL variations must use only permitted elements (C, N, O, S, P, F, Cl, Br, B)**
 
 MOLECULAR WEIGHT CONSTRAINTS (VALID-MOL FRAMEWORK):
 - Target monomer repeat units: 50-500 Da (realistic monomer range)
@@ -838,8 +838,8 @@ TASK: Convert the user's description into a valid MONOMER PSMILES string.
 - Ensure proper SMILES syntax and chemical validity
 - **CRITICAL: Ensure the molecule has no radicals or unpaired electrons**
 - **CRITICAL: Use only stable, closed-shell electronic configurations**
-- **CRITICAL: NEVER use silicon (Si), boron (B), aluminum (Al), or germanium (Ge)**
-- **CRITICAL: Use only permitted elements: C, N, O, S, P, F, Cl, Br**
+- **CRITICAL: NEVER use silicon (Si), aluminum (Al), or germanium (Ge)**
+- **CRITICAL: Use only permitted elements: C, N, O, S, P, F, Cl, Br, B**
 - For sulfur requests, use CSC, CSS, or c1sccc1 patterns with variation
 - If a request mentions prohibited elements, create a safe alternative using permitted elements
 - Respond with just the PSMILES string, no explanation unless requested"""
