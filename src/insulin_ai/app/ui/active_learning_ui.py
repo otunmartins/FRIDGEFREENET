@@ -191,6 +191,12 @@ def render_active_learning():
         )
         md_save_interval = save_options[md_save_selection]
         
+        # Polymer chain settings
+        md_polymer_chain_length = st.number_input("Polymer Chain Length", min_value=5, max_value=100, value=10,
+                                                 help="Length of each polymer chain in the simulation (number of repeat units)")
+        md_num_polymer_chains = st.number_input("Number of Polymer Chains", min_value=1, max_value=20, value=1,
+                                               help="Number of polymer chains to include in the simulation")
+        
         md_max_simulations = st.number_input("Max Simulations per Iteration", min_value=1, max_value=10, value=3,
                                            help="Maximum number of simulations to run per iteration")
         md_timeout = st.number_input("Simulation Timeout (minutes)", min_value=5, max_value=120, value=30,
@@ -212,7 +218,6 @@ def render_active_learning():
                                                help="Save results after each stage")
         enable_detailed_logging = st.checkbox("Enable Detailed Logging", value=True,
                                             help="Enable verbose logging for debugging")
-        # Remove fallback option since we don't want fallbacks [[memory:4967721]]
         
         # Package the enhanced configuration
         al_config = {
@@ -240,6 +245,8 @@ def render_active_learning():
                 'equilibration_steps': md_equilibration_steps,
                 'production_steps': md_production_steps,
                 'save_interval': md_save_interval,
+                'polymer_chain_length': md_polymer_chain_length,
+                'num_polymer_chains': md_num_polymer_chains,
                 'max_simulations': md_max_simulations,
                 'timeout_minutes': md_timeout,
                 'total_time_ns': total_time_ns

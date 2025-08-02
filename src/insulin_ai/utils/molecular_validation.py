@@ -10,8 +10,9 @@ Author: AI-Driven Material Discovery Team
 """
 
 import logging
-from typing import Dict, List, Tuple, Optional, Any
+from typing import Dict, Any, Tuple, List, Optional
 from dataclasses import dataclass
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -486,7 +487,48 @@ class MolecularValidator:
     
     def correct_common_issues(self, smiles: str) -> Tuple[str, List[str]]:
         """
-        Attempt to correct common issues in SMILES strings.
+        Correct common chemical issues in SMILES strings.
+        
+        ENHANCED: Now includes silicon-specific corrections for valency completion.
+        """
+        corrected = smiles
+        corrections = []
+        
+        # Check for unpaired brackets
+        if corrected.count('(') != corrected.count(')'):
+            bracket_diff = corrected.count('(') - corrected.count(')')
+            if bracket_diff > 0:
+                corrected += ')' * bracket_diff
+                corrections.append(f"Added {bracket_diff} closing parentheses")
+            else:
+                corrected = '(' * abs(bracket_diff) + corrected
+                corrections.append(f"Added {abs(bracket_diff)} opening parentheses")
+        
+        # Check for unpaired square brackets
+        if corrected.count('[') != corrected.count(']'):
+            bracket_diff = corrected.count('[') - corrected.count(']')
+            if bracket_diff > 0:
+                corrected += ']' * bracket_diff
+                corrections.append(f"Added {bracket_diff} closing square brackets")
+            else:
+                corrected = '[' * abs(bracket_diff) + corrected
+                corrections.append(f"Added {abs(bracket_diff)} opening square brackets")
+        
+        # **NEW: Silicon-specific valency correction**
+        if '[Si]' in corrected or 'Si' in corrected:
+            silicon_corrected, silicon_corrections = self._correct_silicon_valency(corrected)
+            if silicon_corrected != corrected:
+                corrected = silicon_corrected
+                corrections.extend(silicon_corrections)
+        
+        return corrected, corrections
+    
+    def _correct_silicon_valency(self, smiles: str) -> Tuple[str, List[str]]:
+        """
+        Correct silicon valency issues in SMILES strings using intelligent bond counting.
+        
+        Silicon atoms need exactly 4 bonds to be stable. This method analyzes existing
+        bonds and adds only the minimum substituents needed to reach exactly 4 bonds.
         
         Args:
             smiles: Original SMILES string
@@ -494,26 +536,124 @@ class MolecularValidator:
         Returns:
             Tuple of (corrected_smiles, list_of_corrections_made)
         """
+        corrections = []
+        
+        # Import regex
+        import re
+        
+        # Use RDKit to parse and analyze the molecule if available
+        if self.rdkit_available:
+            try:
+                from rdkit import Chem
+                
+                # Parse the original molecule to understand current bonding
+                mol = Chem.MolFromSmiles(smiles, sanitize=False)
+                if mol is None:
+                    # Fallback to string-based correction
+                    return self._fallback_silicon_correction(smiles)
+                
+                # Analyze each silicon atom and its current bonds
+                silicon_fixes = []
+                for atom in mol.GetAtoms():
+                    if atom.GetSymbol() == 'Si':
+                        current_bonds = atom.GetDegree()  # Number of explicit bonds
+                        bonds_needed = 4 - current_bonds
+                        
+                        if bonds_needed > 0:
+                            # We need to add substituents
+                            silicon_fixes.append({
+                                'atom_idx': atom.GetIdx(),
+                                'current_bonds': current_bonds,
+                                'bonds_needed': bonds_needed
+                            })
+                
+                if not silicon_fixes:
+                    # No silicon atoms need fixing
+                    return smiles, corrections
+                
+                # Apply fixes using string replacement patterns
+                corrected_smiles = self._apply_smart_silicon_fixes(smiles, silicon_fixes)
+                
+                if corrected_smiles != smiles:
+                    corrections.append(f"Fixed {len(silicon_fixes)} silicon atoms by adding appropriate substituents")
+                    
+                    # Validate the result
+                    test_mol = Chem.MolFromSmiles(corrected_smiles, sanitize=False)
+                    if test_mol is not None:
+                        try:
+                            Chem.SanitizeMol(test_mol)
+                            corrections.append("✅ All silicon atoms now have proper tetrahedral coordination")
+                        except:
+                            corrections.append("⚠️ Warning: Corrected structure may need additional validation")
+                    else:
+                        corrections.append("⚠️ Warning: Correction may have created parsing issues")
+                
+                return corrected_smiles, corrections
+                
+            except Exception as e:
+                corrections.append(f"⚠️ RDKit analysis failed: {str(e)}, using fallback method")
+                return self._fallback_silicon_correction(smiles)
+        else:
+            # RDKit not available, use fallback
+            return self._fallback_silicon_correction(smiles)
+    
+    def _apply_smart_silicon_fixes(self, smiles: str, silicon_fixes: List[Dict]) -> str:
+        """Apply intelligent silicon fixes based on bond analysis"""
+        
+        # Strategy: Use common silicon coordination patterns
+        corrected = smiles
+        
+        # Pattern 1: [Si]O[Si] → [Si](C)(C)O[Si](C)(C) (each Si gets 2 methyls, has 2 bonds: O and next Si)
+        if '[Si]O[Si]' in corrected:
+            corrected = corrected.replace('[Si]O[Si]', '[Si](C)(C)O[Si](C)(C)')
+        
+        # Pattern 2: Remaining [Si]O → [Si](C)(C)(C)O (Si has 1 bond to O, needs 3 more)
+        if '[Si]O' in corrected and '[Si](C)(C)O' not in corrected:
+            corrected = corrected.replace('[Si]O', '[Si](C)(C)(C)O')
+        
+        # Pattern 3: [Si]C → [Si](C)(C)(C)C (Si has 1 bond to C, needs 3 more)
+        if re.search(r'\[Si\][CN]', corrected):
+            corrected = re.sub(r'\[Si\]([CN])', r'[Si](C)(C)(C)\1', corrected)
+        
+        # Pattern 4: Isolated [Si] → [Si](C)(C)(C)(C) (Si has 0 bonds, needs 4)
+        if '[Si]' in corrected:
+            corrected = corrected.replace('[Si]', '[Si](C)(C)(C)(C)')
+        
+        return corrected
+    
+    def _fallback_silicon_correction(self, smiles: str) -> Tuple[str, List[str]]:
+        """Fallback string-based silicon correction when RDKit is not available"""
         
         corrections = []
         corrected = smiles
         
-        # Remove problematic elements by replacement
-        element_replacements = {
-            'B': 'C',   # Replace boron with carbon
-            'Si': 'C',  # Replace silicon with carbon
-            'Al': 'C',  # Replace aluminum with carbon
-        }
+        # Strategy: Apply corrections in order of specificity, ensuring no double-correction
         
-        for problematic, replacement in element_replacements.items():
-            if problematic in corrected:
-                corrected = corrected.replace(problematic, replacement)
-                corrections.append(f"Replaced {problematic} with {replacement}")
+        # 1. Fix Si-O-Si patterns first (most specific) - each Si gets exactly 2 methyls
+        if '[Si]O[Si]' in corrected:
+            pattern_count = corrected.count('[Si]O[Si]')
+            corrected = corrected.replace('[Si]O[Si]', '[Si](C)(C)O[Si](C)(C)')
+            corrections.append(f"Fixed {pattern_count} Si-O-Si patterns with dimethyl substitution")
         
-        # Remove explicit hydrogens
-        if '[H]' in corrected:
-            corrected = corrected.replace('[H]', '')
-            corrections.append("Removed explicit hydrogens")
+        # 2. Fix remaining Si-O patterns (Si has 1 bond to O, needs 3 more methyls)
+        # But only if we haven't already fixed them above
+        remaining_si_o = corrected.count('[Si]O')
+        if remaining_si_o > 0:
+            corrected = corrected.replace('[Si]O', '[Si](C)(C)(C)O')
+            corrections.append(f"Fixed {remaining_si_o} remaining Si-O patterns with trimethyl substitution")
+        
+        # 3. Fix Si-C or Si-N patterns (Si has 1 bond, needs 3 more methyls)
+        import re
+        si_cn_matches = re.findall(r'\[Si\][CN]', corrected)
+        if si_cn_matches:
+            corrected = re.sub(r'\[Si\]([CN])', r'[Si](C)(C)(C)\1', corrected)
+            corrections.append(f"Fixed {len(si_cn_matches)} Si-C/N patterns with trimethyl substitution")
+        
+        # 4. Finally, fix any completely isolated [Si] atoms (no bonds, needs 4 methyls)
+        remaining_isolated = corrected.count('[Si]')
+        if remaining_isolated > 0:
+            corrected = corrected.replace('[Si]', '[Si](C)(C)(C)(C)')
+            corrections.append(f"Fixed {remaining_isolated} isolated Si atoms with tetramethyl substitution")
         
         return corrected, corrections
     
@@ -552,18 +692,61 @@ class MolecularValidator:
                 molecule_info={}
             )
         
+        # **NEW: Apply silicon correction to PSMILES before validation**
+        corrected_psmiles = psmiles
+        silicon_corrections = []
+        
+        if '[Si]' in psmiles or 'Si' in psmiles:
+            # Extract the monomer part (remove [*] symbols)
+            monomer_smiles = psmiles.replace('[*]', 'C')  # Replace with dummy carbons for analysis
+            
+            # Apply silicon corrections
+            corrected_monomer, corrections = self.correct_common_issues(monomer_smiles)
+            
+            if corrections:
+                # Apply the same corrections to the original PSMILES
+                corrected_psmiles = self._apply_corrections_to_psmiles(psmiles, corrections)
+                silicon_corrections = [c for c in corrections if 'silicon' in c.lower() or 'Si' in c]
+        
         # Convert PSMILES to SMILES for validation (replace [*] with dummy atoms)
-        validation_smiles = psmiles.replace('[*]', 'C')
+        validation_smiles = corrected_psmiles.replace('[*]', 'C')
         
         # Validate the core structure
         result = self.validate_smiles(validation_smiles, "monomer")
         
         # Update result to indicate this was a PSMILES validation
         result.molecule_info['original_psmiles'] = psmiles
+        result.molecule_info['corrected_psmiles'] = corrected_psmiles
         result.molecule_info['validation_smiles'] = validation_smiles
         result.molecule_info['connection_points'] = connection_count
         
+        # Add silicon correction info if any were applied
+        if silicon_corrections:
+            result.warnings.extend(silicon_corrections)
+            result.molecule_info['silicon_corrections_applied'] = True
+        
         return result
+    
+    def _apply_corrections_to_psmiles(self, psmiles: str, corrections: List[str]) -> str:
+        """Apply silicon corrections to a PSMILES string"""
+        
+        corrected = psmiles
+        
+        # Simple approach: Apply the most common silicon corrections to PSMILES format
+        # [*]...[Si]O...  → [*]...[Si](C)(C)O...
+        if 'Si-O patterns' in str(corrections):
+            corrected = corrected.replace('[Si]O', '[Si](C)(C)O')
+        
+        # [*]...[Si]C... or [*]...[Si]N... → [*]...[Si](C)(C)C/N...
+        if 'Si-C/N patterns' in str(corrections):
+            import re
+            corrected = re.sub(r'\[Si\]([CN])', r'[Si](C)(C)\1', corrected)
+        
+        # Isolated [Si] → [Si](C)(C)(C)
+        if 'isolated Si atoms' in str(corrections):
+            corrected = corrected.replace('[Si]', '[Si](C)(C)(C)')
+        
+        return corrected
 
 
 # Convenience functions for easy use

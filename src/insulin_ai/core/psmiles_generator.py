@@ -250,6 +250,18 @@ STRICT REQUIREMENT: RETURN ONLY THE SMILES STRING, NO EXPLANATIONS OR EXTRA TEXT
             
             print(f"   Generated SMILES: {smiles}")
             
+            # **STEP 2.5: NEW - Apply silicon-specific corrections if needed**
+            if '[Si]' in smiles or 'Si' in smiles:
+                print(f"   🔧 Silicon detected - applying automatic valency corrections...")
+                corrected_smiles, corrections = self._apply_silicon_corrections(smiles)
+                if corrections:
+                    print(f"   ✅ Silicon corrections applied: {'; '.join(corrections)}")
+                    print(f"   🔄 Original: {smiles}")
+                    print(f"   ✅ Corrected: {corrected_smiles}")
+                    smiles = corrected_smiles
+                else:
+                    print(f"   ✅ Silicon already properly coordinated")
+            
             # **STEP 3: Apply Polymer-Specific Length Constraints**
             if polymer_constraints['strict_length_limit']:
                 if len(smiles) > polymer_constraints['max_length']:
@@ -635,6 +647,29 @@ Examples of good short monomers:
         
         return smiles
 
+    def _apply_silicon_corrections(self, smiles: str) -> Tuple[str, List[str]]:
+        """
+        Apply silicon-specific valency corrections to SMILES strings.
+        
+        This method ensures silicon atoms have proper coordination (4 bonds)
+        by adding methyl groups or other appropriate substituents.
+        
+        Args:
+            smiles: Original SMILES string
+            
+        Returns:
+            Tuple of (corrected_smiles, list_of_corrections_made)
+        """
+        from insulin_ai.utils.molecular_validation import MolecularValidator
+        
+        validator = MolecularValidator()
+        corrected_smiles, corrections = validator.correct_common_issues(smiles)
+        
+        # Filter to only silicon-related corrections
+        silicon_corrections = [c for c in corrections if 'silicon' in c.lower() or 'Si' in c]
+        
+        return corrected_smiles, silicon_corrections
+
 class PSMILESGenerator:
     """
     Generate PSMILES (Polymer SMILES) from natural language descriptions.
@@ -730,6 +765,20 @@ CRITICAL RULES (ENHANCED WITH MOLLM MULTI-OBJECTIVE FRAMEWORK):
 9. **CRITICAL: ALL atoms must have complete valence shells (closed-shell structures only)**
 10. **CRITICAL: Ensure proper valence for all elements - any element is allowed if properly bonded**
 
+**SILICON-SPECIFIC RULES (CRITICAL FOR INSULIN DELIVERY APPLICATIONS):**
+- Silicon atoms MUST ALWAYS have exactly 4 bonds (tetrahedral coordination)
+- NEVER write [Si]O[Si] - this creates radicals with only 2 bonds per silicon
+- ALWAYS use [Si](substituent)(substituent)O[Si](substituent)(substituent) patterns
+- Common substituents for silicon: methyl (C), phenyl (c1ccccc1), hydroxyl (O), alkoxy (OC)
+- VALID silicon patterns: [Si](C)(C)O (dimethylsiloxane), [Si](c1ccccc1)(C)O (phenylmethylsiloxane)
+- For POSS (polyhedral oligomeric silsesquioxane): Use [Si](O[Si])(O[Si])(O[Si])C patterns
+
+**SILICON EXAMPLES (ALL PROPERLY COORDINATED):**
+- Dimethylsiloxane repeat unit: [*][Si](C)(C)O[Si](C)(C)O[*]
+- Mixed organosilicon: [*]C[Si](C)(C)O[Si](C)(c1ccccc1)O[*]
+- Aminosiloxane: [*]CCN[Si](C)(C)O[Si](C)(C)O[*]
+- POSS-based monomer: [*]C[Si](C)(O[Si](C)(C)(C))(O[Si](C)(C)(C))[*]
+
 **RADICAL PREVENTION RULES:**
 - ENSURE all atoms have complete valence shells (no unpaired electrons)
 - ENSURE proper bonding patterns for all elements
@@ -738,7 +787,7 @@ CRITICAL RULES (ENHANCED WITH MOLLM MULTI-OBJECTIVE FRAMEWORK):
 - ENSURE all oxygen atoms have 2 bonds + 2 lone pairs (total 8 electrons)
 - ENSURE all sulfur atoms follow stable bonding patterns
 - ENSURE boron atoms have 3 bonds (BCl3, BF3 patterns) or 4 bonds when coordinated
-- ENSURE silicon atoms have 4 bonds (SiO4, SiCl4 patterns)
+- **ENSURE silicon atoms have EXACTLY 4 bonds (NEVER 2 or 3)**
 - ENSURE aluminum atoms have 3 bonds (AlCl3) or 6 bonds when coordinated
 - NO charged species ([NH3+], [O-]) unless absolutely necessary for the chemistry
 - FOCUS: Prevent unpaired electrons, not specific elements
@@ -767,7 +816,7 @@ IMPORTANT SMILES SYNTAX:
 - Sulfur examples: CSC (thioether bridge), c1sccc1 (thiophene ring), CSS (disulfide)
 - Carbon backbone: CC, CCC, c1ccccc1 (aromatic)
 - Functional groups: C(=O) (carbonyl), C(=O)O (carboxyl), C(=O)N (amide)
-- **Ensure all examples represent stable, closed-shell molecules**
+- **Silicon examples: [Si](C)(C)O (properly coordinated), [Si](c1ccccc1)(C)C (organosilicon)**
 
 VALID MONOMER EXAMPLES (WITH DIVERSITY, ALL CLOSED-SHELL):
 - "monomer with aromatic rings": [*]c1ccccc1[*] OR [*]Cc1ccccc1C[*] OR [*]c1ccc(C)cc1[*]
@@ -776,16 +825,16 @@ VALID MONOMER EXAMPLES (WITH DIVERSITY, ALL CLOSED-SHELL):
 - "ethylene-like monomer": [*]CC[*] OR [*]CCC[*] OR [*]C(C)C[*]
 - "monomer with hydroxyl groups": [*]C(O)C[*] OR [*]CC(O)CC[*] OR [*]c1ccc(O)cc1[*]
 - "sulfur-containing monomer": [*]CSC[*] OR [*]c1sccc1[*] OR [*]CSS[*] OR [*]CSCC[*]
+- "silicon-containing monomer": [*]C[Si](C)(C)O[Si](C)(C)C[*] OR [*]CC[Si](C)(c1ccccc1)O[*]
 
 INVALID EXAMPLES TO AVOID:
 - [*]HSH[*] - NO explicit hydrogens
 - [*]HCSH[*] - NO explicit hydrogens
 - [*]SH[*] - NO explicit hydrogens
 - [*]HS[*] - NO explicit hydrogens
-- **[*]B...[*] - NO boron atoms (radical prone)**
-- **[*]Si...[*] - NO silicon in complex structures (radical prone)**
-- **[*]Al...[*] - NO aluminum atoms (radical prone)**
-- **Any structure with unpaired electrons or radical character**
+- **[*][Si]O[Si][*] - INVALID! Silicon has only 2 bonds (radicals)**
+- **[*]CC[Si]O[Si]CN[*] - INVALID! Under-coordinated silicon**
+- **Any silicon structure with fewer than 4 bonds per silicon atom**
 
 TASK: Convert the user's description into a valid MONOMER PSMILES string.
 - Think about the MONOMER REPEAT UNIT they're describing
@@ -794,6 +843,7 @@ TASK: Convert the user's description into a valid MONOMER PSMILES string.
 - Ensure proper SMILES syntax and chemical validity
 - **CRITICAL: Ensure the molecule has no radicals or unpaired electrons**
 - **CRITICAL: Use only stable, closed-shell electronic configurations**
+- **CRITICAL: For silicon-containing requests, ALWAYS ensure 4 bonds per silicon**
 - For sulfur requests, use CSC, CSS, or c1sccc1 patterns with variation
 - Respond with just the PSMILES string, no explanation unless requested"""
 

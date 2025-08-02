@@ -286,8 +286,8 @@ class RAGLiteratureMiningSystem:
                 max_retries=3
             )
             
-            # Test connectivity
-            test_response = self.llm.invoke([HumanMessage(content="Test connection")])
+            # Test connectivity - disabled for lazy initialization
+            # test_response = self.llm.invoke([HumanMessage(content="Test connection")])
             print("✅ OpenAI components initialized successfully")
             
         except Exception as e:

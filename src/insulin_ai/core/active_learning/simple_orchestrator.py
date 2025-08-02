@@ -67,7 +67,8 @@ class SimpleActiveLearningOrchestrator:
     
     def __init__(self, max_iterations: int = 5, storage_path: str = "simple_active_learning", 
                  config: Dict[str, Any] = None):
-        """Initialize the simple orchestrator with full configuration.
+        """
+        Initialize the simple active learning orchestrator.
         
         Args:
             max_iterations: Maximum number of iterations to run
@@ -85,8 +86,11 @@ class SimpleActiveLearningOrchestrator:
         self.iteration_callbacks: List[Callable] = []
         self.completion_callbacks: List[Callable] = []
         
+        # Console output callback for UI integration
+        self.output_callback: Optional[Callable[[str], None]] = None
+        
         # Initialize MD simulation system early to ensure interface compatibility
-        from integration.analysis.dual_gaff_amber_integration import DualGaffAmberIntegration
+        from insulin_ai.integration.analysis.dual_gaff_amber_integration import DualGaffAmberIntegration
         self.dual_simulator = DualGaffAmberIntegration(
             output_dir=str(self.storage_path / "dual_gaff_amber_simulations")
         )
@@ -99,23 +103,58 @@ class SimpleActiveLearningOrchestrator:
         
         # Initialize PSMILES generator directly (not from session state)
         from insulin_ai.core.psmiles_generator import PSMILESGenerator
-        self.psmiles_generator = PSMILESGenerator(
-            openai_model=self.config.get('psmiles_generation', {}).get('model', 'gpt-4o-mini'),
-            temperature=self.config.get('psmiles_generation', {}).get('temperature', 0.7)
+        self.psmiles_generator = PSMILESGenerator()
+        
+        # Initialize RAG literature mining system for advanced literature analysis
+        from insulin_ai.integration.rag_literature_mining import RAGLiteratureMiningSystem
+        self.rag_literature_system = RAGLiteratureMiningSystem(
+            output_dir=str(self.storage_path / "rag_literature")
         )
         
-        logger.info(f"SimpleActiveLearningOrchestrator initialized - Max iterations: {max_iterations}")
-        if config:
-            logger.info(f"Configuration loaded: Literature Mining ({config['literature_mining']['openai_model']}), "
-                       f"PSMILES ({config['psmiles_generation']['model']}), "
-                       f"MD Simulation ({config['md_simulation']['simulation_method']})")
+        self._log_message("🤖 Simple Active Learning Orchestrator initialized")
+    
+    def set_output_callback(self, callback: Callable[[str], None]):
+        """Set a callback function for console output"""
+        self.output_callback = callback
+        self._log_message("Console output callback registered")
+    
+    def _log_message(self, message: str):
+        """Log a message to both logger and console callback"""
+        logger.info(message)
+        if self.output_callback:
+            try:
+                self.output_callback(message)
+            except Exception as e:
+                logger.warning(f"Output callback failed: {e}")
+    
+    def get_status(self) -> Dict[str, Any]:
+        """Get current orchestrator status"""
+        current_iteration = len(self.results)
+        progress_percent = (current_iteration / self.max_iterations) * 100
+        
+        status = {
+            'status': 'ready' if current_iteration == 0 else 'completed',
+            'current_iteration': current_iteration,
+            'max_iterations': self.max_iterations,
+            'progress_percent': progress_percent,
+            'runtime_seconds': 0,  # Would need to track runtime
+            'errors': []
+        }
+        
+        # If we have results, update status based on latest result
+        if self.results:
+            latest_result = self.results[-1]
+            status['status'] = latest_result.get('status', 'unknown')
+            status['errors'] = latest_result.get('errors', [])
+        
+        return status
     
     def add_iteration_callback(self, callback: Callable):
-        """Add a callback to be called after each iteration."""
+        """Add a callback for iteration updates"""
         self.iteration_callbacks.append(callback)
     
     def add_completion_callback(self, callback: Callable):
-        """Add a callback to be called when the loop completes."""
+        """Add a callback for completion"""
         self.completion_callbacks.append(callback)
     
     def run_simple_loop(self, initial_prompt: str, target_properties: Dict[str, float] = None) -> Dict[str, Any]:
@@ -128,39 +167,44 @@ class SimpleActiveLearningOrchestrator:
         Returns:
             Dict containing loop results and summary
         """
-        logger.info("Starting simple active learning loop")
-        start_time = time.time()
-        
-        # Initialize tracking
-        self.results = []
-        current_prompt = initial_prompt
-        target_properties = target_properties or {}
         
         try:
+            self._log_message(f"🚀 Starting Active Learning Loop")
+            self._log_message(f"📝 Initial prompt: '{initial_prompt[:80]}...'")
+            self._log_message(f"🎯 Max iterations: {self.max_iterations}")
+            
+            if target_properties:
+                props_str = ", ".join([f"{k}: {v:.2f}" for k, v in target_properties.items()])
+                self._log_message(f"🎯 Target properties: {props_str}")
+            
+            start_time = time.time()
+            current_prompt = initial_prompt
+            
             for iteration in range(1, self.max_iterations + 1):
-                logger.info(f"=== Starting iteration {iteration} ===")
+                self._log_message(f"\n🔄 === ITERATION {iteration}/{self.max_iterations} ===")
+                self._log_message(f"📝 Current prompt: '{current_prompt[:80]}...'")
                 
-                # Create iteration state
                 iteration_state = {
                     'iteration': iteration,
                     'prompt': current_prompt,
-                    'target_properties': target_properties,
-                    'timestamp': datetime.now().isoformat(),
-                    'status': 'running',
-                    'literature_results': None,
-                    'generated_molecules': None,
-                    'simulation_results': None,
-                    'new_prompt': None,
+                    'status': 'starting',
                     'errors': [],
+                    'warnings': [],
                     'overall_score': 0.0
                 }
                 
                 try:
                     # Step 1: Literature Mining
-                    logger.info(f"Iteration {iteration}: Starting literature mining")
+                    self._log_message(f"📚 Step 1: Starting literature mining...")
                     iteration_state['status'] = 'literature_mining'
                     literature_results = self._run_literature_mining(current_prompt)
                     iteration_state['literature_results'] = literature_results
+                    
+                    if literature_results.get('success', False):
+                        insights_count = len(literature_results.get('insights', []))
+                        self._log_message(f"✅ Literature mining completed: {insights_count} insights generated")
+                    else:
+                        self._log_message(f"⚠️ Literature mining had issues: {literature_results.get('error', 'Unknown error')}")
                     
                     # Call iteration callbacks
                     for callback in self.iteration_callbacks:
@@ -170,10 +214,16 @@ class SimpleActiveLearningOrchestrator:
                             logger.warning(f"Iteration callback failed: {e}")
                     
                     # Step 2: PSMILES Generation
-                    logger.info(f"Iteration {iteration}: Starting PSMILES generation")
+                    self._log_message(f"🧪 Step 2: Starting PSMILES generation...")
                     iteration_state['status'] = 'psmiles_generation'
                     generated_molecules = self._run_psmiles_generation(literature_results)
                     iteration_state['generated_molecules'] = generated_molecules
+                    
+                    if generated_molecules.get('success', False):
+                        molecules_count = len(generated_molecules.get('molecules', []))
+                        self._log_message(f"✅ PSMILES generation completed: {molecules_count} molecules generated")
+                    else:
+                        self._log_message(f"⚠️ PSMILES generation had issues: {generated_molecules.get('error', 'Unknown error')}")
                     
                     # Call iteration callbacks
                     for callback in self.iteration_callbacks:
@@ -183,10 +233,16 @@ class SimpleActiveLearningOrchestrator:
                             logger.warning(f"Iteration callback failed: {e}")
                     
                     # Step 3: MD Simulation
-                    logger.info(f"Iteration {iteration}: Starting MD simulation")
+                    self._log_message(f"⚛️ Step 3: Starting MD simulation...")
                     iteration_state['status'] = 'md_simulation'
                     simulation_results = self._run_md_simulation(generated_molecules)
                     iteration_state['simulation_results'] = simulation_results
+                    
+                    if simulation_results.get('success', False):
+                        sims_count = len(simulation_results.get('simulation_ids', []))
+                        self._log_message(f"✅ MD simulation completed: {sims_count} simulations run")
+                    else:
+                        self._log_message(f"⚠️ MD simulation had issues: {simulation_results.get('error', 'Unknown error')}")
                     
                     # Call iteration callbacks
                     for callback in self.iteration_callbacks:
@@ -196,7 +252,7 @@ class SimpleActiveLearningOrchestrator:
                             logger.warning(f"Iteration callback failed: {e}")
                     
                     # Step 4: Generate new prompt for next iteration
-                    logger.info(f"Iteration {iteration}: Generating new prompt")
+                    self._log_message(f"🔮 Step 4: Generating new prompt for next iteration...")
                     iteration_state['status'] = 'generating_prompt'
                     new_prompt = self._generate_new_prompt(
                         literature_results, generated_molecules, simulation_results, target_properties
@@ -204,11 +260,16 @@ class SimpleActiveLearningOrchestrator:
                     iteration_state['new_prompt'] = new_prompt
                     
                     # Calculate overall score (simple heuristic)
-                    iteration_state['overall_score'] = self._calculate_iteration_score(
+                    score = self._calculate_iteration_score(
                         literature_results, generated_molecules, simulation_results
                     )
+                    iteration_state['overall_score'] = score
                     
                     iteration_state['status'] = 'completed'
+                    
+                    self._log_message(f"📊 Iteration {iteration} completed - Overall score: {score:.3f}")
+                    if new_prompt and new_prompt != current_prompt:
+                        self._log_message(f"🔮 Next prompt: '{new_prompt[:80]}...'")
                     
                     # Save iteration results
                     self._save_iteration_results(iteration, iteration_state)
@@ -222,13 +283,13 @@ class SimpleActiveLearningOrchestrator:
                             logger.warning(f"Iteration callback failed: {e}")
                     
                     # Update prompt for next iteration
-                    current_prompt = new_prompt
+                    current_prompt = new_prompt if new_prompt else current_prompt
                     
-                    logger.info(f"Iteration {iteration} completed successfully - Score: {iteration_state['overall_score']:.3f}")
+                    self._log_message(f"✅ Iteration {iteration} completed successfully - Score: {iteration_state['overall_score']:.3f}")
                     
                 except Exception as e:
                     error_msg = f"Error in iteration {iteration}: {str(e)}"
-                    logger.error(error_msg)
+                    self._log_message(f"❌ {error_msg}")
                     iteration_state['errors'].append(error_msg)
                     iteration_state['status'] = 'failed'
                     self.results.append(iteration_state)
@@ -242,6 +303,10 @@ class SimpleActiveLearningOrchestrator:
             
             # Calculate final summary
             total_time = time.time() - start_time
+            self._log_message(f"\n🎉 Active Learning Loop Completed!")
+            self._log_message(f"⏱️ Total runtime: {total_time:.1f} seconds")
+            self._log_message(f"🔄 Iterations completed: {len(self.results)}")
+            
             summary = self._create_summary(total_time)
             
             # Call completion callbacks
@@ -251,11 +316,11 @@ class SimpleActiveLearningOrchestrator:
                 except Exception as e:
                     logger.warning(f"Completion callback failed: {e}")
             
-            logger.info("Simple active learning loop completed successfully")
+            self._log_message("✅ Simple active learning loop completed successfully")
             return summary
             
         except Exception as e:
-            logger.error(f"Fatal error in active learning loop: {e}")
+            self._log_message(f"❌ Fatal error in active learning loop: {e}")
             total_time = time.time() - start_time
             error_summary = {
                 'success': False,
@@ -268,16 +333,21 @@ class SimpleActiveLearningOrchestrator:
     def _run_literature_mining(self, prompt: str) -> Dict[str, Any]:
         """Run literature mining using the existing UI tab function with configured parameters."""
         try:
+            self._log_message(f"   📚 Initializing literature mining system...")
+            
             # Import and use the exact same function the Literature Mining UI tab uses
-            from app.services.literature_service import literature_mining_with_llm
+            from insulin_ai.app.services.literature_service import literature_mining_with_llm
             
             # Get literature mining configuration
             lit_config = self.config.get('literature_mining', {})
             
-            logger.info(f"Running literature mining with prompt: {prompt[:100]}...")
-            logger.info(f"🔧 Literature config: {lit_config.get('search_strategy', 'Comprehensive')} | "
-                       f"Papers: {lit_config.get('max_papers', 10)} | "
-                       f"Recent only: {lit_config.get('recent_only', True)}")
+            # Log configuration
+            strategy = lit_config.get('search_strategy', 'Comprehensive')
+            max_papers = lit_config.get('max_papers', 10)
+            recent_only = lit_config.get('recent_only', True)
+            
+            self._log_message(f"   🔧 Configuration: {strategy} | Papers: {max_papers} | Recent only: {recent_only}")
+            self._log_message(f"   🔍 Starting literature search for: '{prompt[:60]}...'")
             
             # Create iteration context with configuration parameters
             iteration_context = {
@@ -289,6 +359,8 @@ class SimpleActiveLearningOrchestrator:
                 'temperature': lit_config.get('temperature', 0.7)
             }
             
+            self._log_message(f"   🤖 Using model: {iteration_context['openai_model']} (temp: {iteration_context['temperature']})")
+            
             # This is the EXACT same call the Literature Mining UI tab makes, but with configuration
             result = literature_mining_with_llm(prompt, iteration_context=iteration_context)
             
@@ -296,13 +368,19 @@ class SimpleActiveLearningOrchestrator:
             materials_found = result.get('materials_found', [])
             mechanisms = result.get('stabilization_mechanisms', [])
             material_candidates = result.get('material_candidates', [])
+            papers_analyzed = result.get('papers_analyzed', 0)
+            
+            self._log_message(f"   📄 Analyzed {papers_analyzed} papers")
+            self._log_message(f"   🧬 Found {len(materials_found)} material insights")
+            self._log_message(f"   ⚙️ Identified {len(mechanisms)} stabilization mechanisms")
+            self._log_message(f"   🎯 Generated {len(material_candidates)} material candidates")
             
             # Literature mining has already generated the specific psmiles_generation_prompt
             # No need to override it with generic enhanced prompts
             
             return {
                 'success': True,
-                'papers_found': result.get('papers_analyzed', 0),
+                'papers_found': papers_analyzed,
                 'materials_found': materials_found,
                 'stabilization_mechanisms': mechanisms,
                 'synthesis_approaches': result.get('synthesis_approaches', []),
@@ -313,16 +391,17 @@ class SimpleActiveLearningOrchestrator:
             }
             
         except Exception as e:
-            logger.error(f"Literature mining failed: {e}")
+            error_msg = f"Literature mining failed: {str(e)}"
+            self._log_message(f"   ❌ {error_msg}")
             return {
                 'success': False,
-                'error': str(e),
+                'error': error_msg,
                 'papers_found': 0,
                 'materials_found': [],
                 'stabilization_mechanisms': [],
                 'synthesis_approaches': [],
-                'psmiles_prompt': prompt,  # Use original prompt without enhancements
-                'insights': f'Literature mining failed: {e}. No fallback data provided.',
+                'psmiles_generation_prompt': '',
+                'insights': '',
                 'material_candidates': []
             }
     
@@ -603,19 +682,35 @@ class SimpleActiveLearningOrchestrator:
         Generate only ONE candidate, retrying until successful.
         """
         try:
+            self._log_message(f"   🧪 Initializing PSMILES generation system...")
+            
             # Import and use the exact same workflow the PSMILES Generation UI tab uses
-            from app.services.psmiles_service import process_psmiles_workflow_with_autorepair
+            from insulin_ai.app.services.psmiles_service import process_psmiles_workflow_with_autorepair
+            
+            # CRITICAL DEBUG: Check what we received from literature mining
+            self._log_message(f"   🔍 DEBUG: Literature results keys: {list(literature_results.keys())}")
             
             # CRITICAL FIX: Use the literature-derived PSMILES generation prompt
             # This should be something specific like:
     
             psmiles_prompt = literature_results.get('psmiles_generation_prompt', '')
             
-            if not psmiles_prompt:
-                logger.error("No literature-derived psmiles_generation_prompt found!")
-                raise ValueError("Literature mining must provide a specific psmiles_generation_prompt - no fallbacks allowed")
+            self._log_message(f"   🔍 DEBUG: psmiles_generation_prompt exists: {'psmiles_generation_prompt' in literature_results}")
+            self._log_message(f"   🔍 DEBUG: psmiles_prompt length: {len(psmiles_prompt) if psmiles_prompt else 0}")
             
-            logger.info(f"🧬 Literature-derived prompt: {psmiles_prompt}")
+            if not psmiles_prompt:
+                error_msg = "No literature-derived psmiles_generation_prompt found!"
+                self._log_message(f"   ❌ {error_msg}")
+                self._log_message(f"   🔍 DEBUG: Available keys in literature_results: {list(literature_results.keys())}")
+                # FALLBACK: Try to create a basic prompt from the insights
+                insights = literature_results.get('insights', '')
+                if insights:
+                    psmiles_prompt = f"Based on the following research insights: {insights[:200]}... Design a biodegradable polymer for insulin delivery."
+                    self._log_message(f"   🔄 FALLBACK: Created basic prompt from insights")
+                else:
+                    raise ValueError("Literature mining must provide a specific psmiles_generation_prompt - no fallbacks allowed")
+            
+            self._log_message(f"   📝 Using prompt: '{psmiles_prompt[:80]}...'")
             
             # Get PSMILES generation configuration
             psmiles_config = self.config.get('psmiles_generation', {})
@@ -625,14 +720,11 @@ class SimpleActiveLearningOrchestrator:
             max_repair_attempts = psmiles_config.get('max_repair_attempts', 3)
             temperature = psmiles_config.get('temperature', 0.7)
             
-            logger.info(f"🔄 Generating {num_candidates} candidate(s)")
-            logger.info(f"🔧 PSMILES config: Candidates: {num_candidates} | "
-                       f"Retries: {max_retries} | "
-                       f"Functionalization: {auto_functionalize} | "
-                       f"Max repairs: {max_repair_attempts}")
+            self._log_message(f"   🔧 Configuration: {num_candidates} candidates | Max retries: {max_retries}")
+            self._log_message(f"   ⚙️ Functionalization: {auto_functionalize} | Repair attempts: {max_repair_attempts}")
             
             # Use the orchestrator's own PSMILES generator (no session state dependency)
-            logger.info(f"🚀 Generating {num_candidates} candidates using direct PSMILES generator...")
+            self._log_message(f"   🚀 Starting diverse candidate generation...")
             psmiles_generator = self.psmiles_generator
             
             # Use the exact same method as the working tab
@@ -647,53 +739,81 @@ class SimpleActiveLearningOrchestrator:
                 candidates_list = diverse_results['candidates']
                 molecules = []
                 
+                self._log_message(f"   🎯 Processing {len(candidates_list)} generated candidates...")
+                
                 for i, result in enumerate(candidates_list[:num_candidates]):  # Take only requested number
+                    psmiles = result['psmiles']
+                    confidence = result.get('confidence', 0.8)
+                    self._log_message(f"   📄 Candidate {i+1}: {psmiles[:40]}... (confidence: {confidence:.2f})")
+                    
                     molecules.append({
                         'id': f'mol_{i+1}',
-                        'psmiles': result['psmiles'],
+                        'psmiles': psmiles,
                         'smiles': result.get('smiles', ''),  # May not have SMILES from diverse generation
-                        'confidence': result.get('confidence', 0.8),
+                        'confidence': confidence,
                         'description': result.get('explanation', 'Literature-derived polymer structure'),
                         'generation_method': result.get('generation_method', 'working_pipeline_diverse'),
                         'prompt_used': result.get('diversity_prompt', psmiles_prompt),
                         'temperature_used': result.get('temperature_used', 0.8)
                     })
                 
-                logger.info(f"✅ Successfully generated {len(molecules)} candidates using direct PSMILES generator")
+                diversity_score = diverse_results.get('diversity_score', 0.8)
+                validity_score = diverse_results.get('validity_score', 0.9)
+                
+                self._log_message(f"   ✅ Successfully generated {len(molecules)} candidates")
+                self._log_message(f"   📊 Diversity score: {diversity_score:.2f} | Validity score: {validity_score:.2f}")
+                
                 return {
                     'success': True,
                     'molecules': molecules,
                     'num_generated': len(molecules),
                     'generation_method': 'direct_psmiles_generator',
                     'attempts_needed': 1,
-                    'diversity_score': diverse_results.get('diversity_score', 0.8),
-                    'validity_score': diverse_results.get('validity_score', 0.9),
+                    'diversity_score': diversity_score,
+                    'validity_score': validity_score,
                     'raw_result': diverse_results
                 }
             else:
-                raise Exception(f"Direct PSMILES generator failed: {diverse_results.get('error', 'Unknown error')}")
-            
+                error_msg = f"PSMILES generation failed: {diverse_results.get('error', 'Unknown error')}"
+                self._log_message(f"   ❌ {error_msg}")
+                return {
+                    'success': False,
+                    'error': error_msg,
+                    'molecules': [],
+                    'num_generated': 0,
+                    'generation_method': 'direct_psmiles_generator',
+                    'attempts_needed': 0,
+                    'raw_result': diverse_results
+                }
+                
         except Exception as e:
-            logger.error(f"PSMILES generation failed: {e}")
+            error_msg = f"PSMILES generation failed: {str(e)}"
+            self._log_message(f"   ❌ {error_msg}")
             return {
                 'success': False,
-                'error': str(e),
+                'error': error_msg,
                 'molecules': [],
                 'num_generated': 0,
-                'generation_method': 'failed',
-                'diversity_score': 0.0,
-                'validity_score': 0.0
+                'generation_method': 'direct_psmiles_generator_error',
+                'attempts_needed': 0,
+                'raw_result': {}
             }
     
     def _run_md_simulation(self, generated_molecules: Dict[str, Any]) -> Dict[str, Any]:
         """Run MD simulation using the existing UI tab workflow."""
         try:
+            self._log_message(f"   ⚛️ Initializing MD simulation system...")
+            
             # Import and use the exact same workflow the MD Simulation UI tab uses
             from insulin_ai.integration.analysis.dual_gaff_amber_integration import DualGaffAmberIntegration
             
             molecules = generated_molecules.get('molecules', [])
             if not molecules:
-                raise ValueError("No molecules to simulate")
+                error_msg = "No molecules to simulate"
+                self._log_message(f"   ❌ {error_msg}")
+                raise ValueError(error_msg)
+            
+            self._log_message(f"   🧬 Found {len(molecules)} molecules to simulate")
             
             # Get MD simulation configuration
             md_config = self.config.get('md_simulation', {})
@@ -704,38 +824,54 @@ class SimpleActiveLearningOrchestrator:
             save_interval = md_config.get('save_interval', 1000)  # Default to Normal
             timeout_minutes = md_config.get('timeout_minutes', 30)
             simulation_method = md_config.get('simulation_method', 'Dual GAFF+AMBER (Recommended)')
+            total_time_ns = (equilibration_steps + production_steps) * 2 / 1000000  # 2 fs timestep
+            polymer_chain_length = md_config.get('polymer_chain_length', 10)  # Default to 10
+            num_polymer_chains = md_config.get('num_polymer_chains', 1)  # Default to 1
             
-            logger.info(f"Running MD simulation on {len(molecules)} molecules using existing workflow")
-            logger.info(f"🔧 MD config: Method: {simulation_method} | "
-                       f"Max sims: {max_simulations} | "
-                       f"Temp: {temperature}K | "
-                       f"Total time: {md_config.get('total_time_ns', 1.25):.1f} ns")
+            self._log_message(f"   🔧 Configuration: {simulation_method}")
+            self._log_message(f"   🌡️ Temperature: {temperature}K | Max simulations: {max_simulations}")
+            self._log_message(f"   ⏱️ Equilibration: {equilibration_steps} steps | Production: {production_steps} steps")
+            self._log_message(f"   📊 Total simulation time: {total_time_ns:.2f} ns | Timeout: {timeout_minutes} min")
+            self._log_message(f"   🧬 Polymer chains: {num_polymer_chains} chains × {polymer_chain_length} units each")
             
             # dual_simulator is already initialized in __init__
             if not self.dual_simulator.dependencies_ok:
-                logger.error("Dual GAFF AMBER dependencies not available")
+                error_msg = "Dual GAFF AMBER dependencies not available"
+                self._log_message(f"   ❌ {error_msg}")
                 raise RuntimeError("Dual GAFF AMBER dependencies required - no fallbacks allowed")
+            
+            self._log_message(f"   ✅ Dual GAFF+AMBER dependencies verified")
             
             simulation_results = []
             successful_simulations = 0
             
-            for molecule in molecules[:max_simulations]:  # Use configured limit
+            for i, molecule in enumerate(molecules[:max_simulations]):  # Use configured limit
                 try:
+                    mol_id = molecule.get('id', f'mol_{i+1}')
                     psmiles = molecule.get('psmiles', '')
+                    
+                    self._log_message(f"   🧪 Starting simulation {i+1}/{min(len(molecules), max_simulations)} for {mol_id}")
+                    
                     if not psmiles:
-                        logger.warning(f"No PSMILES for molecule {molecule['id']}, skipping")
+                        warning_msg = f"No PSMILES for molecule {mol_id}, skipping"
+                        self._log_message(f"   ⚠️ {warning_msg}")
                         continue
+                    
+                    self._log_message(f"   🔍 Validating PSMILES: {psmiles[:50]}...")
                     
                     # Use LangChain-style validation with retry logic
                     validation_result = self._validate_simulation_inputs_with_retry(molecule, psmiles)
                     
                     if not validation_result["success"]:
-                        logger.error(f"❌ Validation failed for molecule {molecule['id']}: {validation_result.get('errors', 'Unknown errors')}")
+                        error_msg = f"Validation failed for molecule {mol_id}: {validation_result.get('errors', 'Unknown errors')}"
+                        self._log_message(f"   ❌ {error_msg}")
                         raise ValueError(f"Input validation failed after retry attempts: {validation_result.get('errors')}")
                     
                     # Use validated inputs
                     validated_psmiles = validation_result["validated_psmiles"]
-                    logger.info(f"✅ Validated PSMILES for {molecule['id']}: {validated_psmiles}")
+                    self._log_message(f"   ✅ Validation successful: {validated_psmiles[:50]}...")
+                    
+                    self._log_message(f"   🚀 Starting MD simulation for {mol_id}...")
                     
                     # Use the configured simulation parameters from the UI
                     simulation_id = self.dual_simulator.run_md_simulation_async(
@@ -744,9 +880,9 @@ class SimpleActiveLearningOrchestrator:
                         equilibration_steps=equilibration_steps,
                         production_steps=production_steps,  
                         save_interval=save_interval,
-                        output_prefix=f"al_{molecule['id']}",
-                        polymer_chain_length=10,   # Keep shorter chains for active learning speed
-                        num_polymer_chains=1
+                        output_prefix=f"al_{mol_id}",
+                        polymer_chain_length=polymer_chain_length,   # Configurable chain length
+                        num_polymer_chains=num_polymer_chains        # Configurable number of chains
                     )
                     
                     # Wait for simulation to actually complete (not just start!)
