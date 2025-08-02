@@ -105,7 +105,7 @@ class InsulinDeliveryAnalysisIntegration:
         # Default analysis options (run all analyses)
         if analysis_options is None:
             analysis_options = {
-                'binding_energy': True,        # MM-GBSA binding free energy
+                'binding_energy': True,        # Interaction energy analysis
                 'insulin_stability': True,     # RMSD, RMSF, secondary structure
                 'partitioning': True,         # PMF, partition coefficient
                 'diffusion': True,            # MSD, diffusion coefficient

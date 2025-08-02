@@ -3,8 +3,6 @@
 MD Simulation Integration for Insulin-AI App
 Combines PDBFixer preprocessing, water removal, and OpenMM MD simulation
 with real-time output streaming and progress monitoring
-
-Now includes automatic MM-GBSA binding energy calculation after MD completion
 """
 
 import os
@@ -53,12 +51,8 @@ try:
 except ImportError:
     PROPER_OPENMM_AVAILABLE = False
 
-# Import MM-GBSA calculator
-# InsulinMMGBSACalculator removed as no longer needed
-MMGBSA_AVAILABLE = False
-
 class MDSimulationIntegration:
-    """Integrated MD simulation system for insulin-AI app with MM-GBSA analysis"""
+    """Integrated MD simulation system for insulin-AI app"""
     
     def __init__(self, output_dir: str = "integrated_md_simulations"):
         """Initialize the MD simulation integration system
@@ -77,7 +71,7 @@ class MDSimulationIntegration:
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(exist_ok=True)
         
-        # Initialize proper OpenMM simulator
+        # Initialize OpenMM simulator
         self.openmm_simulator = ProperOpenMMSimulator(str(self.output_dir))
         
         # Output streaming setup
@@ -97,8 +91,7 @@ class MDSimulationIntegration:
             'openmm': OPENMM_AVAILABLE,
             'pdbfixer': PDBFIXER_AVAILABLE,
             'openmmforcefields': OPENMMFORCEFIELDS_AVAILABLE,
-            'proper_openmm': PROPER_OPENMM_AVAILABLE,
-            'mmgbsa': MMGBSA_AVAILABLE
+            'proper_openmm': PROPER_OPENMM_AVAILABLE
         }
         deps['all_available'] = all(deps[k] for k in ['openmm', 'pdbfixer', 'openmmforcefields', 'proper_openmm'])
         return deps
@@ -363,26 +356,25 @@ class MDSimulationIntegration:
     
     def run_md_simulation_async(self, pdb_file: str,
                               temperature: float = 310.0,
-                              equilibration_steps: int = 125000,
-                              production_steps: int = 2500000,
+                              equilibration_steps: int = 125000,  # Quick Test: 250 ps
+                              production_steps: int = 500000,     # Quick Test: 1 ns (was 2500000 = 5 ns)
                               save_interval: int = 500,
                               output_prefix: str = None,
                               output_callback: Optional[Callable] = None,
-                              manual_polymer_dir: str = None,
-                              enhanced_smiles: str = None) -> str:
+                              manual_polymer_dir: str = None) -> str:
         """
         Run MD simulation asynchronously with proper preprocessing
         
         Args:
             pdb_file: Path to input PDB file
             temperature: Simulation temperature in Kelvin
-            equilibration_steps: Number of equilibration steps (default: 125000 = 500 ps)
-            production_steps: Number of production steps (default: 2500000 = 10 ns)
+            equilibration_steps: Number of equilibration steps (default: 125000 = 250 ps Quick Test)
+            production_steps: Number of production steps (default: 500000 = 1 ns Quick Test)
             save_interval: Steps between saved frames
             output_prefix: Prefix for output files
             output_callback: Callback function for output messages
             manual_polymer_dir: Manual polymer directory for force field parameterization
-        
+            
         Returns:
             Simulation ID
         """
@@ -407,7 +399,7 @@ class MDSimulationIntegration:
         self.simulation_thread = threading.Thread(
             target=self._run_simulation_thread,
             args=(simulation_id, pdb_file, temperature, equilibration_steps, 
-                  production_steps, save_interval, output_callback, manual_polymer_dir, enhanced_smiles)
+                  production_steps, save_interval, output_callback, manual_polymer_dir)
         )
         self.simulation_thread.daemon = True
         self.simulation_thread.start()
@@ -420,63 +412,39 @@ class MDSimulationIntegration:
                              temperature: float, equilibration_steps: int,
                              production_steps: int, save_interval: int,
                              output_callback: Optional[Callable],
-                             manual_polymer_dir: str = None,
-                             enhanced_smiles: str = None):
+                             manual_polymer_dir: str = None):
         """Run the simulation in a separate thread"""
         
         def log_output(message: str):
             print(message)  # Always print to console
-            if output_callback:
-                output_callback(message)  # Also send to app interface
         
         try:
-            # Step 1: Smart PDB processing (preserves correct files, fixes broken ones)
-            log_output(f"🔧 Step 1: Smart PDB processing with insulin-aware fixer")
+            # Step 1: Preprocess PDB file with PDBFixer
+            log_output(f"🔧 Step 1: Preprocessing PDB file with PDBFixer")
             
-            # Add info about manual polymer selection and enhanced SMILES
+            # Add info about manual polymer selection
             if manual_polymer_dir:
                 log_output(f"🎯 Using manual polymer directory: {manual_polymer_dir}")
-            if enhanced_smiles:
-                log_output(f"⚡ Enhanced mode: Using pre-stored SMILES (preserves structure quality)")
             
-            # Use smart insulin fixer to prevent CYX → CYS corruption
-            try:
-                from .smart_insulin_fixer import smart_insulin_fix
-                log_output(f"🧠 Using smart insulin fixer (preserves CYX residues)...")
-                smart_processed_path = smart_insulin_fix(pdb_file)
-                
-                preprocess_result = {
-                    'success': True,
-                    'output_path': smart_processed_path,
-                    'method': 'smart_insulin_fixer',
-                    'preserved_original': smart_processed_path == pdb_file,
-                    'atoms': 'unknown',  # Will be determined later
-                    'residues': 'unknown'  # Will be determined later
-                }
-                log_output(f"✅ Smart processing: {preprocess_result['preserved_original'] and 'Preserved original (perfect)' or 'Applied intelligent fixes'}")
-                
-            except ImportError:
-                log_output(f"⚠️ Smart fixer not available - using PDBFixer (may corrupt CYX residues)...")
-                # Fallback to original PDBFixer method
-                preprocess_result = self.preprocess_pdb_file(
-                    pdb_file,
-                    remove_water=True,
-                    remove_heterogens=False,  # Keep polymers
-                    add_missing_residues=True,
-                    add_missing_atoms=True,
-                    add_missing_hydrogens=True,
-                    ph=7.4,
-                    output_callback=log_output
-                )
+            preprocess_result = self.preprocess_pdb_file(
+                pdb_file,
+                remove_water=True,
+                remove_heterogens=False,  # Keep polymers
+                add_missing_residues=True,
+                add_missing_atoms=True,
+                add_missing_hydrogens=True,
+                ph=7.4,
+                output_callback=log_output
+            )
             
             if not preprocess_result['success']:
                 log_output(f"❌ PDB preprocessing failed: {preprocess_result['error']}")
                 self.simulation_running = False
                 return
             
-            # Use smart-processed PDB file
+            # Use preprocessed PDB file
             processed_pdb = preprocess_result['output_path']
-            log_output(f"✅ Smart PDB processing completed: {processed_pdb}")
+            log_output(f"✅ PDB preprocessing completed: {processed_pdb}")
             
             # Step 2: Load processed PDB file to get topology and positions
             log_output(f"📖 Loading processed PDB file for OpenMM simulation")
@@ -494,11 +462,10 @@ class MDSimulationIntegration:
             self.current_simulation['processed_pdb'] = processed_pdb
             self.current_simulation['preprocessing_results'] = preprocess_result
             
-            # Run simulation using the proper OpenMM simulator with pre-processed data
-            # Pass stop condition check function
+            # Run simulation using proper OpenMM simulator
             def check_stop_condition():
                 return not self.simulation_running
-            
+
             simulation_results = self.openmm_simulator.run_proper_simulation_with_preprocessing(
                 pdb_file=processed_pdb,
                 pre_processed_topology=processed_topology,
@@ -543,42 +510,6 @@ class MDSimulationIntegration:
                 if 'energy_analysis' in simulation_results:
                     energy = simulation_results['energy_analysis']
                     log_output(f"🔋 Energy change: {energy['minimization_change']:.1f} kJ/mol")
-                
-                # Step 4: Run MM-GBSA calculation if enabled and MD completed successfully
-                if self.enable_mmgbsa and not simulation_results.get('user_stopped', False):
-                    log_output(f"\n🧮 Step 4: Starting MM-GBSA binding energy calculation")
-                    
-                    try:
-                        # Update simulation status to indicate MM-GBSA is running
-                        self.current_simulation['status'] = 'mmgbsa_running'
-                        
-                        mmgbsa_results = self.mmgbsa_calculator.calculate_binding_energy(
-                            simulation_dir=str(self.output_dir),
-                            simulation_id=simulation_id,
-                            output_callback=log_output
-                        )
-                        
-                        if mmgbsa_results and mmgbsa_results.get('success', False):
-                            log_output(f"✅ MM-GBSA calculation completed!")
-                            log_output(f"🔋 Insulin-Polymer binding energy: {mmgbsa_results['corrected_binding_energy']:.2f} ± {mmgbsa_results['binding_energy_std']:.2f} kcal/mol")
-                            log_output(f"🧪 Entropy correction: {mmgbsa_results['entropy_correction']:.4f} kcal/mol")
-                            
-                            # Add MM-GBSA results to simulation results
-                            simulation_results['mmgbsa_results'] = mmgbsa_results
-                            self.current_simulation['results'] = simulation_results
-                            self.current_simulation['status'] = 'completed_with_mmgbsa'
-                            
-                        else:
-                            log_output(f"⚠️ MM-GBSA calculation failed, but MD simulation was successful")
-                            simulation_results['mmgbsa_results'] = mmgbsa_results or {'success': False, 'error': 'Unknown error'}
-                            self.current_simulation['results'] = simulation_results
-                            self.current_simulation['status'] = 'completed_mmgbsa_failed'
-                            
-                    except Exception as mmgbsa_error:
-                        log_output(f"⚠️ MM-GBSA calculation failed: {str(mmgbsa_error)}")
-                        simulation_results['mmgbsa_results'] = {'success': False, 'error': str(mmgbsa_error)}
-                        self.current_simulation['results'] = simulation_results
-                        self.current_simulation['status'] = 'completed_mmgbsa_failed'
                 
             else:
                 log_output(f"❌ MD simulation failed: {simulation_results.get('error', 'Unknown error')}")
@@ -653,7 +584,7 @@ class MDSimulationIntegration:
             return {'success': False, 'error': str(e)}
     
     def analyze_simulation_results(self, simulation_id: str) -> Dict[str, Any]:
-        """Analyze simulation results including MM-GBSA data"""
+        """Analyze simulation results including trajectory data"""
         try:
             sim_dir = self.output_dir / simulation_id
             
@@ -689,23 +620,6 @@ class MDSimulationIntegration:
                 'timing': report_data.get('timing', {}),
                 'performance': report_data.get('performance', {})
             }
-            
-            # Add MM-GBSA results if available
-            if 'mmgbsa_results' in report_data:
-                mmgbsa_data = report_data['mmgbsa_results']
-                analysis_result['mmgbsa_results'] = mmgbsa_data
-                
-                # Add summary info to basic_info for easy access
-                if mmgbsa_data.get('success', False):
-                    analysis_result['basic_info']['binding_energy'] = mmgbsa_data.get('corrected_binding_energy', 'N/A')
-                    analysis_result['basic_info']['binding_energy_std'] = mmgbsa_data.get('binding_energy_std', 'N/A')
-                    analysis_result['basic_info']['entropy_correction'] = mmgbsa_data.get('entropy_correction', 'N/A')
-                    analysis_result['basic_info']['mmgbsa_available'] = True
-                else:
-                    analysis_result['basic_info']['mmgbsa_available'] = False
-                    analysis_result['basic_info']['mmgbsa_error'] = mmgbsa_data.get('error', 'Unknown error')
-            else:
-                analysis_result['basic_info']['mmgbsa_available'] = False
             
             return analysis_result
             
@@ -753,154 +667,6 @@ class MDSimulationIntegration:
             print(f"Error getting available simulations: {e}")
         
         return simulations
-    
-    def get_automated_simulation_candidates(self, base_dir: str = "automated_simulations") -> List[Dict[str, Any]]:
-        """
-        Get list of candidates generated by SimulationAutomationPipeline
-        
-        Args:
-            base_dir: Base directory where automated simulations are stored
-            
-        Returns:
-            List of candidate info dictionaries
-        """
-        candidates = []
-        
-        try:
-            base_path = Path(base_dir)
-            
-            if not base_path.exists():
-                print(f"⚠️ Automated simulations directory not found: {base_dir}")
-                return []
-            
-            # Look for session directories
-            for session_dir in base_path.iterdir():
-                if session_dir.is_dir() and session_dir.name.startswith('session_'):
-                    session_id = session_dir.name
-                    
-                    # Look for candidate directories
-                    for candidate_dir in session_dir.iterdir():
-                        if candidate_dir.is_dir() and candidate_dir.name.startswith('candidate_'):
-                            candidate_id = candidate_dir.name
-                            
-                            # Look for polymer box PDB files (check multiple locations)
-                            polymer_pdb = None
-                            
-                            # Debug: List all files in candidate directory
-                            print(f"🔍 Scanning candidate: {candidate_id}")
-                            all_files = list(candidate_dir.rglob("*"))
-                            pdb_files = [f for f in all_files if f.suffix == '.pdb']
-                            print(f"   📁 All PDB files found: {[f.name for f in pdb_files]}")
-                            
-                            # 1. Check in molecules subdirectory (standard location)
-                            molecules_dir = candidate_dir / 'molecules'
-                            if molecules_dir.exists():
-                                print(f"   📂 Molecules directory exists: {molecules_dir}")
-                                for pdb_file in molecules_dir.glob("*.pdb"):
-                                    print(f"      📄 Found PDB: {pdb_file.name}")
-                                    if ("polymer" in pdb_file.name.lower() and 
-                                        "composite" not in pdb_file.name.lower() and
-                                        "insulin" not in pdb_file.name.lower()):
-                                        polymer_pdb = str(pdb_file)
-                                        print(f"      ✅ Matched as polymer: {pdb_file.name}")
-                                        break
-                            else:
-                                print(f"   📂 Molecules directory does not exist")
-                            
-                            # 2. Check in main candidate directory if not found
-                            if not polymer_pdb:
-                                print(f"   🔍 Checking main candidate directory...")
-                                for pdb_file in candidate_dir.glob("*.pdb"):
-                                    print(f"      📄 Found PDB: {pdb_file.name}")
-                                    if ("polymer" in pdb_file.name.lower() and 
-                                        "composite" not in pdb_file.name.lower() and
-                                        "insulin" not in pdb_file.name.lower()):
-                                        polymer_pdb = str(pdb_file)
-                                        print(f"      ✅ Matched as polymer: {pdb_file.name}")
-                                        break
-                            
-                            # 3. Check for any PDB files with candidate ID (fallback)
-                            if not polymer_pdb:
-                                print(f"   🔍 Checking for any PDB with candidate ID...")
-                                for pdb_file in candidate_dir.rglob("*.pdb"):
-                                    print(f"      📄 Found PDB: {pdb_file.name} (checking for '{candidate_id}')")
-                                    if (candidate_id in pdb_file.name and 
-                                        "composite" not in pdb_file.name.lower() and
-                                        "insulin" not in pdb_file.name.lower() and
-                                        not pdb_file.name.lower().startswith("insulin_")):
-                                        polymer_pdb = str(pdb_file)
-                                        print(f"      ✅ Matched as polymer: {pdb_file.name}")
-                                        break
-                            
-                            # 4. As final fallback, take any non-insulin, non-composite PDB file
-                            if not polymer_pdb:
-                                print(f"   🔍 Final fallback: checking for any suitable PDB...")
-                                for pdb_file in candidate_dir.rglob("*.pdb"):
-                                    if ("composite" not in pdb_file.name.lower() and
-                                        "insulin" not in pdb_file.name.lower() and
-                                        not pdb_file.name.lower().startswith("insulin_")):
-                                        polymer_pdb = str(pdb_file)
-                                        print(f"      ✅ Using as polymer (fallback): {pdb_file.name}")
-                                        break
-                            
-                            if polymer_pdb:
-                                print(f"   ✅ Final polymer PDB: {polymer_pdb}")
-                            else:
-                                print(f"   ❌ No polymer PDB found for {candidate_id}")
-                            
-                            # Look for insulin-polymer composite files
-                            composite_pdb = None
-                            print(f"   🔍 Checking for composite files...")
-                            
-                            # Look for files starting with insulin_polymer_composite
-                            for pdb_file in candidate_dir.rglob("insulin_polymer_composite*.pdb"):
-                                print(f"      📄 Found insulin_polymer_composite PDB: {pdb_file.name}")
-                                composite_pdb = str(pdb_file)
-                                break
-                            
-                            # Fallback: check for any composite files
-                            if not composite_pdb:
-                                for pdb_file in candidate_dir.rglob("*composite*.pdb"):
-                                    print(f"      📄 Found generic composite PDB: {pdb_file.name}")
-                                    composite_pdb = str(pdb_file)
-                                    break
-                            
-                            if composite_pdb:
-                                print(f"   ✅ Final composite PDB: {composite_pdb}")
-                            else:
-                                print(f"   ❌ No composite PDB found for {candidate_id}")
-                            
-                            # Look for processed insulin files
-                            processed_insulin_dir = candidate_dir / "processed_insulin"
-                            processed_insulin_pdb = None
-                            if processed_insulin_dir.exists():
-                                for pdb_file in processed_insulin_dir.glob("*.pdb"):
-                                    processed_insulin_pdb = str(pdb_file)
-                                    break
-                            
-                            # Get candidate info
-                            candidate_info = {
-                                'session_id': session_id,
-                                'candidate_id': candidate_id,
-                                'candidate_dir': str(candidate_dir),
-                                'polymer_pdb': polymer_pdb,
-                                'composite_pdb': composite_pdb,
-                                'processed_insulin_pdb': processed_insulin_pdb,
-                                'has_polymer_box': polymer_pdb is not None,
-                                'has_insulin_system': composite_pdb is not None,
-                                'timestamp': datetime.fromtimestamp(candidate_dir.stat().st_mtime).isoformat(),
-                                'ready_for_md': composite_pdb is not None  # Can run MD if composite exists
-                            }
-                            
-                            candidates.append(candidate_info)
-            
-            # Sort by timestamp (newest first)
-            candidates.sort(key=lambda x: x['timestamp'], reverse=True)
-            
-        except Exception as e:
-            print(f"Error scanning automated simulation candidates: {e}")
-        
-        return candidates
 
 def get_insulin_polymer_pdb_files(base_dir: str = ".") -> List[Dict[str, Any]]:
     """

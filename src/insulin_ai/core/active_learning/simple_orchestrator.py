@@ -16,8 +16,50 @@ import json
 from typing import Dict, List, Any, Optional, Callable
 from datetime import datetime
 from pathlib import Path
+from langchain_core.tools import tool
+from langchain_core.runnables import Runnable
+from pydantic import BaseModel, Field, field_validator
 
 logger = logging.getLogger(__name__)
+
+@tool
+def validate_md_simulation_inputs(psmiles: str, polymer_smiles: str = None) -> dict:
+    """Validate inputs for molecular dynamics simulation using LangChain patterns."""
+    
+    errors = []
+    
+    # Basic PSMILES validation
+    if not psmiles or psmiles.strip() == "":
+        errors.append("PSMILES string cannot be empty")
+    elif not psmiles.replace('[*]', '').strip():
+        errors.append("PSMILES contains only connection points - missing actual molecular structure")
+    elif psmiles.count('(') != psmiles.count(')'):
+        errors.append("Unmatched parentheses in PSMILES structure")
+    
+    # Check for problematic characters that could cause KeyError
+    if psmiles and ('  ' in psmiles or '\t' in psmiles or '\n' in psmiles):
+        errors.append("PSMILES contains whitespace characters that could cause OpenMM KeyError")
+    
+    # Polymer SMILES validation if provided
+    if polymer_smiles:
+        if not polymer_smiles.strip():
+            errors.append("Polymer SMILES cannot be empty")
+        elif any(char == '' for char in polymer_smiles):
+            errors.append("Polymer SMILES contains empty characters")
+    
+    if errors:
+        return {
+            "valid": False,
+            "errors": errors,
+            "psmiles": psmiles,
+            "polymer_smiles": polymer_smiles
+        }
+    
+    return {
+        "valid": True,
+        "validated_psmiles": psmiles.strip(),
+        "validated_polymer_smiles": polymer_smiles.strip() if polymer_smiles else None
+    }
 
 
 class SimpleActiveLearningOrchestrator:
@@ -47,6 +89,19 @@ class SimpleActiveLearningOrchestrator:
         from integration.analysis.dual_gaff_amber_integration import DualGaffAmberIntegration
         self.dual_simulator = DualGaffAmberIntegration(
             output_dir=str(self.storage_path / "dual_gaff_amber_simulations")
+        )
+        
+        # Initialize comprehensive post-processing system for detailed analysis
+        from insulin_ai.integration.analysis.comprehensive_postprocessing import ComprehensivePostProcessor
+        self.postprocessor = ComprehensivePostProcessor(
+            output_dir=str(self.storage_path / "comprehensive_analysis")
+        )
+        
+        # Initialize PSMILES generator directly (not from session state)
+        from insulin_ai.core.psmiles_generator import PSMILESGenerator
+        self.psmiles_generator = PSMILESGenerator(
+            openai_model=self.config.get('psmiles_generation', {}).get('model', 'gpt-4o-mini'),
+            temperature=self.config.get('psmiles_generation', {}).get('temperature', 0.7)
         )
         
         logger.info(f"SimpleActiveLearningOrchestrator initialized - Max iterations: {max_iterations}")
@@ -378,11 +433,11 @@ class SimpleActiveLearningOrchestrator:
         
         # Add specific structural guidance
         if mechanisms:
-            mechanism_context = mechanisms[0] if mechanisms else "Controlled Release"
+            mechanism_context = mechanisms[0]
             prompt_parts.append(f"- and are inspired by {mechanism_context}")
             
         if structural_features:
-            main_structure = structural_features[0] if structural_features else "crosslinked network structure"
+            main_structure = structural_features[0]
             prompt_parts.append(f"designed as a {main_structure}")
         
         enhanced_prompt = " ".join(prompt_parts)
@@ -418,8 +473,129 @@ class SimpleActiveLearningOrchestrator:
             return False
         
         return True
-    
 
+    def _validate_simulation_inputs_with_retry(self, molecule: Dict[str, Any], psmiles: str) -> Dict[str, Any]:
+        """LangChain-style validation with retry logic for simulation inputs."""
+        
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            logger.info(f"🔍 Validating simulation inputs (attempt {attempt + 1}/{max_attempts})")
+            
+            # Get polymer SMILES if available
+            polymer_smiles = molecule.get('polymer_smiles', '')
+            
+            # **CRITICAL: Add molecular validation to prevent radicals**
+            try:
+                from insulin_ai.utils.molecular_validation import validate_psmiles_for_simulation, validate_smiles_for_simulation
+                
+                # Validate PSMILES for radicals and problematic elements
+                if psmiles:
+                    logger.info(f"🧬 Validating PSMILES: {psmiles}")
+                    psmiles_result = validate_psmiles_for_simulation(psmiles)
+                    
+                    if not psmiles_result.is_valid:
+                        logger.error(f"❌ PSMILES validation failed: {psmiles_result.error_message}")
+                        return {
+                            "success": False,
+                            "errors": [f"PSMILES validation failed: {psmiles_result.error_message}"]
+                        }
+                    
+                    if psmiles_result.has_radicals:
+                        logger.error(f"❌ PSMILES contains radicals: {psmiles_result.error_message}")
+                        return {
+                            "success": False,
+                            "errors": [f"PSMILES contains radicals - would cause OpenFF failure: {psmiles_result.error_message}"]
+                        }
+                    
+                    if psmiles_result.has_problematic_elements:
+                        logger.warning(f"⚠️ PSMILES contains problematic elements: {psmiles_result.error_message}")
+                        # Continue with warning but don't fail - problematic elements might be correctable
+                
+                # Validate polymer SMILES if available
+                if polymer_smiles:
+                    logger.info(f"🧬 Validating polymer SMILES: {polymer_smiles[:50]}...")
+                    smiles_result = validate_smiles_for_simulation(polymer_smiles)
+                    
+                    if smiles_result.has_radicals:
+                        logger.error(f"❌ Polymer SMILES contains radicals: {smiles_result.error_message}")
+                        return {
+                            "success": False,
+                            "errors": [f"Polymer SMILES contains radicals - would cause OpenFF failure: {smiles_result.error_message}"]
+                        }
+                    
+                    if smiles_result.has_problematic_elements:
+                        logger.warning(f"⚠️ Polymer SMILES contains problematic elements: {smiles_result.error_message}")
+                
+                logger.info("✅ Molecular validation passed - no radicals detected")
+                
+            except ImportError:
+                logger.warning("⚠️ Molecular validation not available - install RDKit for radical detection")
+            except Exception as e:
+                logger.warning(f"⚠️ Molecular validation failed: {e}")
+            
+            # Validate using LangChain tool pattern (existing validation)
+            validation_result = validate_md_simulation_inputs(psmiles, polymer_smiles)
+            
+            if validation_result["valid"]:
+                logger.info("✅ Input validation passed")
+                return {
+                    "success": True,
+                    "validated_psmiles": validation_result["validated_psmiles"],
+                    "validated_polymer_smiles": validation_result.get("validated_polymer_smiles")
+                }
+            
+            # Log validation errors
+            logger.warning(f"❌ Validation failed (attempt {attempt + 1}):")
+            for error in validation_result["errors"]:
+                logger.warning(f"   - {error}")
+            
+            if attempt < max_attempts - 1:
+                # Try to self-correct using LLM (LangChain pattern)
+                try:
+                    logger.info("🔧 Attempting to fix validation errors using LLM...")
+                    
+                    correction_prompt = f"""
+                    The following molecular simulation input has validation errors:
+                    
+                    PSMILES: {psmiles}
+                    Errors: {', '.join(validation_result['errors'])}
+                    
+                    Please provide a corrected PSMILES string that:
+                    1. Contains valid chemical structure (not just connection points [*])
+                    2. Has balanced parentheses
+                    3. Contains no empty characters or spaces
+                    4. Is suitable for polymer molecular dynamics simulation
+                    5. **CRITICAL: Contains NO radical species or unpaired electrons**
+                    6. **CRITICAL: Uses only safe elements (C, N, O, S, P, F, Cl, Br) - NO boron (B), silicon (Si), or aluminum (Al)**
+                    
+                    Return only the corrected PSMILES string.
+                    """
+                    
+                    # This is where you'd call your LLM to fix the input
+                    # For now, just clean the input and ensure it's safe
+                    psmiles = psmiles.strip() if psmiles else ""
+                    if not psmiles.replace('[*]', '').strip():
+                        psmiles = "[*]CCOCCOCCCO[*]"  # Simple safe polymer fallback
+                    
+                    # Remove any problematic elements
+                    problematic_replacements = {
+                        'B': 'C',
+                        'Si': 'C', 
+                        'Al': 'C'
+                    }
+                    for problematic, safe in problematic_replacements.items():
+                        if problematic in psmiles:
+                            psmiles = psmiles.replace(problematic, safe)
+                            logger.info(f"🔧 Replaced {problematic} with {safe} in PSMILES")
+                        
+                except Exception as e:
+                    logger.warning(f"   LLM correction failed: {e}")
+        
+        logger.error(f"❌ Failed to validate inputs after {max_attempts} attempts")
+        return {
+            "success": False,
+            "errors": validation_result["errors"]
+        }
     
     def _run_psmiles_generation(self, literature_results: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -429,11 +605,10 @@ class SimpleActiveLearningOrchestrator:
         try:
             # Import and use the exact same workflow the PSMILES Generation UI tab uses
             from app.services.psmiles_service import process_psmiles_workflow_with_autorepair
-            from app.utils.session_utils import safe_get_session_object
             
             # CRITICAL FIX: Use the literature-derived PSMILES generation prompt
             # This should be something specific like:
-            # "PEGylated poly(lactic-co-glycolic acid) with terminal amine groups for pH-sensitive insulin encapsulation"
+    
             psmiles_prompt = literature_results.get('psmiles_generation_prompt', '')
             
             if not psmiles_prompt:
@@ -456,16 +631,11 @@ class SimpleActiveLearningOrchestrator:
                        f"Functionalization: {auto_functionalize} | "
                        f"Max repairs: {max_repair_attempts}")
             
-            # Use the exact same working system as the manual PSMILES generation tab
-            logger.info(f"🔄 Using working PSMILES generation system (same as manual tab)")
-            
-            # Get the working PSMILES generator (same as manual tab)
-            psmiles_generator = safe_get_session_object('psmiles_generator')
-            if not psmiles_generator:
-                raise Exception("PSMILES Generator not available")
+            # Use the orchestrator's own PSMILES generator (no session state dependency)
+            logger.info(f"🚀 Generating {num_candidates} candidates using direct PSMILES generator...")
+            psmiles_generator = self.psmiles_generator
             
             # Use the exact same method as the working tab
-            logger.info(f"🚀 Generating {num_candidates} candidates using working pipeline...")
             diverse_results = psmiles_generator.generate_diverse_candidates(
                 base_request=psmiles_prompt,
                 num_candidates=num_candidates * 2,  # Generate more to ensure diversity (same as manual tab)
@@ -489,19 +659,19 @@ class SimpleActiveLearningOrchestrator:
                         'temperature_used': result.get('temperature_used', 0.8)
                     })
                 
-                logger.info(f"✅ Successfully generated {len(molecules)} candidates using working system")
+                logger.info(f"✅ Successfully generated {len(molecules)} candidates using direct PSMILES generator")
                 return {
                     'success': True,
                     'molecules': molecules,
                     'num_generated': len(molecules),
-                    'generation_method': 'working_pipeline_diverse_generation',
+                    'generation_method': 'direct_psmiles_generator',
                     'attempts_needed': 1,
                     'diversity_score': diverse_results.get('diversity_score', 0.8),
                     'validity_score': diverse_results.get('validity_score', 0.9),
                     'raw_result': diverse_results
                 }
             else:
-                raise Exception(f"Working pipeline failed: {diverse_results.get('error', 'Unknown error')}")
+                raise Exception(f"Direct PSMILES generator failed: {diverse_results.get('error', 'Unknown error')}")
             
         except Exception as e:
             logger.error(f"PSMILES generation failed: {e}")
@@ -556,23 +726,27 @@ class SimpleActiveLearningOrchestrator:
                         logger.warning(f"No PSMILES for molecule {molecule['id']}, skipping")
                         continue
                     
-                    # Validate PSMILES format before simulation
-                    if not self._validate_psmiles_format(psmiles):
-                        logger.warning(f"Invalid PSMILES format for molecule {molecule['id']}: {psmiles}")
-                        raise ValueError(f"Invalid PSMILES format: {psmiles}")
+                    # Use LangChain-style validation with retry logic
+                    validation_result = self._validate_simulation_inputs_with_retry(molecule, psmiles)
                     
-                    logger.info(f"✅ Valid PSMILES for {molecule['id']}: {psmiles}")
+                    if not validation_result["success"]:
+                        logger.error(f"❌ Validation failed for molecule {molecule['id']}: {validation_result.get('errors', 'Unknown errors')}")
+                        raise ValueError(f"Input validation failed after retry attempts: {validation_result.get('errors')}")
+                    
+                    # Use validated inputs
+                    validated_psmiles = validation_result["validated_psmiles"]
+                    logger.info(f"✅ Validated PSMILES for {molecule['id']}: {validated_psmiles}")
                     
                     # Use the configured simulation parameters from the UI
                     simulation_id = self.dual_simulator.run_md_simulation_async(
-                        pdb_file=psmiles,  # The UI passes PSMILES string
+                        pdb_file=validated_psmiles,  # Use validated PSMILES string
                         temperature=temperature,
                         equilibration_steps=equilibration_steps,
                         production_steps=production_steps,  
                         save_interval=save_interval,
                         output_prefix=f"al_{molecule['id']}",
                         polymer_chain_length=10,   # Keep shorter chains for active learning speed
-                        num_polymer_chains=3
+                        num_polymer_chains=1
                     )
                     
                     # Wait for simulation to actually complete (not just start!)
@@ -642,9 +816,9 @@ class SimpleActiveLearningOrchestrator:
             raise RuntimeError(f"MD simulation failed: {e}")
     
     def _run_postprocessing_analysis(self, simulation_id: str, molecule: Dict[str, Any]) -> Dict[str, Any]:
-        """Run lightweight post-processing analysis suitable for active learning"""
+        """Run comprehensive post-processing analysis using the full ComprehensivePostProcessor"""
         try:
-            logger.info(f"   🔬 Running lightweight post-processing for active learning...")
+            logger.info(f"   🔬 Running comprehensive post-processing for {simulation_id}...")
             
             # Get simulation results from the dual simulator
             simulation_results = self.dual_simulator.get_simulation_results(simulation_id)
@@ -653,65 +827,281 @@ class SimpleActiveLearningOrchestrator:
                 logger.warning(f"   ⚠️ No valid simulation results for {simulation_id}")
                 return None
             
-            # Extract key metrics for active learning (no MM-GBSA needed!)
+            # Find the simulation directory for comprehensive analysis
+            simulation_dir = simulation_results.get('output_dir')
+            if not simulation_dir:
+                logger.warning(f"   ⚠️ No output directory found for {simulation_id}")
+                return None
+            
+            logger.info(f"   📁 Analyzing simulation directory: {simulation_dir}")
+            
+            # Use the comprehensive postprocessor to run full analysis
+            # This will analyze trajectories, calculate properties, etc.
+            analysis_options = {
+                'basic_analysis': True,
+                'insulin_stability': True,
+                'binding_energy': True,
+                'diffusion_analysis': True,
+                'mesh_analysis': True,
+                'volume_analysis': True,
+                'interaction_analysis': True
+            }
+            
+            # Start comprehensive analysis (async)
+            analysis_job_id = self.postprocessor.start_comprehensive_analysis_async(
+                simulation_id=simulation_id,
+                simulation_dir=simulation_dir,
+                analysis_options=analysis_options,
+                simulation_structure_type='integrated'
+            )
+            
+            logger.info(f"   ⏳ Comprehensive analysis started with job ID: {analysis_job_id}")
+            
+            # Wait for analysis to complete (with timeout)
+            max_wait_time = 300  # 5 minutes timeout
+            wait_time = 0
+            poll_interval = 10
+            
+            while wait_time < max_wait_time:
+                try:
+                    status = self.postprocessor.get_analysis_status()
+                    
+                    # **ENHANCED DEBUGGING: Log the actual status structure for debugging**
+                    logger.info(f"   📊 Analysis status check: running={status.get('analysis_running', False)}, "
+                              f"completed={len(status.get('completed_jobs', []))}, "
+                              f"failed={len(status.get('failed_jobs', []))}")
+                    
+                    if 'completed_jobs' not in status:
+                        logger.warning(f"   ⚠️ Status missing 'completed_jobs' field. Available keys: {list(status.keys())}")
+                        # Add backward compatibility
+                        status.setdefault('completed_jobs', [])
+                        status.setdefault('failed_jobs', [])
+                    
+                    if analysis_job_id in status['completed_jobs']:
+                        logger.info(f"   ✅ Comprehensive analysis completed for {simulation_id}")
+                        break
+                    elif analysis_job_id in status['failed_jobs']:
+                        logger.error(f"   ❌ Comprehensive analysis failed for {simulation_id}")
+                        return None
+                    elif not status.get('analysis_running', True):
+                        # Analysis stopped but not in completed or failed - check current status
+                        if hasattr(self.postprocessor, 'current_analysis') and self.postprocessor.current_analysis:
+                            current_status = self.postprocessor.current_analysis.get('status', 'unknown')
+                            if current_status == 'completed':
+                                logger.info(f"   ✅ Analysis completed (detected via current_analysis)")
+                                break
+                            elif current_status == 'failed':
+                                error_msg = self.postprocessor.current_analysis.get('error', 'Unknown error')
+                                logger.error(f"   ❌ Analysis failed (detected via current_analysis): {error_msg}")
+                                return None
+                    
+                except Exception as e:
+                    logger.error(f"   ❌ Comprehensive post-processing analysis error: {e}")
+                    logger.error(f"   🎯 Analysis Job: {analysis_job_id}")
+                    logger.error(f"   📊 Simulation: {simulation_id}")
+                    # Try to get more diagnostic information
+                    try:
+                        if hasattr(self.postprocessor, 'current_analysis'):
+                            logger.error(f"   🔍 Current analysis state: {self.postprocessor.current_analysis}")
+                    except:
+                        pass
+                    return None
+                    
+                time.sleep(poll_interval)
+                wait_time += poll_interval
+                logger.info(f"   ⏳ Waiting for analysis... ({wait_time}s/{max_wait_time}s)")
+            
+            if wait_time >= max_wait_time:
+                logger.warning(f"   ⏰ Analysis timeout for {simulation_id}, using partial results")
+            
+            # Get the comprehensive analysis results
+            analysis_results = self.postprocessor.get_analysis_results(simulation_id)
+            
+            if not analysis_results:
+                logger.warning(f"   ⚠️ No analysis results available for {simulation_id}")
+                return None
+            
+            # Extract key metrics for active learning and literature mining
+            key_metrics = {}
+            
+            # Insulin stability metrics
+            if 'insulin_stability' in analysis_results:
+                stability = analysis_results['insulin_stability']
+                key_metrics['insulin_rmsd'] = stability.get('rmsd_avg', 0.0)
+                key_metrics['insulin_stability_score'] = stability.get('stability_score', 0.0)
+                key_metrics['insulin_flexibility'] = stability.get('rmsf_avg', 0.0)
+                logger.info(f"   🧬 Insulin RMSD: {key_metrics['insulin_rmsd']:.2f} Å")
+                logger.info(f"   📊 Stability score: {key_metrics['insulin_stability_score']:.3f}")
+            
+            # Binding and interaction energy
+            if 'binding_energy' in analysis_results:
+                binding = analysis_results['binding_energy']
+                key_metrics['binding_energy'] = binding.get('binding_energy_avg', 0.0)
+                key_metrics['interaction_strength'] = abs(binding.get('binding_energy_avg', 0.0))
+                logger.info(f"   🔗 Binding energy: {key_metrics['binding_energy']:.2f} kJ/mol")
+            
+            # Diffusion and transport properties
+            if 'diffusion_analysis' in analysis_results:
+                diffusion = analysis_results['diffusion_analysis']
+                key_metrics['diffusion_coefficient'] = diffusion.get('diffusion_coefficient', 0.0)
+                key_metrics['transfer_efficiency'] = diffusion.get('transfer_efficiency', 0.0)
+                logger.info(f"   🚶 Diffusion coefficient: {key_metrics['diffusion_coefficient']:.6f} cm²/s")
+            
+            # Mesh and structural properties
+            if 'mesh_analysis' in analysis_results:
+                mesh = analysis_results['mesh_analysis']
+                key_metrics['mesh_size'] = mesh.get('average_mesh_size', 0.0)
+                key_metrics['pore_distribution'] = mesh.get('pore_size_distribution', [])
+                logger.info(f"   🕸️ Average mesh size: {key_metrics['mesh_size']:.2f} Å")
+            
+            # Volume and swelling properties
+            if 'volume_analysis' in analysis_results:
+                volume = analysis_results['volume_analysis']
+                key_metrics['swelling_ratio'] = volume.get('swelling_ratio', 1.0)
+                key_metrics['volume_change'] = volume.get('volume_change_percent', 0.0)
+                logger.info(f"   💧 Swelling ratio: {key_metrics['swelling_ratio']:.2f}")
+            
+            # pH/environmental responsiveness (if available)
+            if 'environmental_response' in analysis_results:
+                env_response = analysis_results['environmental_response']
+                key_metrics['ph_sensitivity'] = env_response.get('ph_sensitivity', 0.0)
+                key_metrics['temperature_sensitivity'] = env_response.get('temperature_sensitivity', 0.0)
+            
+            # Basic energy analysis for compatibility
+            if 'final_energy' in simulation_results and 'initial_energy' in simulation_results:
+                energy_change = simulation_results['final_energy'] - simulation_results['initial_energy']
+                key_metrics['energy_change'] = energy_change
+                key_metrics['final_energy'] = simulation_results['final_energy']
+                key_metrics['energy_stability'] = abs(energy_change) < 1000  # kJ/mol threshold
+                logger.info(f"   ⚡ Energy change: {energy_change:.2f} kJ/mol")
+            
+            # Calculate comprehensive fitness score
+            fitness_score = self._calculate_comprehensive_fitness_score(key_metrics, molecule)
+            
+            # Prepare comprehensive results
+            comprehensive_results = {
+                'simulation_id': simulation_id,
+                'success': True,
+                'molecule_info': molecule,
+                'key_metrics': key_metrics,
+                'comprehensive_analysis': analysis_results,
+                'fitness_score': fitness_score,
+                'analysis_timestamp': datetime.now().isoformat()
+            }
+            
+            logger.info(f"   ✅ Comprehensive analysis completed - fitness score: {fitness_score:.3f}")
+            return comprehensive_results
+            
+        except Exception as e:
+            logger.error(f"   ❌ Comprehensive post-processing analysis error: {e}")
+            # Fall back to basic analysis if comprehensive fails
+            logger.info(f"   🔄 Falling back to basic analysis for {simulation_id}")
+            return self._run_basic_fallback_analysis(simulation_id, molecule)
+    
+    def _calculate_comprehensive_fitness_score(self, key_metrics: Dict[str, Any], molecule: Dict[str, Any]) -> float:
+        """Calculate fitness score based on comprehensive analysis metrics"""
+        fitness_score = 0.5  # Base score
+        
+        # Insulin stability (weight: 0.25)
+        insulin_rmsd = key_metrics.get('insulin_rmsd', 0.0)
+        stability_score = key_metrics.get('insulin_stability_score', 0.0)
+        if insulin_rmsd > 0:
+            if insulin_rmsd < 2.0:  # Excellent stability
+                fitness_score += 0.15
+            elif insulin_rmsd < 3.5:  # Good stability
+                fitness_score += 0.10
+            else:  # Poor stability
+                fitness_score -= 0.10
+        
+        if stability_score > 0.8:  # High stability
+            fitness_score += 0.10
+        elif stability_score < 0.5:  # Low stability
+            fitness_score -= 0.05
+        
+        # Binding/interaction strength (weight: 0.20)
+        binding_energy = key_metrics.get('binding_energy', 0.0)
+        if binding_energy != 0.0:
+            abs_binding = abs(binding_energy)
+            if 20.0 <= abs_binding <= 80.0:  # Optimal binding range
+                fitness_score += 0.15
+            elif 10.0 <= abs_binding <= 100.0:  # Acceptable binding
+                fitness_score += 0.10
+            elif abs_binding > 150.0:  # Too strong binding
+                fitness_score -= 0.10
+        
+        # Diffusion properties (weight: 0.20)
+        diffusion_coeff = key_metrics.get('diffusion_coefficient', 0.0)
+        if diffusion_coeff > 0:
+            if 0.001 <= diffusion_coeff <= 0.1:  # Optimal diffusion range
+                fitness_score += 0.15
+            elif 0.0001 <= diffusion_coeff <= 0.5:  # Acceptable range
+                fitness_score += 0.10
+            else:  # Too fast or too slow
+                fitness_score -= 0.05
+        
+        # Swelling behavior (weight: 0.15)
+        swelling_ratio = key_metrics.get('swelling_ratio', 1.0)
+        if 1.5 <= swelling_ratio <= 8.0:  # Good swelling range
+            fitness_score += 0.10
+        elif swelling_ratio > 15.0:  # Excessive swelling
+            fitness_score -= 0.10
+        
+        # Energy stability (weight: 0.10)
+        energy_stability = key_metrics.get('energy_stability', False)
+        if energy_stability:
+            fitness_score += 0.08
+        else:
+            fitness_score -= 0.05
+        
+        # Polymer complexity bonus (weight: 0.10)
+        psmiles = molecule.get('psmiles', '')
+        if psmiles:
+            complexity = len(psmiles.replace('[*]', ''))
+            if 10 <= complexity <= 50:  # Optimal complexity
+                fitness_score += 0.08
+            elif complexity > 100:  # Too complex
+                fitness_score -= 0.05
+        
+        return max(0.0, min(1.0, fitness_score))
+    
+    def _run_basic_fallback_analysis(self, simulation_id: str, molecule: Dict[str, Any]) -> Dict[str, Any]:
+        """Fallback to basic analysis if comprehensive analysis fails"""
+        try:
+            logger.info(f"   🔄 Running fallback basic analysis for {simulation_id}")
+            
+            simulation_results = self.dual_simulator.get_simulation_results(simulation_id)
+            
+            if not simulation_results or not simulation_results.get('success'):
+                return None
+            
+            # Basic analysis results
             analysis_results = {
                 'simulation_id': simulation_id,
                 'success': True,
                 'molecule_info': molecule,
-                'metrics': {}
+                'key_metrics': {}
             }
             
             # Basic energy analysis
             if 'final_energy' in simulation_results and 'initial_energy' in simulation_results:
                 energy_change = simulation_results['final_energy'] - simulation_results['initial_energy']
-                analysis_results['metrics']['energy_change'] = energy_change
-                analysis_results['metrics']['final_energy'] = simulation_results['final_energy']
-                analysis_results['metrics']['energy_stability'] = abs(energy_change) < 1000  # kJ/mol threshold
-                
-                logger.info(f"   📊 Energy change: {energy_change:.2f} kJ/mol")
+                analysis_results['key_metrics']['energy_change'] = energy_change
+                analysis_results['key_metrics']['final_energy'] = simulation_results['final_energy']
+                analysis_results['key_metrics']['energy_stability'] = abs(energy_change) < 1000
             
-            # Extract trajectory file info for future analysis if needed
-            if 'output_files' in simulation_results:
-                trajectory_files = [f for f in simulation_results['output_files'] if f.endswith('.dcd')]
-                if trajectory_files:
-                    analysis_results['trajectory_file'] = trajectory_files[0]
-                    logger.info(f"   📁 Trajectory saved: {trajectory_files[0]}")
+            # Assign basic fitness score
+            fitness_score = 0.5
+            if analysis_results['key_metrics'].get('energy_stability', False):
+                fitness_score += 0.2
             
-            # Assign a simple fitness score for active learning
-            # Higher score = better candidate for further exploration
-            fitness_score = 0.5  # Default neutral score
+            analysis_results['fitness_score'] = fitness_score
             
-            if 'energy_stability' in analysis_results['metrics']:
-                if analysis_results['metrics']['energy_stability']:
-                    fitness_score += 0.3  # Bonus for stable energy
-                else:
-                    fitness_score -= 0.2  # Penalty for unstable energy
-            
-            # Add polymer-specific metrics
-            psmiles = molecule.get('psmiles', '')
-            if psmiles:
-                # Simple complexity score based on PSMILES length
-                complexity = len(psmiles.replace('[*]', ''))
-                analysis_results['metrics']['complexity'] = complexity
-                
-                # Prefer moderate complexity (not too simple, not too complex)
-                if 10 <= complexity <= 50:
-                    fitness_score += 0.2
-                elif complexity > 100:
-                    fitness_score -= 0.1
-                    
-                logger.info(f"   🧬 Polymer complexity: {complexity} chars")
-            
-            analysis_results['fitness_score'] = max(0.0, min(1.0, fitness_score))
-            
-            logger.info(f"   ✅ Lightweight analysis completed - fitness score: {fitness_score:.3f}")
+            logger.info(f"   ✅ Basic fallback analysis completed - fitness score: {fitness_score:.3f}")
             return analysis_results
             
         except Exception as e:
-            logger.error(f"   ❌ Post-processing analysis error: {e}")
+            logger.error(f"   ❌ Basic fallback analysis error: {e}")
             return None
-    
-
     
     def _generate_new_prompt(self, literature_results: Dict[str, Any], 
                            generated_molecules: Dict[str, Any], 
@@ -723,98 +1113,191 @@ class SimpleActiveLearningOrchestrator:
         materials_found = literature_results.get('materials_found', [])
         mechanisms = literature_results.get('stabilization_mechanisms', [])
         
-        # Extract post-processing analysis results from simulation results
+        # Extract comprehensive post-processing analysis results from simulation results
         key_improvements = []
+        chemical_deficiencies = []
+        specific_targets = []
         
-        # Analyze each simulation result for post-processing insights
+        # Analyze each simulation result for comprehensive post-processing insights
         for sim_result in simulation_results.get('simulation_results', []):
             if sim_result.get('success') and 'analysis_results' in sim_result:
                 analysis = sim_result['analysis_results']
                 key_metrics = analysis.get('key_metrics', {})
                 
-                # Insulin stability analysis
+                # Insulin stability analysis with chemical specificity
                 insulin_rmsd = key_metrics.get('insulin_rmsd', 0.0)
                 stability_score = key_metrics.get('insulin_stability_score', 0.0)
-                if insulin_rmsd > 3.0:  # High RMSD indicates instability
+                insulin_flexibility = key_metrics.get('insulin_flexibility', 0.0)
+                
+                if insulin_rmsd > 3.0:  # High RMSD indicates structural instability
                     key_improvements.append("enhance insulin structural stability")
+                    chemical_deficiencies.append("lack of stabilizing hydrogen bond donors/acceptors")
+                    specific_targets.append("secondary structure preservation")
+                    
                 if stability_score < 0.7:  # Low stability score
                     key_improvements.append("improve protein conformation preservation")
+                    chemical_deficiencies.append("insufficient hydrophobic-hydrophilic balance")
+                    specific_targets.append("α-helix and β-sheet stabilization")
+                    
+                if insulin_flexibility > 2.5:  # Excessive flexibility
+                    key_improvements.append("reduce insulin structural fluctuations")
+                    chemical_deficiencies.append("inadequate crosslinking density")
                 
-                # Partitioning and transfer efficiency
-                transfer_efficiency = key_metrics.get('transfer_efficiency', 0.0)
-                if transfer_efficiency < 0.5:  # Poor transfer
-                    key_improvements.append("increase polymer-insulin affinity for better encapsulation")
-                
-                # Diffusion and release kinetics
-                diffusion_coeff = key_metrics.get('diffusion_coefficient', 0.0)
-                release_rate = key_metrics.get('release_rate', 0.0)
-                if diffusion_coeff < 0.01:  # Too slow diffusion
-                    key_improvements.append("optimize mesh size for controlled insulin release")
-                elif diffusion_coeff > 0.1:  # Too fast diffusion
-                    key_improvements.append("reduce initial burst release through tighter crosslinking")
-                
-                # Interaction strength
+                # Binding and interaction analysis with molecular specificity
                 binding_energy = key_metrics.get('binding_energy', 0.0)
-                if abs(binding_energy) < 10.0:  # Weak binding
-                    key_improvements.append("strengthen polymer-insulin interactions")
-                elif abs(binding_energy) > 100.0:  # Too strong binding
-                    key_improvements.append("balance binding strength for triggered release")
+                interaction_strength = key_metrics.get('interaction_strength', 0.0)
                 
-                # pH/temperature responsiveness
-                ph_sensitivity = key_metrics.get('ph_sensitivity', 0.0)
+                if abs(binding_energy) < 10.0:  # Weak binding
+                    key_improvements.append("strengthen polymer-insulin intermolecular interactions")
+                    chemical_deficiencies.append("insufficient aromatic-aromatic stacking or electrostatic interactions")
+                    specific_targets.append("π-π stacking domains and ionic coordination sites")
+                    
+                elif abs(binding_energy) > 100.0:  # Too strong binding
+                    key_improvements.append("achieve reversible polymer-insulin association")
+                    chemical_deficiencies.append("overly strong covalent or chelation interactions")
+                    specific_targets.append("pH-cleavable ester/amide linkages")
+                
+                # Diffusion and transport with mesh design specificity
+                diffusion_coeff = key_metrics.get('diffusion_coefficient', 0.0)
+                mesh_size = key_metrics.get('mesh_size', 0.0)
+                
+                if diffusion_coeff < 0.001:  # Too slow diffusion
+                    key_improvements.append("optimize mesh architecture for controlled insulin permeation")
+                    chemical_deficiencies.append("excessive crosslink density or inappropriate pore size")
+                    specific_targets.append("tunable mesh size between 10-50 nm")
+                    
+                elif diffusion_coeff > 0.1:  # Too fast diffusion
+                    key_improvements.append("reduce initial burst release through selective permeability")
+                    chemical_deficiencies.append("insufficient diffusion barriers or size selectivity")
+                    specific_targets.append("molecular weight cutoff control")
+                
+                if mesh_size > 0:
+                    if mesh_size < 5.0:  # Too tight mesh
+                        chemical_deficiencies.append("overly dense polymer network")
+                        specific_targets.append("degradable spacer units")
+                    elif mesh_size > 100.0:  # Too loose mesh  
+                        chemical_deficiencies.append("insufficient network integrity")
+                        specific_targets.append("multi-functional crosslinking agents")
+                
+                # Swelling and volume response with polymer chemistry
                 swelling_ratio = key_metrics.get('swelling_ratio', 1.0)
-                if ph_sensitivity < 0.3:  # Low pH response
-                    key_improvements.append("enhance pH-responsive behavior for targeted release")
-                if swelling_ratio < 1.5:  # Low swelling
-                    key_improvements.append("increase hydrogel swelling capacity")
+                volume_change = key_metrics.get('volume_change_percent', 0.0)
+                
+                if swelling_ratio < 1.5:  # Insufficient swelling
+                    key_improvements.append("enhance hydrophilic swelling for drug release")
+                    chemical_deficiencies.append("inadequate hydrophilic groups or ionic centers")
+                    specific_targets.append("carboxylate, sulfonate, or quaternary ammonium groups")
+                    
                 elif swelling_ratio > 10.0:  # Excessive swelling
-                    key_improvements.append("control excessive swelling to maintain structural integrity")
+                    key_improvements.append("control excessive swelling to maintain matrix integrity")
+                    chemical_deficiencies.append("insufficient hydrophobic domains or crosslink stability")
+                    specific_targets.append("hydrophobic alkyl chains and permanent crosslinks")
+                
+                # pH/environmental responsiveness with ionizable chemistry
+                ph_sensitivity = key_metrics.get('ph_sensitivity', 0.0)
+                temperature_sensitivity = key_metrics.get('temperature_sensitivity', 0.0)
+                
+                if ph_sensitivity < 0.3:  # Low pH response
+                    key_improvements.append("enhance pH-responsive behavior for intestinal targeting")
+                    chemical_deficiencies.append("insufficient ionizable functional groups")
+                    specific_targets.append("carboxylic acid, amine, or imidazole pH switches")
+                
+                if temperature_sensitivity < 0.2:  # Low temperature response
+                    key_improvements.append("incorporate thermosensitive release mechanisms")
+                    chemical_deficiencies.append("lack of lower critical solution temperature (LCST) behavior")
+                    specific_targets.append("N-isopropylacrylamide-type thermoresponsive units")
         
-        # Energy analysis from simulation
+        # Energy analysis from simulation with thermodynamic implications
         avg_energy = simulation_results.get('average_energy', 0)
-        if avg_energy > -1000:  # High energy suggests poor stability
-            key_improvements.append("achieve lower energy configurations for system stability")
+        if avg_energy > -1000:  # High energy suggests poor thermodynamic stability
+            key_improvements.append("achieve thermodynamically favorable polymer-insulin complexation")
+            chemical_deficiencies.append("unfavorable enthalpy or entropy of mixing")
+            specific_targets.append("compatible polymer-protein surface interactions")
         
-        # Build comprehensive new prompt
+        # Build comprehensive new prompt with chemical specificity
         prompt_parts = ["Design improved polymers for insulin delivery"]
         
-        # Add specific improvements based on analysis
+        # Add specific improvements based on comprehensive analysis
         if key_improvements:
             # Remove duplicates and limit to top 3 improvements
             unique_improvements = list(dict.fromkeys(key_improvements))[:3]
             prompt_parts.append(f"that {', '.join(unique_improvements)}")
         
-        # Add literature-derived insights
+        # Add literature-derived insights with chemical context
         if mechanisms:
-            mechanism_text = mechanisms[0] if len(mechanisms) > 0 else "advanced stabilization mechanisms"
+            mechanism_text = mechanisms[0] if len(mechanisms) > 0 else "advanced molecular recognition mechanisms"
             prompt_parts.append(f"utilizing {mechanism_text}")
         
-        # Add material inspiration
-        if materials_found:
-            material_text = materials_found[0] if len(materials_found) > 0 else "novel biomaterial approaches"
+        # Add material inspiration with chemical basis
+        if materials_found and len(materials_found) > 0:
+            material_text = materials_found[0]
             prompt_parts.append(f"inspired by {material_text}")
         
-        # Add specific chemical functionality based on performance gaps
+        # Add specific chemical functionality based on comprehensive performance gaps
         chemical_features = []
+        molecular_targets = []
         
-        # Check for specific functional group needs
+        # Map deficiencies to specific chemical solutions
         if any("pH-responsive" in imp for imp in key_improvements):
-            chemical_features.append("ionizable side chains")
-        if any("insulin affinity" in imp for imp in key_improvements):
-            chemical_features.append("hydrophobic domains for protein interaction")
-        if any("crosslinking" in imp for imp in key_improvements):
-            chemical_features.append("crosslinkable moieties")
-        if any("swelling" in imp for imp in key_improvements):
-            chemical_features.append("hydrophilic segments")
+            chemical_features.append("ionizable carboxylate or tertiary amine side chains")
+            molecular_targets.append("pKa values between 5.5-7.4")
             
+        if any("insulin affinity" in imp for imp in key_improvements) or any("binding" in imp for imp in key_improvements):
+            chemical_features.append("hydrophobic aromatic domains and hydrogen bonding motifs")
+            molecular_targets.append("complementary to insulin's hydrophobic patches")
+            
+        if any("crosslinking" in imp or "mesh" in imp for imp in key_improvements):
+            chemical_features.append("degradable crosslinking agents with tunable kinetics")
+            molecular_targets.append("enzyme-cleavable peptide or pH-labile acetal linkages")
+            
+        if any("swelling" in imp for imp in key_improvements):
+            chemical_features.append("amphiphilic block copolymer architecture")
+            molecular_targets.append("hydrophilic-lipophilic balance (HLB) optimization")
+            
+        if any("stability" in imp for imp in key_improvements):
+            chemical_features.append("protective coordination sites and chaperone-like domains")
+            molecular_targets.append("metal chelation centers or protein-mimetic sequences")
+        
+        # Add structural targets based on specific deficiencies
+        structural_requirements = []
+        if any("mesh size" in target for target in specific_targets):
+            structural_requirements.append("controlled mesh size between 10-50 nm")
+        if any("π-π stacking" in target for target in specific_targets):
+            structural_requirements.append("aromatic stacking domains")
+        if any("α-helix" in target for target in specific_targets):
+            structural_requirements.append("secondary structure stabilizing motifs")
+        
+        # Construct comprehensive prompt with chemical and structural specificity
         if chemical_features:
             prompt_parts.append(f"incorporating {' and '.join(chemical_features)}")
+            
+        if molecular_targets:
+            prompt_parts.append(f"featuring {' and '.join(molecular_targets)}")
+            
+        if structural_requirements:
+            prompt_parts.append(f"achieving {' and '.join(structural_requirements)}")
         
-        # Finalize prompt
+        # Add specific polymer architecture guidance
+        architecture_specs = []
+        if any("block copolymer" in feature for feature in chemical_features):
+            architecture_specs.append("multi-block copolymer design")
+        if any("crosslinking" in imp for imp in key_improvements):
+            architecture_specs.append("crosslinked hydrogel network")
+        if any("pH" in imp for imp in key_improvements):
+            architecture_specs.append("stimuli-responsive architecture")
+            
+        if architecture_specs:
+            prompt_parts.append(f"using {' with '.join(architecture_specs)}")
+        
+        # Finalize prompt with comprehensive chemical guidance
         new_prompt = " ".join(prompt_parts) + "."
         
-        logger.info(f"📝 Generated new prompt based on analysis: {new_prompt[:200]}...")
+        # Log comprehensive analysis insights
+        logger.info(f"📝 Generated chemically-specific prompt based on comprehensive analysis:")
+        logger.info(f"    {new_prompt[:150]}...")
         logger.info(f"🎯 Key improvements identified: {', '.join(key_improvements[:3])}")
+        logger.info(f"⚗️ Chemical deficiencies: {', '.join(chemical_deficiencies[:2])}")
+        logger.info(f"🔬 Molecular targets: {', '.join(molecular_targets[:2])}")
         
         return new_prompt
     

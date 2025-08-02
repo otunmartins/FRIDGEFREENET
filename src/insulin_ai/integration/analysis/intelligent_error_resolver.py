@@ -57,22 +57,31 @@ except ImportError:
 class MDErrorClassifier:
     """Classifies and categorizes MD pipeline errors using pattern matching and ML"""
     
-    ERROR_CATEGORIES = {
-        'session_state': {
+    # Error patterns and their characteristics
+    ERROR_PATTERNS = {
+        'openff_toolkit_missing': {
             'patterns': [
-                'object has no attribute',
-                'session_state',
-                'PSMILESProcessor',
-                'psmiles_processor'
+                'No module named \'openff\'',
+                'ImportError: cannot import name \'Molecule\'',
+                'openff.toolkit'
             ],
             'severity': 'high',
             'auto_fixable': True
         },
-        'mmgbsa_calculation': {
+        'openmm_platform': {
             'patterns': [
-                'MM-GBSA calculation failed',
-                'binding energy',
-                'InsulinMMGBSACalculator',
+                'OpenCL platform',
+                'CUDA platform',
+                'no suitable platform'
+            ],
+            'severity': 'medium',
+            'auto_fixable': True
+        },
+        'force_field_assignment': {
+            'patterns': [
+                'No template found for residue',
+                'UNL',
+                'Unknown residue',
                 'createSystem failed'
             ],
             'severity': 'high',
@@ -81,32 +90,190 @@ class MDErrorClassifier:
         'trajectory_analysis': {
             'patterns': [
                 'Trajectory file not found',
-                'analyze_trajectory_file',
                 'MDTraj',
-                'n_frames'
+                'Frame index out of range'
             ],
             'severity': 'medium',
             'auto_fixable': True
         },
-        'dataframe_type': {
+        'memory_overflow': {
             'patterns': [
-                'DataFrame',
-                'numpy array',
-                'pandas',
-                'corr()'
-            ],
-            'severity': 'medium',
-            'auto_fixable': True
-        },
-        'force_field': {
-            'patterns': [
-                'No template found for residue',
-                'UNL',
-                'GAFFTemplateGenerator',
-                'stereochemistry'
+                'OutOfMemoryError',
+                'MemoryError',
+                'killed process'
             ],
             'severity': 'high',
+            'auto_fixable': False
+        },
+        'timeout_errors': {
+            'patterns': [
+                'TimeoutError',
+                'simulation timeout',
+                'took too long'
+            ],
+            'severity': 'medium',
             'auto_fixable': True
+        }
+    }
+    
+    # Solution templates for each error type
+    SOLUTION_TEMPLATES = {
+        'openff_toolkit_missing': {
+            'description': 'OpenFF toolkit not available or improperly installed',
+            'solutions': [
+                {
+                    'title': 'Install OpenFF toolkit',
+                    'code_template': '''
+# Install via conda (recommended)
+import subprocess
+subprocess.run(['conda', 'install', '-c', 'conda-forge', 'openff-toolkit'])
+
+# Or fallback to pip
+subprocess.run(['pip', 'install', 'openff-toolkit'])
+                    ''',
+                    'success_rate': 0.95
+                },
+                {
+                    'title': 'Use fallback without OpenFF',
+                    'code_template': '''
+try:
+    from openff.toolkit import Molecule
+    USE_OPENFF = True
+except ImportError:
+    USE_OPENFF = False
+    print("⚠️ OpenFF not available, using fallback mode")
+                    ''',
+                    'success_rate': 0.80
+                }
+            ]
+        },
+        'openmm_platform': {
+            'description': 'OpenMM platform selection and compatibility issues',
+            'solutions': [
+                {
+                    'title': 'Auto-select best available platform',
+                    'code_template': '''
+import openmm as mm
+
+def get_best_platform():
+    platforms = []
+    for i in range(mm.Platform.getNumPlatforms()):
+        platform = mm.Platform.getPlatform(i)
+        platforms.append((platform.getName(), platform.getSpeed()))
+    
+    # Sort by speed (fastest first)
+    platforms.sort(key=lambda x: x[1], reverse=True)
+    return platforms[0][0] if platforms else 'Reference'
+
+platform_name = get_best_platform()
+platform = mm.Platform.getPlatformByName(platform_name)
+                    ''',
+                    'success_rate': 0.90
+                },
+                {
+                    'title': 'Force CPU platform as fallback',
+                    'code_template': '''
+try:
+    platform = mm.Platform.getPlatformByName('CUDA')
+except:
+    try:
+        platform = mm.Platform.getPlatformByName('OpenCL')
+    except:
+        platform = mm.Platform.getPlatformByName('CPU')
+                    ''',
+                    'success_rate': 0.85
+                }
+            ]
+        },
+        'force_field_assignment': {
+            'description': 'Force field parameter assignment failures',
+            'solutions': [
+                {
+                    'title': 'Use GAFF fallback for unknown residues',
+                    'code_template': '''
+from openmmforcefields.generators import GAFFTemplateGenerator
+
+# Create GAFF generator for unknown molecules
+gaff_generator = GAFFTemplateGenerator(molecules=molecules)
+forcefield.registerTemplateGenerator(gaff_generator.generator)
+                    ''',
+                    'success_rate': 0.85
+                },
+                {
+                    'title': 'Simplify system by removing problematic residues',
+                    'code_template': '''
+# Remove unknown residues as last resort
+modeller = Modeller(topology, positions)
+unknown_residues = [res for res in topology.residues() if res.name == 'UNL']
+if unknown_residues:
+    modeller.delete(unknown_residues)
+    topology = modeller.topology
+    positions = modeller.positions
+                    ''',
+                    'success_rate': 0.70
+                }
+            ]
+        },
+        'trajectory_analysis': {
+            'description': 'Trajectory file access and analysis problems',
+            'solutions': [
+                {
+                    'title': 'Verify trajectory file exists and is readable',
+                    'code_template': '''
+import os
+from pathlib import Path
+
+trajectory_path = Path(trajectory_file)
+if not trajectory_path.exists():
+    raise FileNotFoundError(f"Trajectory file not found: {trajectory_path}")
+
+if trajectory_path.stat().st_size == 0:
+    raise ValueError(f"Trajectory file is empty: {trajectory_path}")
+                    ''',
+                    'success_rate': 0.90
+                }
+            ]
+        },
+        'memory_overflow': {
+            'description': 'Memory limitations during simulation or analysis',
+            'solutions': [
+                {
+                    'title': 'Reduce system size or analysis frequency',
+                    'code_template': '''
+# Reduce trajectory analysis frequency
+analysis_interval = max(1000, original_interval * 2)
+
+# Or analyze in chunks
+chunk_size = min(1000, total_frames // 4)
+for start in range(0, total_frames, chunk_size):
+    end = min(start + chunk_size, total_frames)
+    analyze_chunk(trajectory[start:end])
+                    ''',
+                    'success_rate': 0.75
+                }
+            ]
+        },
+        'timeout_errors': {
+            'description': 'Simulation or analysis timeouts',
+            'solutions': [
+                {
+                    'title': 'Implement incremental processing with checkpoints',
+                    'code_template': '''
+import time
+
+def process_with_timeout(func, timeout=300):
+    start_time = time.time()
+    while time.time() - start_time < timeout:
+        try:
+            return func()
+        except Exception as e:
+            if time.time() - start_time >= timeout:
+                raise TimeoutError(f"Operation timed out after {timeout}s")
+            time.sleep(1)
+                    ''',
+                    'success_rate': 0.80
+                }
+            ]
         }
     }
     
@@ -115,7 +282,7 @@ class MDErrorClassifier:
         full_text = f"{error_msg} {traceback_str}".lower()
         
         classifications = []
-        for category, config in self.ERROR_CATEGORIES.items():
+        for category, config in self.ERROR_PATTERNS.items():
             matches = sum(1 for pattern in config['patterns'] if pattern.lower() in full_text)
             if matches > 0:
                 classifications.append({
@@ -168,45 +335,6 @@ def validate_session_object(obj_name: str) -> bool:
     return obj is not None and hasattr(obj, '__class__')
                         ''',
                         'success_rate': 0.90
-                    }
-                ]
-            },
-            'mmgbsa_calculation': {
-                'description': 'MM-GBSA binding energy calculation failures',
-                'solutions': [
-                    {
-                        'title': 'Check trajectory file existence',
-                        'code_template': '''
-trajectory_path = Path(trajectory_file)
-if not trajectory_path.exists():
-    raise FileNotFoundError(f"Trajectory file not found: {trajectory_path}")
-                        ''',
-                        'success_rate': 0.85
-                    },
-                    {
-                        'title': 'Add OpenMM dependency validation',
-                        'code_template': '''
-try:
-    import openmm as mm
-    import openmm.app as app
-    OPENMM_AVAILABLE = True
-except ImportError:
-    OPENMM_AVAILABLE = False
-    raise ImportError("OpenMM required for MM-GBSA calculations")
-                        ''',
-                        'success_rate': 0.90
-                    },
-                    {
-                        'title': 'Implement fallback calculation',
-                        'code_template': '''
-try:
-    # Primary MM-GBSA calculation
-    result = calculate_mmgbsa_primary(trajectory)
-except Exception as e:
-    # Fallback to simplified calculation
-    result = calculate_mmgbsa_simplified(trajectory)
-                        ''',
-                        'success_rate': 0.75
                     }
                 ]
             },

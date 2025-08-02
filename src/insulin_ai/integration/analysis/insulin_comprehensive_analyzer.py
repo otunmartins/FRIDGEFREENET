@@ -3,9 +3,9 @@
 
 """
 Comprehensive Insulin Delivery Analyzer
-Extends the proven MM-GBSA approach to calculate all essential properties for insulin delivery systems
+Provides comprehensive analysis of essential properties for insulin delivery systems
 
-This module builds on the proven InsulinMMGBSACalculator to provide comprehensive analysis:
+This module provides comprehensive analysis:
 1. 🧪 Insulin stability & conformation (RMSD, RMSF, secondary structure, H-bonds)
 2. 🔄 Partitioning & transfer free energy (PMF, partition coefficient)  
 3. 🚶 Diffusion coefficient inside gel (MSD analysis)
@@ -14,74 +14,72 @@ This module builds on the proven InsulinMMGBSACalculator to provide comprehensiv
 6. 💧 Swelling & poroelastic response
 7. 🎛️ Hydrogel-responsive behavior (pH, glucose, temperature)
 
-Uses the PROVEN OpenMM + MDTraj approach for robust, efficient analysis.
+Uses the proven OpenMM + MDTraj approach for robust, efficient analysis.
 """
 
 import os
+import sys
+import uuid
 import json
-import logging
-import traceback
 import time
+import numpy as np
+import threading
+import traceback
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Callable, Tuple
-import pandas as pd
-import numpy as np
 from datetime import datetime
-import matplotlib.pyplot as plt
-# Optional seaborn import for enhanced plotting
-try:
-    import seaborn as sns
-    SEABORN_AVAILABLE = True
-except ImportError:
-    SEABORN_AVAILABLE = False
-    print("⚠️  Seaborn not available. Install with: conda install -c conda-forge seaborn")
+import logging
 
-# OpenMM imports
+# Essential imports for trajectory analysis
 try:
     import openmm as mm
-    import openmm.app as app
-    import openmm.unit as unit
-    from openmm.app import PDBFile, ForceField, Simulation
-    from openmm.app import HBonds
+    from openmm import app, unit
+    from openmm.app import PDBFile, Modeller, ForceField
     OPENMM_AVAILABLE = True
-except ImportError as e:
-    logging.warning(f"OpenMM not available: {e}")
+except ImportError:
     OPENMM_AVAILABLE = False
 
-# MDTraj for efficient trajectory analysis (PROVEN APPROACH)
 try:
     import mdtraj as md
     MDTRAJ_AVAILABLE = True
-except ImportError as e:
-    logging.warning(f"MDTraj not available: {e}")
+except ImportError:
     MDTRAJ_AVAILABLE = False
 
-# OpenFF imports for polymer handling
 try:
     from openff.toolkit import Molecule
-    from openmmforcefields.generators import SMIRNOFFTemplateGenerator
+    from openmmforcefields.generators import GAFFTemplateGenerator, SystemGenerator
     OPENFF_AVAILABLE = True
-except ImportError as e:
-    logging.warning(f"OpenFF/OpenMMForceFields not available: {e}")
+except ImportError:
     OPENFF_AVAILABLE = False
 
-# Scientific analysis imports
 try:
-    from scipy import stats, spatial, optimize
-    from scipy.spatial.distance import pdist, squareform
+    import matplotlib.pyplot as plt
+    import matplotlib
+    matplotlib.use('Agg')  # Use non-interactive backend
+    PLOTTING_AVAILABLE = True
+except ImportError:
+    PLOTTING_AVAILABLE = False
+
+try:
+    import pandas as pd
+    PANDAS_AVAILABLE = True
+except ImportError:
+    PANDAS_AVAILABLE = False
+
+try:
+    from scipy import stats
+    from scipy.optimize import curve_fit
+    from scipy.spatial.distance import cdist
     from sklearn.cluster import DBSCAN
     SCIPY_AVAILABLE = True
 except ImportError as e:
     logging.warning(f"SciPy/scikit-learn not available: {e}")
     SCIPY_AVAILABLE = False
 
-# MM-GBSA calculator removed as no longer needed
-MMGBSA_AVAILABLE = False
-
 class InsulinComprehensiveAnalyzer:
     """
     Comprehensive analyzer for insulin delivery systems
-    ✅ Extends the proven MM-GBSA approach with all essential properties
+    ✅ Provides comprehensive property analysis for insulin delivery systems
     """
     
     def __init__(self, output_dir: str = "comprehensive_analysis"):
@@ -95,38 +93,30 @@ class InsulinComprehensiveAnalyzer:
         if not OPENFF_AVAILABLE:
             raise ImportError("OpenFF toolkit is required for polymer handling")
         
-        if not MMGBSA_AVAILABLE:
-            raise ImportError("Base MM-GBSA calculator is required")
-        
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(exist_ok=True)
         
-        # Initialize base MM-GBSA calculator
-        mmgbsa_output = self.output_dir / "mmgbsa"
-        self.mmgbsa_calculator = InsulinMMGBSACalculator(str(mmgbsa_output))
+        # Initialize analysis components
+        analysis_output = self.output_dir / "analysis"
+        analysis_output.mkdir(exist_ok=True)
         
-        # Platform setup
+        # Get best OpenMM platform
         self.platform = self._get_best_platform()
         
-        # Standard amino acid residues (insulin residues)
+        # Standard amino acid residues for insulin identification
         self.standard_residues = {
             'ALA', 'ARG', 'ASN', 'ASP', 'CYS', 'GLN', 'GLU', 'GLY', 'HIS', 'ILE',
             'LEU', 'LYS', 'MET', 'PHE', 'PRO', 'SER', 'THR', 'TRP', 'TYR', 'VAL',
             'HIE', 'HID', 'HIP'  # Histidine variants
         }
         
-        # Physical constants for calculations
-        self.constants = {
-            'kB': 0.0019872041,  # kcal/(mol·K) - Boltzmann constant
-            'T': 310.0,          # K - physiological temperature
-            'NA': 6.02214076e23, # Avogadro's number
-            'water_density': 997.0  # kg/m³ at 37°C
-        }
+        # Analysis state tracking
+        self.current_analysis = None
+        self.analysis_running = False
         
         print(f"🔬 Comprehensive Insulin Delivery Analyzer initialized")
         print(f"📁 Output directory: {self.output_dir}")
         print(f"🖥️  Platform: {self.platform.getName()}")
-        print(f"🧮 Base MM-GBSA calculator: Ready")
         print(f"📊 Analysis modules: All 7 property categories available")
         
     def _get_best_platform(self):
@@ -134,12 +124,13 @@ class InsulinComprehensiveAnalyzer:
         platform_names = [mm.Platform.getPlatform(i).getName() 
                           for i in range(mm.Platform.getNumPlatforms())]
         
-        if 'CUDA' in platform_names:
-            return mm.Platform.getPlatformByName('CUDA')
-        elif 'OpenCL' in platform_names:
-            return mm.Platform.getPlatformByName('OpenCL')
-        else:
-            return mm.Platform.getPlatformByName('CPU')
+        # Prefer CUDA > OpenCL > CPU > Reference
+        for preferred in ['CUDA', 'OpenCL', 'CPU', 'Reference']:
+            if preferred in platform_names:
+                return mm.Platform.getPlatformByName(preferred)
+        
+        # Fallback 
+        return mm.Platform.getPlatform(0)
     
     def analyze_trajectory_file(self, trajectory_file: str,
                                simulation_id: str,
@@ -1037,7 +1028,7 @@ class InsulinComprehensiveAnalyzer:
                 
                 if len(positions) > 1:
                     # Calculate pairwise distances
-                    distances = pdist(positions)
+                    distances = cdist(positions, positions) # Use cdist for pairwise distances
                     
                     # Mesh size approximation: characteristic distance between polymer atoms
                     # Use 75th percentile as estimate of typical mesh spacing
@@ -1162,20 +1153,20 @@ class InsulinComprehensiveAnalyzer:
                     polymer_pos = xyz[polymer_indices]
                     
                     # Calculate minimum distances between insulin and polymer atoms
-                    distances = spatial.distance.cdist(insulin_pos, polymer_pos)
+                    distances = cdist(insulin_pos, polymer_pos)
                     min_distances = np.min(distances, axis=1)
                     interaction_data['insulin_polymer_distances'].extend(min_distances.tolist())
                 
                 # Insulin-Water interactions (if water present)
                 if len(insulin_indices) > 0 and len(water_indices) > 0:
                     water_pos = xyz[water_indices]
-                    distances = spatial.distance.cdist(insulin_pos, water_pos)
+                    distances = cdist(insulin_pos, water_pos)
                     min_distances = np.min(distances, axis=1)
                     interaction_data['insulin_water_distances'].extend(min_distances.tolist())
                 
                 # Polymer-Water interactions (if water present)
                 if len(polymer_indices) > 0 and len(water_indices) > 0:
-                    distances = spatial.distance.cdist(polymer_pos, water_pos)
+                    distances = cdist(polymer_pos, water_pos)
                     min_distances = np.min(distances, axis=1)
                     interaction_data['polymer_water_distances'].extend(min_distances.tolist())
             
@@ -1322,7 +1313,7 @@ class InsulinComprehensiveAnalyzer:
                     
                     # Count water molecules within 5 Å of any polymer atom
                     if len(water_pos) > 0 and len(polymer_pos) > 0:
-                        distances = spatial.distance.cdist(water_pos, polymer_pos)
+                        distances = cdist(water_pos, polymer_pos)
                         min_distances = np.min(distances, axis=1)
                         nearby_water = np.sum(min_distances < 5.0)
                         water_near_polymer.append(nearby_water)
@@ -1580,8 +1571,6 @@ if __name__ == "__main__":
         print("❌ MDTraj not available. Cannot test comprehensive analyzer.")
     elif not OPENFF_AVAILABLE:
         print("❌ OpenFF/OpenMMForceFields not available. Cannot test comprehensive analyzer.")
-    elif not MMGBSA_AVAILABLE:
-        print("❌ Base MM-GBSA calculator not available. Cannot test comprehensive analyzer.")
     else:
         success = test_comprehensive_analyzer()
         print(f"Test result: {'PASSED' if success else 'FAILED'}") 

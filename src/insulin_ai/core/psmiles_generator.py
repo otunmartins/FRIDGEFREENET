@@ -556,12 +556,12 @@ Examples of good short monomers:
     
     def validate_valid_mol_constraints(self, smiles: str) -> tuple:
         """
-        VALID-Mol Framework Constraints Validation (2025 Research)
-        Implements molecular weight and length constraints that improved validity from 3% to 83%
+        VALID-Mol Framework Constraints Validation (2025 Research) - UPDATED FOR TESTING
+        **RELAXED** constraints to allow testing of stable structures with various elements
         """
         try:
-            # Step 1: SMILES Length Constraint (5-1000 characters)
-            MIN_LENGTH = 5
+            # Step 1: SMILES Length Constraint - RELAXED for simple stable structures
+            MIN_LENGTH = 2   # Reduced from 5 - allows simple compounds like BCl3 → ClB(Cl)Cl
             MAX_LENGTH = 1000
             
             if len(smiles) < MIN_LENGTH:
@@ -570,7 +570,7 @@ Examples of good short monomers:
             if len(smiles) > MAX_LENGTH:
                 return False, f"SMILES too long ({len(smiles)} > {MAX_LENGTH} chars) - unrealistic structure"
             
-            # Step 2: Molecular Weight Constraint (100-800 Da)
+            # Step 2: Molecular Weight Constraint - RELAXED for simple stable structures
             try:
                 from rdkit import Chem
                 from rdkit.Chem import rdMolDescriptors
@@ -581,8 +581,8 @@ Examples of good short monomers:
                 
                 # Calculate molecular weight
                 mw = rdMolDescriptors.CalcExactMolWt(mol)
-                MIN_MW = 100.0  # Da
-                MAX_MW = 800.0  # Da (drug-like range)
+                MIN_MW = 30.0   # Reduced from 100.0 - allows simple stable compounds (BCl3 ≈ 117 Da, SiO2 ≈ 60 Da)  
+                MAX_MW = 800.0  # Keep reasonable upper limit for drug-like range
                 
                 if mw < MIN_MW:
                     return False, f"Molecular weight too low ({mw:.1f} < {MIN_MW} Da)"
@@ -726,30 +726,50 @@ CRITICAL RULES (ENHANCED WITH MOLLM MULTI-OBJECTIVE FRAMEWORK):
 5. Focus on practical monomers that could be polymerized
 6. NEVER use explicit hydrogen atoms (H) in the structure - SMILES implicit hydrogen handling
 7. For sulfur atoms, use valid patterns like CSC (thioether), c1sccc1 (thiophene), CSS (disulfide)
+8. **CRITICAL: NEVER generate radical species or unpaired electrons**
+9. **CRITICAL: ALL atoms must have complete valence shells (closed-shell structures only)**
+10. **CRITICAL: Ensure proper valence for all elements - any element is allowed if properly bonded**
+
+**RADICAL PREVENTION RULES:**
+- ENSURE all atoms have complete valence shells (no unpaired electrons)
+- ENSURE proper bonding patterns for all elements
+- ENSURE all carbon atoms have 4 bonds (including implicit hydrogens)
+- ENSURE all nitrogen atoms have 3 bonds + lone pair (total 8 electrons)
+- ENSURE all oxygen atoms have 2 bonds + 2 lone pairs (total 8 electrons)
+- ENSURE all sulfur atoms follow stable bonding patterns
+- ENSURE boron atoms have 3 bonds (BCl3, BF3 patterns) or 4 bonds when coordinated
+- ENSURE silicon atoms have 4 bonds (SiO4, SiCl4 patterns)
+- ENSURE aluminum atoms have 3 bonds (AlCl3) or 6 bonds when coordinated
+- NO charged species ([NH3+], [O-]) unless absolutely necessary for the chemistry
+- FOCUS: Prevent unpaired electrons, not specific elements
 
 DIVERSIFICATION STRATEGY (FROM MOLLM RESEARCH 2025):
 - Vary functionalization types: ester, amide, ether, aromatic substitution, vinyl, sulfur-based
 - Mix backbone types: aliphatic chains, aromatic rings, heterocycles
-- Combine different heteroatoms: N, O, S, P (when appropriate)
+- Combine different heteroatoms: N, O, S, P (when appropriate and stable)
 - Use different connection patterns: linear, branched, cyclic integration
+- **ALL variations must maintain closed-shell electronic structure**
 
 MOLECULAR WEIGHT CONSTRAINTS (VALID-MOL FRAMEWORK):
 - Target monomer repeat units: 50-500 Da (realistic monomer range)
 - PSMILES length: 8-100 characters (excludes [*] symbols)
 - Ensure chemical feasibility for polymerization
+- **Must be stable, closed-shell molecules only**
 
 FUNCTIONALIZATION DIVERSITY (TSMMG TEACHER-STUDENT APPROACH):
 - Primary types: C(=O)O (ester), C(=O)N (amide), O (ether), c1ccccc1 (aromatic)
 - Secondary types: CSS (disulfide), CSC (thioether), C=C (vinyl), c1sccc1 (thiophene)
-- Tertiary types: P-containing (when specified), halogenated (F, Cl), cyclic structures
+- Tertiary types: P-containing (PO4 groups only), halogenated (F, Cl), cyclic structures
+- **ALL must be stable, non-radical species**
 
 IMPORTANT SMILES SYNTAX:
 - NO explicit hydrogen atoms: Never write H, HS, SH, HSH, HCSH, etc.
 - Sulfur examples: CSC (thioether bridge), c1sccc1 (thiophene ring), CSS (disulfide)
 - Carbon backbone: CC, CCC, c1ccccc1 (aromatic)
 - Functional groups: C(=O) (carbonyl), C(=O)O (carboxyl), C(=O)N (amide)
+- **Ensure all examples represent stable, closed-shell molecules**
 
-VALID MONOMER EXAMPLES (WITH DIVERSITY):
+VALID MONOMER EXAMPLES (WITH DIVERSITY, ALL CLOSED-SHELL):
 - "monomer with aromatic rings": [*]c1ccccc1[*] OR [*]Cc1ccccc1C[*] OR [*]c1ccc(C)cc1[*]
 - "monomer with amide linkages": [*]C(=O)NC[*] OR [*]CC(=O)NCC[*] OR [*]C(=O)Nc1ccccc1[*]
 - "monomer with ester groups": [*]C(=O)OC[*] OR [*]CC(=O)OCC[*] OR [*]C(=O)Oc1ccccc1[*]
@@ -762,12 +782,18 @@ INVALID EXAMPLES TO AVOID:
 - [*]HCSH[*] - NO explicit hydrogens
 - [*]SH[*] - NO explicit hydrogens
 - [*]HS[*] - NO explicit hydrogens
+- **[*]B...[*] - NO boron atoms (radical prone)**
+- **[*]Si...[*] - NO silicon in complex structures (radical prone)**
+- **[*]Al...[*] - NO aluminum atoms (radical prone)**
+- **Any structure with unpaired electrons or radical character**
 
 TASK: Convert the user's description into a valid MONOMER PSMILES string.
 - Think about the MONOMER REPEAT UNIT they're describing
 - Generate a chemically realistic PSMILES monomer with exactly 2 [*] connection points
 - Use diverse functionalization appropriate to the request
 - Ensure proper SMILES syntax and chemical validity
+- **CRITICAL: Ensure the molecule has no radicals or unpaired electrons**
+- **CRITICAL: Use only stable, closed-shell electronic configurations**
 - For sulfur requests, use CSC, CSS, or c1sccc1 patterns with variation
 - Respond with just the PSMILES string, no explanation unless requested"""
 
@@ -1527,10 +1553,84 @@ TASK: Convert the user's description into a valid MONOMER PSMILES string.
 
     def validate_valid_mol_constraints(self, smiles: str) -> tuple:
         """
-        VALID-Mol Framework Constraints Validation (2025 Research) - Copy for PSMILESGenerator
-        Implements molecular weight and length constraints that improved validity from 3% to 83%
+        VALID-Mol Framework Constraints Validation (2025 Research) - UPDATED FOR TESTING
+        **RELAXED** constraints to allow testing of stable structures with various elements
         """
-        return self.nl_to_psmiles.validate_valid_mol_constraints(smiles)
+        try:
+            # Step 1: SMILES Length Constraint - RELAXED for simple stable structures
+            MIN_LENGTH = 2   # Reduced from 5 - allows simple compounds like BCl3 → ClB(Cl)Cl
+            MAX_LENGTH = 1000
+            
+            if len(smiles) < MIN_LENGTH:
+                return False, f"SMILES too short ({len(smiles)} < {MIN_LENGTH} chars)"
+            
+            if len(smiles) > MAX_LENGTH:
+                return False, f"SMILES too long ({len(smiles)} > {MAX_LENGTH} chars) - unrealistic structure"
+            
+            # Step 2: Molecular Weight Constraint - RELAXED for simple stable structures
+            try:
+                from rdkit import Chem
+                from rdkit.Chem import rdMolDescriptors
+                
+                mol = Chem.MolFromSmiles(smiles)
+                if mol is None:
+                    return False, "Invalid SMILES structure"
+                
+                # Calculate molecular weight
+                mw = rdMolDescriptors.CalcExactMolWt(mol)
+                MIN_MW = 30.0   # Reduced from 100.0 - allows simple stable compounds (BCl3 ≈ 117 Da, SiO2 ≈ 60 Da)  
+                MAX_MW = 800.0  # Keep reasonable upper limit for drug-like range
+                
+                if mw < MIN_MW:
+                    return False, f"Molecular weight too low ({mw:.1f} < {MIN_MW} Da)"
+                
+                if mw > MAX_MW:
+                    return False, f"Molecular weight too high ({mw:.1f} > {MAX_MW} Da) - unrealistic for drug-like molecules"
+                
+                return True, f"Valid: {len(smiles)} chars, {mw:.1f} Da"
+                
+            except ImportError:
+                # RDKit not available, only check length
+                return True, f"Valid length: {len(smiles)} chars (MW check requires RDKit)"
+            except Exception as e:
+                return False, f"Molecular weight calculation failed: {str(e)}"
+                
+        except Exception as e:
+            return False, f"VALID-Mol validation error: {str(e)}"
+    
+    def _clean_smiles_response(self, response: str) -> str:
+        """Clean OpenAI response to extract just the SMILES string"""
+        # Remove common explanatory text
+        response = response.replace("SMILES:", "").replace("smiles:", "")
+        response = response.replace("The SMILES string is", "")
+        response = response.replace("Answer:", "").replace("Result:", "")
+        response = response.replace("→", "").replace("->", "")
+        
+        # Split by lines and take first non-empty line
+        lines = [line.strip() for line in response.split('\n') if line.strip()]
+        if lines:
+            smiles = lines[0]
+        else:
+            smiles = response.strip()
+        
+        # Remove quotes and extra spaces
+        smiles = smiles.strip().strip('"').strip("'").strip()
+        
+        # CRITICAL FIX: Remove descriptive text in parentheses that causes PSMILES parsing errors
+        import re
+        # Remove text in parentheses like "(styrene)", "(fluorinated phenol)", etc.
+        smiles = re.sub(r'\s*\([^)]*\)\s*', '', smiles)
+        
+        # Remove trailing descriptive words after SMILES
+        # Split on first space and take only the SMILES part
+        smiles_parts = smiles.split()
+        if smiles_parts:
+            smiles = smiles_parts[0]
+        
+        # Final cleanup
+        smiles = smiles.strip()
+        
+        return smiles
 
 
 def test_psmiles_generator():

@@ -3,11 +3,8 @@ Integration Analysis Package
 Contains tools for MD simulation integration and comprehensive analysis.
 """
 
-try:
-    from .insulin_mmgbsa_calculator import InsulinMMGBSACalculator
-    MMGBSA_AVAILABLE = True
-except ImportError:
-    MMGBSA_AVAILABLE = False
+# Remove MM-GBSA dependency that was causing import failures
+# MM-GBSA functionality has been removed from the system
 
 try:
     from .md_simulation_integration import MDSimulationIntegrator
@@ -22,9 +19,6 @@ except ImportError:
     COMPREHENSIVE_ANALYZER_AVAILABLE = False
 
 __all__ = []
-
-if MMGBSA_AVAILABLE:
-    __all__.append('InsulinMMGBSACalculator')
 
 if MD_INTEGRATION_AVAILABLE:
     __all__.append('MDSimulationIntegrator')

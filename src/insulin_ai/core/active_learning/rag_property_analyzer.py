@@ -460,16 +460,33 @@ Generate a comprehensive prompt for the next polymer design iteration.""")
             content = result.get("content", "").lower()
             title = result.get("title", "").lower()
             
-            # Extract material names
-            material_keywords = ["peg", "plga", "chitosan", "alginate", "gelatin", "hyaluronic", "collagen"]
-            for material in material_keywords:
-                if material in content or material in title:
-                    materials.append({
-                        "name": material.upper(),
-                        "source": result.get("url", ""),
-                        "context": result.get("title", ""),
-                        "similarity": 0.7  # Default similarity
-                    })
+            # Extract material names using LLM analysis instead of hardcoded keywords
+            try:
+                material_extraction_prompt = f"""Extract polymer/material names from this research content:
+
+Title: {result.get("title", "")}
+Content: {content[:500]}...
+
+List only the specific polymer/material names mentioned. Return as JSON array of material names only.
+Example: ["PEG", "PLGA", "chitosan"]"""
+
+                response = self.llm.invoke(material_extraction_prompt)
+                import json
+                try:
+                    extracted_materials = json.loads(response.content.strip())
+                    if isinstance(extracted_materials, list):
+                        for material in extracted_materials:
+                            materials.append({
+                                "name": str(material).upper(),
+                                "source": result.get("url", ""),
+                                "context": result.get("title", ""),
+                                "similarity": 0.9
+                            })
+                except (json.JSONDecodeError, ValueError):
+                    logger.warning(f"Failed to parse extracted materials: {response.content}")
+                    
+            except Exception as e:
+                logger.warning(f"Failed to extract materials using LLM: {e}")
             
             # Extract benchmark data (simplified)
             if any(term in content for term in ["mpa", "degradation", "biocompatibility", "mechanical"]):

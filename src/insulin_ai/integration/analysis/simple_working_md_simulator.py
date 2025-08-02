@@ -841,9 +841,15 @@ class SimpleWorkingMDSimulator:
                     time=True,
                     potentialEnergy=True,
                     temperature=True,
+                    speed=True,  # **ENHANCED: Add speed (ns/day) reporting as requested**
                     separator='\t'
                 )
                 simulation.reporters.append(console_reporter)
+                
+                # **NEW: Add progress output header for user clarity**
+                log_message(f"\n🏃 SIMULATION PROGRESS (every 100.0 ps):")
+                log_message(f"{'Step':>12} {'Time(ps)':>12} {'PE(kJ/mol)':>15} {'Temp(K)':>10} {'Speed(ns/day)':>15}")
+                log_message(f"{'-'*12} {'-'*12} {'-'*15} {'-'*10} {'-'*15}")
             
             log_message(f"✅ Reporters configured")
             log_message(f"   • Trajectory: {trajectory_file}")

@@ -84,8 +84,7 @@ def initialize_systems() -> Dict[str, Any]:
             missing_deps = []
             if 'openmm' in str(e).lower():
                 missing_deps.append('openmm')
-            if 'mmgbsa' in str(e).lower():
-                missing_deps.append('mmgbsa')
+            # MM-GBSA dependency removed from system
             print(f"MD integration initialization failed: Missing dependencies: {missing_deps}")
         except Exception as e:
             print(f"⚠️ MD integration not available: {e}")

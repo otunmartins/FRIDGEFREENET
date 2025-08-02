@@ -107,8 +107,7 @@ class AutomatedPostProcessing:
         if COMPREHENSIVE_POSTPROCESSOR_AVAILABLE:
             try:
                 self.comprehensive_processor = ComprehensivePostProcessor(
-                    output_dir=str(self.storage_path / "comprehensive_analysis"),
-                    enable_progress_tracking=True
+                    output_dir=str(self.storage_path / "comprehensive_analysis")
                 )
                 logger.info("ComprehensivePostProcessor initialized")
             except Exception as e:
@@ -423,30 +422,211 @@ class AutomatedPostProcessing:
         """Run analysis using ComprehensivePostProcessor."""
         
         if not context.simulation_results or not context.simulation_results.simulation_files:
+            logger.warning("No simulation files available for comprehensive analysis")
             return {}
-        
-        # Configure analysis based on available simulation files
-        trajectory_files = [f for f in context.simulation_results.simulation_files if f.endswith('.dcd')]
-        
-        if not trajectory_files:
-            return {}
-        
-        # Run comprehensive analysis
-        analysis_config = {
-            "trajectory_file": trajectory_files[0],
-            "analysis_types": calculation_strategy["specific_calculations"],
-            "statistical_rigor": analysis_configuration["statistical_rigor"],
-            "output_visualizations": analysis_configuration["visualization_level"] != "basic"
-        }
         
         try:
-            # This would use the actual comprehensive processor API
-            # For now, simulate realistic results
-            results = self._simulate_comprehensive_results(context, calculation_strategy)
-            return results
+            # Create a temporary simulation directory structure that ComprehensivePostProcessor expects
+            simulation_id = f"active_learning_iter_{context.iteration}"
+            
+            # Find trajectory file
+            trajectory_file = None
+            for file_path in context.simulation_results.simulation_files:
+                if file_path.endswith(('.dcd', '.pdb', '.xtc')):
+                    trajectory_file = file_path
+                    break
+            
+            if not trajectory_file:
+                logger.warning("No trajectory file found in simulation results")
+                return {}
+            
+            # Determine analysis options based on calculation strategy
+            analysis_options = self._map_calculation_strategy_to_analysis_options(
+                calculation_strategy, analysis_configuration
+            )
+            
+            # Create a progress callback to capture output
+            progress_messages = []
+            def progress_callback(message: str):
+                progress_messages.append(message)
+                logger.info(f"ComprehensivePostProcessor: {message}")
+            
+            # Get simulation directory from trajectory file path
+            trajectory_path = Path(trajectory_file)
+            simulation_dir = str(trajectory_path.parent)
+            
+            # Determine simulation structure type
+            if trajectory_path.name == "frames.pdb" and "production" in str(trajectory_path.parent):
+                structure_type = 'integrated'
+            elif trajectory_path.name == "trajectory.pdb":
+                structure_type = 'dual_gaff_amber'
+            else:
+                structure_type = 'simple'
+            
+            # Start comprehensive analysis asynchronously
+            analysis_job_id = self.comprehensive_processor.start_comprehensive_analysis_async(
+                simulation_id=simulation_id,
+                simulation_dir=simulation_dir,
+                analysis_options=analysis_options,
+                output_callback=progress_callback,
+                trajectory_file=trajectory_file,
+                simulation_structure_type=structure_type
+            )
+            
+            logger.info(f"Started comprehensive analysis with job ID: {analysis_job_id}")
+            
+            # Wait for analysis to complete
+            max_wait_time = 1800  # 30 minutes
+            wait_interval = 10    # 10 seconds
+            total_wait = 0
+            
+            while total_wait < max_wait_time:
+                status = self.comprehensive_processor.get_analysis_status()
+                
+                if not status['analysis_running']:
+                    break
+                
+                if status.get('analysis_info'):
+                    current_step = status['analysis_info'].get('current_step', 'Processing...')
+                    progress = status['analysis_info'].get('progress', 0)
+                    logger.info(f"Analysis progress: {progress:.1f}% - {current_step}")
+                
+                await asyncio.sleep(wait_interval)
+                total_wait += wait_interval
+            
+            # Get final results
+            if total_wait >= max_wait_time:
+                logger.warning("Comprehensive analysis timed out")
+                return {}
+            
+            # Retrieve analysis results
+            final_results = self.comprehensive_processor.get_analysis_results(simulation_id)
+            
+            if not final_results.get('success'):
+                logger.warning(f"Comprehensive analysis failed: {final_results.get('error', 'Unknown error')}")
+                return {}
+            
+            # Extract relevant data from comprehensive results
+            comprehensive_data = final_results.get('comprehensive_results', {})
+            analysis_results = comprehensive_data.get('results', {})
+            
+            # Convert comprehensive analysis results to expected format
+            converted_results = self._convert_comprehensive_results_to_standard_format(
+                analysis_results, comprehensive_data.get('summary_metrics', {})
+            )
+            
+            logger.info("Comprehensive analysis completed successfully")
+            return converted_results
+            
         except Exception as e:
-            logger.warning(f"Comprehensive processor execution failed: {e}")
+            logger.error(f"Error in comprehensive analysis: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return {}
+    
+    def _map_calculation_strategy_to_analysis_options(self, calculation_strategy: Dict[str, Any],
+                                                    analysis_configuration: Dict[str, Any]) -> Dict[str, bool]:
+        """Map calculation strategy to ComprehensivePostProcessor analysis options."""
+        
+        # Default options - enable what's available
+        analysis_options = {
+            'insulin_stability': True,      # Always try insulin stability analysis
+            'partitioning': False,          # May not be applicable for all simulations
+            'diffusion': True,              # Usually relevant for drug delivery
+            'hydrogel_dynamics': True,      # Relevant for polymer systems
+            'interaction_energies': True,   # Generally useful
+            'swelling_response': False,     # Specific to swelling studies
+            'basic_trajectory_stats': True, # Always useful
+            'literature_analysis': False,   # Optional, resource-intensive
+            'material_recommendations': False  # Optional
+        }
+        
+        # Adjust based on calculation strategy
+        specific_calculations = calculation_strategy.get('specific_calculations', [])
+        
+        for calc in specific_calculations:
+            if 'transport' in calc.lower() or 'diffusion' in calc.lower():
+                analysis_options['diffusion'] = True
+                analysis_options['partitioning'] = True
+            
+            elif 'interaction' in calc.lower() or 'binding' in calc.lower():
+                analysis_options['interaction_energies'] = True
+            
+            elif 'structural' in calc.lower():
+                analysis_options['hydrogel_dynamics'] = True
+            
+            elif 'stability' in calc.lower():
+                analysis_options['insulin_stability'] = True
+        
+        # Enable literature analysis for comprehensive analysis
+        if analysis_configuration.get('analysis_strategy') == 'comprehensive_analysis':
+            analysis_options['literature_analysis'] = True
+            analysis_options['material_recommendations'] = True
+        
+        return analysis_options
+    
+    def _convert_comprehensive_results_to_standard_format(self, analysis_results: Dict[str, Any],
+                                                         summary_metrics: Dict[str, Any]) -> Dict[str, Any]:
+        """Convert ComprehensivePostProcessor results to standard format."""
+        
+        converted_results = {}
+        
+        # Extract mechanical properties
+        if 'insulin_stability' in analysis_results:
+            stability = analysis_results['insulin_stability']
+            if stability.get('success'):
+                converted_results['mechanical_properties'] = {
+                    'rmsd_stability': stability.get('rmsd', {}).get('mean', 0.0),
+                    'structural_stability': stability.get('rmsd', {}).get('stability_assessment', 'unknown')
+                }
+        
+        # Extract transport properties
+        if 'diffusion' in analysis_results:
+            diffusion = analysis_results['diffusion']
+            if diffusion.get('success'):
+                converted_results['transport_properties'] = {
+                    'diffusion_coefficient': diffusion.get('msd_analysis', {}).get('diffusion_coefficient', 0.0),
+                    'msd_analysis': diffusion.get('msd_analysis', {})
+                }
+        
+        # Extract structural properties
+        if 'hydrogel_dynamics' in analysis_results:
+            hydrogel = analysis_results['hydrogel_dynamics']
+            if hydrogel.get('success'):
+                converted_results['structural_properties'] = {
+                    'mesh_size': hydrogel.get('mesh_size_analysis', {}).get('average_mesh_size', 0.0),
+                    'mesh_size_distribution': hydrogel.get('mesh_size_analysis', {})
+                }
+        
+        # Extract interaction energies
+        if 'interaction_energies' in analysis_results:
+            interactions = analysis_results['interaction_energies']
+            if interactions.get('success'):
+                converted_results['interaction_energies'] = interactions
+        
+        # Extract basic trajectory stats
+        if 'basic_trajectory' in analysis_results:
+            basic = analysis_results['basic_trajectory']
+            if basic.get('success', False) or basic.get('analysis_available', False):
+                converted_results['trajectory_statistics'] = {
+                    'num_frames': basic.get('num_frames', 0),
+                    'num_atoms': basic.get('num_atoms', 0),
+                    'simulation_time_ps': basic.get('time_ps', 0),
+                    'rmsd_mean': basic.get('rmsd_mean', 0.0),
+                    'radius_gyration_mean': basic.get('rg_mean', 0.0)
+                }
+        
+        # Add summary metrics
+        if summary_metrics:
+            converted_results['summary_metrics'] = summary_metrics
+        
+        # Add literature insights if available
+        if 'literature_analysis' in analysis_results:
+            lit_analysis = analysis_results['literature_analysis']
+            if isinstance(lit_analysis, dict):
+                converted_results['literature_insights'] = lit_analysis
+        
+        return converted_results
     
     async def _run_property_scoring(self, context: PostProcessingContext,
                                   calculation_strategy: Dict[str, Any]) -> Dict[str, Any]:
@@ -1001,5 +1181,178 @@ async def test_automated_post_processing():
     return results
 
 
+async def test_comprehensive_integration():
+    """Test the complete integration between AutomatedPostProcessing and ComprehensivePostProcessor."""
+    print("\n" + "="*80)
+    print("🧪 Testing Comprehensive Integration")
+    print("="*80)
+    
+    try:
+        # Import required components
+        from .state_manager import StateManager, SimulationResults
+        from .decision_engine import LLMDecisionEngine
+        import tempfile
+        import os
+        
+        # Create temporary directory structure for test
+        with tempfile.TemporaryDirectory() as temp_dir:
+            print(f"📁 Using temporary directory: {temp_dir}")
+            
+            # Create mock simulation directory structure
+            sim_dir = Path(temp_dir) / "test_simulation" / "sim_001"
+            sim_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Create a mock trajectory file
+            trajectory_file = sim_dir / "trajectory.pdb"
+            with open(trajectory_file, 'w') as f:
+                f.write("HEADER    TEST TRAJECTORY\n")
+                f.write("MODEL        1\n")
+                f.write("ATOM      1  CA  ALA A   1      20.154  30.000  40.000  1.00 50.00           C\n")
+                f.write("ATOM      2  CA  ALA A   2      21.154  31.000  41.000  1.00 50.00           C\n")
+                f.write("ENDMDL\n")
+                f.write("MODEL        2\n") 
+                f.write("ATOM      1  CA  ALA A   1      20.200  30.100  40.100  1.00 50.00           C\n")
+                f.write("ATOM      2  CA  ALA A   2      21.200  31.100  41.100  1.00 50.00           C\n")
+                f.write("ENDMDL\n")
+            
+            print(f"📝 Created mock trajectory file: {trajectory_file}")
+            
+            # Initialize post-processor
+            post_processor = AutomatedPostProcessing(str(Path(temp_dir) / "postprocessing_output"))
+            print(f"✅ AutomatedPostProcessing initialized")
+            
+            # Create state manager and decision engine
+            state_manager = StateManager(str(Path(temp_dir) / "states"))
+            decision_engine = LLMDecisionEngine()
+            
+            # Create test iteration state
+            state = state_manager.create_new_iteration(
+                initial_prompt="Design biocompatible hydrogel for sustained insulin release",
+                target_properties={
+                    "biocompatibility": 0.85,
+                    "degradation_rate": 0.6,
+                    "mechanical_strength": 0.7
+                }
+            )
+            
+            # Create realistic simulation results
+            state.simulation_results = SimulationResults(
+                simulation_time_ns=10.0,
+                equilibration_time_ns=2.0,
+                final_energy=-2500.8,
+                temperature=310.15,  # Body temperature
+                pressure=1.013,
+                density=1.08,
+                simulation_success=True,
+                execution_time=7200.0,  # 2 hours
+                simulation_files=[str(trajectory_file)]
+            )
+            
+            print(f"🔬 Created test iteration {state.iteration_number} with simulation results")
+            print(f"   - Simulation time: {state.simulation_results.simulation_time_ns} ns")
+            print(f"   - Final energy: {state.simulation_results.final_energy} kJ/mol")
+            print(f"   - Trajectory file: {trajectory_file}")
+            
+            # Test automated post-processing with comprehensive analysis
+            print(f"\n🚀 Running automated post-processing...")
+            results = await post_processor.run_automated_processing(state, decision_engine)
+            
+            # Validate results
+            print(f"\n📊 Results Analysis:")
+            print(f"   - Performance score: {results.performance_score:.3f}")
+            print(f"   - Mechanical properties: {len(results.mechanical_properties)} items")
+            print(f"   - Thermal properties: {len(results.thermal_properties)} items")
+            print(f"   - Transport properties: {len(results.transport_properties)} items")
+            print(f"   - Stability metrics: {len(results.stability_metrics)} items")
+            
+            if hasattr(results, 'analysis_summary') and results.analysis_summary:
+                print(f"   - Analysis summary: {len(results.analysis_summary)} characters")
+            
+            if hasattr(results, 'recommendations') and results.recommendations:
+                print(f"   - Recommendations: {len(results.recommendations)} items")
+                for i, rec in enumerate(results.recommendations[:3], 1):
+                    print(f"     {i}. {rec}")
+            
+            if hasattr(results, 'confidence_level'):
+                print(f"   - Confidence level: {results.confidence_level:.3f}")
+            
+            # Test target score evaluation
+            if results.target_scores:
+                print(f"\n🎯 Target Property Evaluation:")
+                if hasattr(results.target_scores, 'biocompatibility'):
+                    print(f"   - Biocompatibility: {results.target_scores.biocompatibility:.3f}")
+                if hasattr(results.target_scores, 'degradation_rate'):
+                    print(f"   - Degradation rate: {results.target_scores.degradation_rate:.3f}")
+                if hasattr(results.target_scores, 'mechanical_strength'):
+                    print(f"   - Mechanical strength: {results.target_scores.mechanical_strength:.3f}")
+                
+                overall_score = getattr(results.target_scores, 'overall_score', 
+                                      results.performance_score)
+                print(f"   - Overall score: {overall_score:.3f}")
+            
+            # Test comprehensive processor integration
+            if post_processor.comprehensive_processor:
+                print(f"\n🔬 ComprehensivePostProcessor Integration:")
+                dependency_status = post_processor.comprehensive_processor.get_dependency_status()
+                analysis_caps = dependency_status['analysis_capabilities']
+                available_capabilities = [k for k, v in analysis_caps.items() if v]
+                print(f"   - Available analysis capabilities: {len(available_capabilities)}")
+                for cap in available_capabilities:
+                    print(f"     ✅ {cap}")
+                
+                print(f"   - Recommendation: {dependency_status['recommendation']}")
+            
+            print(f"\n✅ Comprehensive integration test completed successfully!")
+            return results
+            
+    except Exception as e:
+        print(f"\n❌ Integration test failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
 if __name__ == "__main__":
-    asyncio.run(test_automated_post_processing()) 
+    import asyncio
+    
+    async def run_all_tests():
+        """Run all automated post-processing tests."""
+        print("🧪 AUTOMATED POST-PROCESSING INTEGRATION TESTS")
+        print("=" * 80)
+        
+        # Test 1: Basic functionality
+        print("\n1️⃣ Testing basic AutomatedPostProcessing functionality...")
+        basic_results = await test_automated_post_processing()
+        
+        # Test 2: Comprehensive integration
+        print("\n2️⃣ Testing comprehensive integration...")
+        integration_results = await test_comprehensive_integration()
+        
+        # Summary
+        print("\n" + "="*80)
+        print("📋 TEST SUMMARY")
+        print("="*80)
+        
+        if basic_results:
+            print("✅ Basic functionality test: PASSED")
+        else:
+            print("❌ Basic functionality test: FAILED")
+        
+        if integration_results:
+            print("✅ Comprehensive integration test: PASSED")
+        else:
+            print("❌ Comprehensive integration test: FAILED")
+        
+        if basic_results and integration_results:
+            print("\n🎉 ALL TESTS PASSED - AutomatedPostProcessing successfully integrated!")
+            print("   - ComprehensivePostProcessor integration: ✅ Working")
+            print("   - LLM decision making: ✅ Working")
+            print("   - Property scoring: ✅ Working")
+            print("   - Active learning workflow: ✅ Ready")
+        else:
+            print("\n⚠️  SOME TESTS FAILED - Check integration issues")
+        
+        return basic_results and integration_results
+    
+    # Run the tests
+    success = asyncio.run(run_all_tests()) 

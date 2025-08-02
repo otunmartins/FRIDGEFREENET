@@ -6,14 +6,14 @@ Comprehensive Post-Processing Integration for Insulin-AI App
 Combines all trajectory analysis capabilities into a single, user-friendly interface
 
 This module integrates:
-1. 🧮 MM-GBSA Binding Energy Analysis
-2. 🧪 Insulin Stability & Conformation Analysis  
-3. 🔄 Partitioning & Transfer Free Energy Analysis
-4. 🚶 Diffusion Coefficient Analysis
-5. 🕸️ Hydrogel Mesh Size & Dynamics Analysis
-6. ⚡ Interaction Energy Decomposition
-7. 💧 Swelling & Poroelastic Response Analysis
-8. 📊 Basic Trajectory Statistics
+1. 🧪 Insulin Stability & Conformation Analysis  
+2. 🔄 Partitioning & Transfer Free Energy Analysis
+3. 🚶 Diffusion Coefficient Analysis
+4. 🕸️ Hydrogel Mesh Size & Dynamics Analysis
+5. ⚡ Interaction Energy Decomposition
+6. 💧 Swelling & Poroelastic Response Analysis
+7. 📊 Basic Trajectory Statistics
+8. 📚 AI-Powered Literature Analysis
 
 Provides real-time progress tracking and user-friendly results presentation.
 """
@@ -36,9 +36,6 @@ try:
 except ImportError:
     COMPREHENSIVE_ANALYZER_AVAILABLE = False
     logging.warning("Comprehensive analyzer not available")
-
-# InsulinMMGBSACalculator removed as no longer needed
-MMGBSA_AVAILABLE = False
 
 try:
     from .openmm_md_simulator import OpenMMInsulinSimulator
@@ -82,9 +79,6 @@ class ComprehensivePostProcessor:
         else:
             self.comprehensive_analyzer = None
         
-        # MMGBSA calculator removed as no longer needed
-        self.mmgbsa_calculator = None
-        
         if BASIC_ANALYZER_AVAILABLE:
             basic_output = self.output_dir / "basic_analysis"
             basic_output.mkdir(exist_ok=True)
@@ -105,7 +99,6 @@ class ComprehensivePostProcessor:
         
         print(f"🔬 Comprehensive Post-Processor initialized")
         print(f"📁 Output directory: {self.output_dir}")
-        print(f"🧮 MM-GBSA: {'✅ Available' if self.mmgbsa_calculator else '❌ Not Available'}")
         print(f"🧪 Comprehensive Analysis: {'✅ Available' if self.comprehensive_analyzer else '❌ Not Available'}")
         print(f"📊 Basic Analysis: {'✅ Available' if self.basic_analyzer else '❌ Not Available'}")
         print(f"📚 RAG Literature Mining: {'✅ Available' if self.rag_system else '❌ Not Available'}")
@@ -114,7 +107,6 @@ class ComprehensivePostProcessor:
         """Check availability of analysis dependencies"""
         deps = {
             'comprehensive_analyzer': COMPREHENSIVE_ANALYZER_AVAILABLE,
-            'mmgbsa_calculator': MMGBSA_AVAILABLE,
             'basic_analyzer': BASIC_ANALYZER_AVAILABLE,
             'rag_literature_mining': RAG_LITERATURE_AVAILABLE
         }
@@ -151,8 +143,6 @@ class ComprehensivePostProcessor:
         available_systems = []
         if self.dependencies_available['comprehensive_analyzer']:
             available_systems.append("🔬 Comprehensive analysis")
-        if self.dependencies_available['mmgbsa_calculator']:
-            available_systems.append("🧮 MM-GBSA binding energy")
         if self.dependencies_available['rag_literature_mining']:
             available_systems.append("📚 AI literature mining")
         if self.dependencies_available['basic_analyzer']:
@@ -195,7 +185,7 @@ class ComprehensivePostProcessor:
             for sim_dir in base_dir.iterdir():
                 if sim_dir.is_dir():
                     # Skip special directories
-                    if sim_dir.name in ['mmgbsa_results', '__pycache__', '.git']:
+                    if sim_dir.name in ['__pycache__', '.git']:
                         continue
                     
                     print(f"   📁 Found simulation directory: {sim_dir.name}")
@@ -765,20 +755,71 @@ class ComprehensivePostProcessor:
                             "What are the most promising biocompatible materials for insulin delivery systems with controlled release properties?"
                         )
                     
-                    # Perform literature analysis
+                    # Perform literature analysis with progress tracking
                     literature_results = {}
                     
                     for i, question in enumerate(research_questions):
-                        log_output(f"   🔍 Analyzing: {question[:60]}...")
+                        log_output(f"   🔍 Question {i+1}/{len(research_questions)}: {question[:60]}...")
+                        progress_offset = (i / len(research_questions)) * 15  # 15% for literature analysis
+                        self.current_analysis['progress'] = ((step_count - 1) / total_steps * 100) + progress_offset
                         
                         try:
-                            result = self.rag_system.analyze_literature(question)
+                            # Use async version with timeout to prevent hanging
+                            import asyncio
+                            
+                            # Create a timeout wrapper
+                            async def analyze_with_timeout():
+                                try:
+                                    # Create progress callback for this specific question
+                                    def question_progress(message: str):
+                                        log_output(f"      {message}")
+                                    
+                                    return await asyncio.wait_for(
+                                        self.rag_system.analyze_literature_async(
+                                            question, 
+                                            progress_callback=question_progress
+                                        ),
+                                        timeout=300.0  # 5 minute timeout per question
+                                    )
+                                except asyncio.TimeoutError:
+                                    log_output(f"   ⚠️ Question {i+1} timed out after 5 minutes")
+                                    return {'error': 'Analysis timed out', 'success': False}
+                            
+                            # Run with proper event loop handling
+                            try:
+                                loop = asyncio.get_event_loop()
+                                if loop.is_running():
+                                    # If we're already in an event loop, create a task
+                                    import concurrent.futures
+                                    with concurrent.futures.ThreadPoolExecutor() as executor:
+                                        future = executor.submit(
+                                            lambda: asyncio.run(analyze_with_timeout())
+                                        )
+                                        result = future.result(timeout=310)  # Slightly longer than inner timeout
+                                else:
+                                    result = asyncio.run(analyze_with_timeout())
+                            except RuntimeError:
+                                # Fallback to thread-based execution
+                                import concurrent.futures
+                                with concurrent.futures.ThreadPoolExecutor() as executor:
+                                    future = executor.submit(
+                                        lambda: asyncio.run(analyze_with_timeout())
+                                    )
+                                    result = future.result(timeout=310)
+                            
                             literature_results[f'research_query_{i+1}'] = {
                                 'question': question,
                                 'analysis': result,
                                 'success': result.get('success', False)
                             }
+                            
+                            if result.get('success', False):
+                                log_output(f"   ✅ Question {i+1} completed successfully")
+                            else:
+                                log_output(f"   ⚠️ Question {i+1} completed with issues")
+                        
                         except Exception as e:
+                            log_output(f"   ❌ Question {i+1} failed: {str(e)}")
                             literature_results[f'research_query_{i+1}'] = {
                                 'question': question,
                                 'analysis': {'error': str(e)},
@@ -788,21 +829,55 @@ class ComprehensivePostProcessor:
                     # Get material recommendations if requested
                     if analysis_options.get('material_recommendations', False):
                         log_output(f"   🧬 Generating material recommendations...")
+                        self.current_analysis['progress'] = (step_count / total_steps * 100) - 3
+                        
                         try:
-                            recommendations = self.rag_system.get_material_recommendations(
-                                application="insulin delivery systems"
-                            )
+                            # Use the async version for recommendations too
+                            async def get_recommendations_with_timeout():
+                                try:
+                                    return await asyncio.wait_for(
+                                        self.rag_system.get_material_recommendations_async(
+                                            application="insulin delivery systems"
+                                        ),
+                                        timeout=120.0  # 2 minute timeout for recommendations
+                                    )
+                                except asyncio.TimeoutError:
+                                    log_output(f"   ⚠️ Material recommendations timed out")
+                                    return {'error': 'Recommendations timed out', 'success': False}
+                            
+                            try:
+                                loop = asyncio.get_event_loop()
+                                if loop.is_running():
+                                    import concurrent.futures
+                                    with concurrent.futures.ThreadPoolExecutor() as executor:
+                                        future = executor.submit(
+                                            lambda: asyncio.run(get_recommendations_with_timeout())
+                                        )
+                                        recommendations = future.result(timeout=130)
+                                else:
+                                    recommendations = asyncio.run(get_recommendations_with_timeout())
+                            except RuntimeError:
+                                import concurrent.futures
+                                with concurrent.futures.ThreadPoolExecutor() as executor:
+                                    future = executor.submit(
+                                        lambda: asyncio.run(get_recommendations_with_timeout())
+                                    )
+                                    recommendations = future.result(timeout=130)
+                            
                             literature_results['material_recommendations'] = {
                                 'recommendations': recommendations,
                                 'success': True
                             }
+                            log_output(f"   ✅ Material recommendations completed")
+                            
                         except Exception as e:
+                            log_output(f"   ❌ Material recommendations failed: {str(e)}")
                             literature_results['material_recommendations'] = {
                                 'recommendations': [],
                                 'success': False,
                                 'error': str(e)
                             }
-                    
+
                     # Add literature results to comprehensive results
                     comprehensive_results['results']['literature_analysis'] = literature_results
                     
@@ -951,17 +1026,32 @@ class ComprehensivePostProcessor:
             raise
     
     def get_analysis_status(self) -> Dict[str, Any]:
-        """Get current analysis status"""
+        """Get current analysis status in the format expected by the active learning orchestrator"""
+        
+        # Initialize the expected structure with completed_jobs and failed_jobs
+        status = {
+            'analysis_running': self.processing_running,
+            'completed_jobs': [],
+            'failed_jobs': [],
+            'running_jobs': [],
+            'analysis_info': None
+        }
+        
         if hasattr(self, 'current_analysis') and self.current_analysis:
-            return {
-                'analysis_running': self.processing_running,
-                'analysis_info': self.current_analysis
-            }
-        else:
-            return {
-                'analysis_running': False,
-                'analysis_info': None
-            }
+            job_id = self.current_analysis.get('job_id', '')
+            current_status = self.current_analysis.get('status', 'unknown')
+            
+            # Categorize the job based on its status
+            if current_status == 'completed':
+                status['completed_jobs'].append(job_id)
+            elif current_status == 'failed':
+                status['failed_jobs'].append(job_id)
+            elif current_status in ['running', 'starting']:
+                status['running_jobs'].append(job_id)
+                
+            status['analysis_info'] = self.current_analysis
+        
+        return status
     
     def stop_analysis(self):
         """Stop the current analysis"""

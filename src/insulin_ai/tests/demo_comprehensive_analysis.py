@@ -155,7 +155,7 @@ def demo_analysis_only_existing_data():
         
         # Define analysis options (run subset for demo)
         analysis_options = {
-            'binding_energy': True,        # MM-GBSA binding energy
+            'binding_energy': True,        # Interaction energy analysis
             'insulin_stability': True,     # RMSD, RMSF analysis
             'partitioning': False,        # Skip for demo (time-consuming)
             'diffusion': True,            # MSD analysis
@@ -263,7 +263,7 @@ simulation_options = {{
 
 # Define analysis options (all properties)
 analysis_options = {{
-    'binding_energy': True,        # MM-GBSA binding free energy
+    'binding_energy': True,        # Interaction energy analysis
     'insulin_stability': True,     # RMSD, RMSF, secondary structure
     'partitioning': True,         # PMF, partition coefficient
     'diffusion': True,            # MSD, diffusion coefficient

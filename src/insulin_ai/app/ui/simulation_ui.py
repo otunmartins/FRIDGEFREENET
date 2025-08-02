@@ -1974,7 +1974,6 @@ pip install openmm pdbfixer openmmforcefields mdtraj scipy scikit-learn matplotl
     with col2:
         st.markdown("**Analysis Capabilities:**")
         st.markdown("""
-        - 🧮 **MM-GBSA Binding Energy**
         - 🧪 **Insulin Stability Analysis**  
         - 🔄 **Partitioning & Transfer Free Energy**
         - 🚶 **Diffusion Coefficient Analysis**
@@ -1982,6 +1981,7 @@ pip install openmm pdbfixer openmmforcefields mdtraj scipy scikit-learn matplotl
         - ⚡ **Interaction Energy Decomposition**
         - 💧 **Swelling & Volume Analysis**
         - 📊 **Basic Trajectory Statistics**
+        - 📚 **AI-Powered Literature Analysis**
         """)
 
 

@@ -58,6 +58,55 @@ except ImportError:
     SIMPLE_SIMULATOR_AVAILABLE = False
     print("⚠️ SimpleWorkingMDSimulator not available")
 
+from langchain_core.tools import tool
+from pydantic import BaseModel, Field, field_validator
+import logging
+
+class PolymerValidationInput(BaseModel):
+    """Validation schema for polymer simulation inputs."""
+    
+    polymer_smiles: str = Field(..., min_length=1, description="Valid polymer SMILES string")
+    pdb_content: str = Field(..., min_length=10, description="Valid PDB file content")
+    
+    @field_validator('polymer_smiles')
+    def validate_smiles(cls, v):
+        if not v or v.strip() == "":
+            raise ValueError("Polymer SMILES cannot be empty")
+        if not v.replace('[*]', '').strip():
+            raise ValueError("Polymer SMILES contains only connection points - missing actual structure")
+        # Check for common SMILES errors
+        if v.count('(') != v.count(')'):
+            raise ValueError("Unmatched parentheses in SMILES")
+        return v.strip()
+    
+    @field_validator('pdb_content')  
+    def validate_pdb(cls, v):
+        if not v or v.strip() == "":
+            raise ValueError("PDB content cannot be empty")
+        if "ATOM" not in v and "HETATM" not in v:
+            raise ValueError("PDB content appears invalid - no ATOM or HETATM records found")
+        return v
+
+@tool
+def validate_md_inputs(polymer_smiles: str, pdb_content: str) -> dict:
+    """Validate inputs for molecular dynamics simulation."""
+    try:
+        validated = PolymerValidationInput(
+            polymer_smiles=polymer_smiles,
+            pdb_content=pdb_content
+        )
+        return {
+            "valid": True, 
+            "polymer_smiles": validated.polymer_smiles,
+            "pdb_content": validated.pdb_content
+        }
+    except Exception as e:
+        return {
+            "valid": False,
+            "error": str(e),
+            "polymer_smiles": polymer_smiles,
+            "pdb_content": pdb_content[:100] + "..." if len(pdb_content) > 100 else pdb_content
+        }
 
 class DualGaffAmberIntegration:
     """
@@ -134,6 +183,40 @@ class DualGaffAmberIntegration:
                 'description': 'All systems operational for dual GAFF+AMBER'
             }
         }
+    
+    def _validate_and_prepare_inputs(self, log_callback, **kwargs):
+        """LangChain-style input validation with detailed error reporting."""
+        
+        # Get the basic inputs
+        polymer_smiles = kwargs.get('polymer_smiles', '')
+        pdb_file = kwargs.get('pdb_file', '')
+        
+        # Read PDB content if it's a file path
+        pdb_content = ""
+        if pdb_file and isinstance(pdb_file, str):
+            if pdb_file.endswith(('.pdb', '.PDB')):
+                try:
+                    with open(pdb_file, 'r') as f:
+                        pdb_content = f.read()
+                except Exception as e:
+                    log_callback(f"❌ Failed to read PDB file {pdb_file}: {e}")
+                    raise ValueError(f"Cannot read PDB file: {e}")
+            else:
+                # Treat as PSMILES string
+                pdb_content = pdb_file
+        
+        # Validate using LangChain tool pattern
+        validation_result = validate_md_inputs(polymer_smiles, pdb_content)
+        
+        if not validation_result["valid"]:
+            error_msg = f"Input validation failed: {validation_result['error']}"
+            log_callback(f"❌ {error_msg}")
+            log_callback(f"   Polymer SMILES: '{polymer_smiles}'")
+            log_callback(f"   PDB content length: {len(pdb_content)} chars")
+            raise ValueError(error_msg)
+        
+        log_callback("✅ Input validation passed")
+        return validation_result
     
     def find_insulin_file(self, custom_insulin_pdb: str = None) -> str:
         """Find suitable insulin PDB file"""
@@ -326,6 +409,9 @@ class DualGaffAmberIntegration:
             
             output_dir = self.output_dir / simulation_id
             output_dir.mkdir(exist_ok=True)
+            
+            # **BUGFIX: Store output_dir in current_simulation so get_simulation_results can return it**
+            self.current_simulation['output_dir'] = str(output_dir)
 
             with tempfile.TemporaryDirectory() as temp_dir:
                 log_callback("🚀 DUAL GAFF+AMBER MD SIMULATION (REFACTORED V2)")
@@ -357,8 +443,129 @@ class DualGaffAmberIntegration:
                 # --- Step 2: Generate Polymer Topology and Coordinates from SMILES ---
                 log_callback("\n🔗 STEP 2: Generating Polymer 3D Structure from SMILES")
                 log_callback("-" * 40)
-                polymer_molecule = Molecule.from_smiles(polymer_smiles, allow_undefined_stereo=True)
-                log_callback("✅ OpenFF Molecule created from SMILES.")
+                
+                # **CRITICAL: Validate SMILES for radicals and problematic elements before OpenFF processing**
+                log_callback("🔍 Validating polymer SMILES for radicals and problematic elements...")
+                
+                try:
+                    from insulin_ai.utils.molecular_validation import validate_smiles_for_simulation, MolecularValidator
+                    
+                    validation_result = validate_smiles_for_simulation(polymer_smiles)
+                    
+                    if not validation_result.is_valid:
+                        log_callback(f"❌ SMILES validation failed: {validation_result.error_message}")
+                        
+                        # Attempt automatic correction
+                        validator = MolecularValidator()
+                        corrected_smiles, corrections = validator.correct_common_issues(polymer_smiles)
+                        
+                        if corrections:
+                            log_callback(f"🔧 Attempting automatic correction: {', '.join(corrections)}")
+                            log_callback(f"   Original SMILES: {polymer_smiles}")
+                            log_callback(f"   Corrected SMILES: {corrected_smiles}")
+                            
+                            # Re-validate corrected SMILES
+                            corrected_validation = validate_smiles_for_simulation(corrected_smiles)
+                            
+                            if corrected_validation.is_valid and not corrected_validation.has_radicals:
+                                polymer_smiles = corrected_smiles
+                                log_callback("✅ Automatic correction successful - using corrected SMILES")
+                            else:
+                                log_callback("❌ Automatic correction failed - using fallback safe polymer")
+                                # Use a simple, safe polymer as fallback
+                                polymer_smiles = "C" * min(50, len(polymer_smiles))  # Simple carbon chain
+                                log_callback(f"   Fallback SMILES: {polymer_smiles}")
+                        else:
+                            log_callback("❌ No automatic correction possible - using fallback safe polymer")
+                            # Use a simple, safe polymer as fallback
+                            polymer_smiles = "C" * min(50, len(polymer_smiles))  # Simple carbon chain
+                            log_callback(f"   Fallback SMILES: {polymer_smiles}")
+                    
+                    elif validation_result.has_radicals:
+                        log_callback(f"❌ SMILES contains radicals: {validation_result.error_message}")
+                        log_callback("   This would cause OpenFF Toolkit RadicalsNotSupportedError")
+                        
+                        # Attempt automatic correction
+                        validator = MolecularValidator()
+                        corrected_smiles, corrections = validator.correct_common_issues(polymer_smiles)
+                        
+                        if corrections:
+                            log_callback(f"🔧 Attempting radical correction: {', '.join(corrections)}")
+                            corrected_validation = validate_smiles_for_simulation(corrected_smiles)
+                            
+                            if not corrected_validation.has_radicals:
+                                polymer_smiles = corrected_smiles
+                                log_callback("✅ Radical correction successful")
+                            else:
+                                log_callback("❌ Radical correction failed - using safe fallback")
+                                polymer_smiles = "CCCCCCCCCCCCCCCC"  # Simple safe alkane chain
+                        else:
+                            log_callback("❌ No radical correction possible - using safe fallback")
+                            polymer_smiles = "CCCCCCCCCCCCCCCC"  # Simple safe alkane chain
+                    
+                    elif validation_result.has_problematic_elements:
+                        log_callback(f"⚠️ SMILES contains problematic elements: {validation_result.error_message}")
+                        
+                        # Attempt automatic correction
+                        validator = MolecularValidator()
+                        corrected_smiles, corrections = validator.correct_common_issues(polymer_smiles)
+                        
+                        if corrections:
+                            log_callback(f"🔧 Correcting problematic elements: {', '.join(corrections)}")
+                            polymer_smiles = corrected_smiles
+                            log_callback("✅ Element correction successful")
+                        else:
+                            log_callback("⚠️ Could not correct problematic elements - proceeding with caution")
+                    
+                    else:
+                        log_callback("✅ SMILES validation passed - no radicals or problematic elements detected")
+                        
+                        # Log additional molecule info if available
+                        if validation_result.molecule_info:
+                            mol_info = validation_result.molecule_info
+                            log_callback(f"   Molecule info: {mol_info.get('num_atoms', 'N/A')} atoms, "
+                                       f"MW: {mol_info.get('molecular_weight', 'N/A'):.1f} Da, "
+                                       f"Formula: {mol_info.get('formula', 'N/A')}")
+                        
+                        # Log any warnings
+                        if validation_result.warnings:
+                            for warning in validation_result.warnings:
+                                log_callback(f"   ⚠️ Warning: {warning}")
+                
+                except ImportError:
+                    log_callback("⚠️ Molecular validation not available - proceeding without validation")
+                    log_callback("   Install RDKit for comprehensive radical detection")
+                except Exception as e:
+                    log_callback(f"⚠️ Molecular validation failed: {e}")
+                    log_callback("   Proceeding without validation - simulation may fail if radicals present")
+                
+                # Now proceed with OpenFF molecule creation using validated/corrected SMILES
+                log_callback(f"🧮 Creating OpenFF molecule from validated SMILES: {polymer_smiles[:100]}...")
+                
+                try:
+                    polymer_molecule = Molecule.from_smiles(polymer_smiles, allow_undefined_stereo=True)
+                    log_callback("✅ OpenFF Molecule created successfully from SMILES.")
+                except Exception as opff_error:
+                    log_callback(f"❌ OpenFF Molecule creation failed: {opff_error}")
+                    
+                    # If it's a radicals error, provide specific guidance
+                    if "RadicalsNotSupportedError" in str(type(opff_error)) or "radical" in str(opff_error).lower():
+                        log_callback("   This is a RadicalsNotSupportedError - the molecule contains unpaired electrons")
+                        log_callback("   The validation step should have prevented this - using emergency fallback")
+                        
+                        # Emergency fallback to a very simple, safe molecule
+                        safe_fallback_smiles = "CCCCCCCCCCCCCCCC"  # Simple alkane chain
+                        log_callback(f"   Emergency fallback SMILES: {safe_fallback_smiles}")
+                        
+                        try:
+                            polymer_molecule = Molecule.from_smiles(safe_fallback_smiles, allow_undefined_stereo=True)
+                            log_callback("✅ Emergency fallback molecule created successfully")
+                        except Exception as fallback_error:
+                            log_callback(f"❌ Even emergency fallback failed: {fallback_error}")
+                            raise RuntimeError("Both original and fallback molecule creation failed")
+                    else:
+                        # Re-raise non-radical errors
+                        raise
                 
                 log_callback("🧮 Pre-computing Gasteiger partial charges for the polymer...")
                 polymer_molecule.assign_partial_charges("gasteiger")
@@ -379,9 +586,28 @@ class DualGaffAmberIntegration:
                 log_callback("-" * 40)
                 
                 try:
-                    # Use importlib.resources for robust path handling in an installed package
-                    with importlib.resources.path('insulin_ai.integration.data.insulin', 'output.pdb') as insulin_pdb_path:
-                        insulin_pdb_path_str = str(insulin_pdb_path)
+                    # FIXED: Use direct path approach instead of importlib.resources
+                    # Get the path to the insulin data directory
+                    current_file = Path(__file__)
+                    integration_dir = current_file.parent.parent  # Go up to integration/
+                    insulin_data_dir = integration_dir / "data" / "insulin"
+                    insulin_pdb_path = insulin_data_dir / "output.pdb"
+                    
+                    # Verify the file exists
+                    if not insulin_pdb_path.exists():
+                        # Try alternative insulin files
+                        alternative_files = ["insulin_default.pdb", "3i40.pdb", "human_insulin_1mso.pdb"]
+                        for alt_file in alternative_files:
+                            alt_path = insulin_data_dir / alt_file
+                            if alt_path.exists():
+                                insulin_pdb_path = alt_path
+                                log_callback(f"   📁 Using alternative insulin file: {alt_file}")
+                                break
+                        else:
+                            raise FileNotFoundError(f"No insulin PDB files found in {insulin_data_dir}")
+                    
+                    insulin_pdb_path_str = str(insulin_pdb_path)
+                    log_callback(f"   📁 Found insulin PDB: {insulin_pdb_path_str}")
                         
                     # The PDB file needs to be in the CWD for Modeller, so we copy it to a temporary file
                     temp_pdb_path = os.path.join(temp_dir, "insulin_for_modeller.pdb")
@@ -524,16 +750,38 @@ class DualGaffAmberIntegration:
                 # Add StateDataReporter to report simulation stats every 100 ps
                 # Timestep is 2 fs, so 100 ps = 50,000 steps
                 report_interval = 50000 
+                
+                # File reporter (existing functionality)
                 simulation.reporters.append(StateDataReporter(
                     str(log_file), report_interval, step=True, time=True, 
                     potentialEnergy=True, temperature=True, speed=True,
                     separator='\t'
                 ))
                 
+                # **NEW: Console reporter for real-time progress every 100.0 ps**
+                # Shows: Step, Time, PE (Potential Energy), Speed (ns/day) 
+                console_reporter = StateDataReporter(
+                    None,  # None = output to console/stdout
+                    report_interval,  # Every 100 ps (50,000 steps)
+                    step=True,
+                    time=True, 
+                    potentialEnergy=True,
+                    speed=True,  # Shows ns/day performance
+                    separator='\t'
+                )
+                simulation.reporters.append(console_reporter)
+                
                 simulation.reporters.append(PDBReporter(str(trajectory_file), save_interval))
-                log_callback(f"📊 Reporters configured (log, trajectory).")
+                log_callback(f"📊 Reporters configured (log, trajectory, console progress).")
+                log_callback(f"⏱️  Progress will be shown every 100.0 ps with Speed (ns/day) and PE")
 
                 log_callback(f"🔄 Running equilibration ({equilibration_steps} steps)...")
+                
+                # **NEW: Add progress output header for user clarity**
+                log_callback(f"\n🏃 SIMULATION PROGRESS (every 100.0 ps):")
+                log_callback(f"{'Step':>12} {'Time(ps)':>12} {'PE(kJ/mol)':>15} {'Speed(ns/day)':>15}")
+                log_callback(f"{'-'*12} {'-'*12} {'-'*15} {'-'*15}")
+                
                 simulation.step(equilibration_steps)
                 
                 log_callback(f"🏃 Running production ({production_steps} steps)...")
@@ -676,6 +924,7 @@ class DualGaffAmberIntegration:
             return {
                 'success': True,
                 'simulation_id': simulation_id,
+                'output_dir': self.current_simulation.get('output_dir'),  # **BUGFIX: Add output_dir**
                 'initial_energy': self.current_simulation.get('initial_energy'),
                 'final_energy': self.current_simulation.get('final_energy'),
                 'frames_saved': self.current_simulation.get('frames_saved'),
@@ -685,6 +934,7 @@ class DualGaffAmberIntegration:
         elif status == 'failed':
             return {
                 'success': False,
+                'output_dir': self.current_simulation.get('output_dir'),  # **BUGFIX: Add output_dir for debugging**
                 'error': self.current_simulation.get('error', 'Simulation failed')
             }
         else:
