@@ -100,6 +100,38 @@ def render_active_learning():
         lit_include_patents = st.checkbox("Include patent literature", value=False,
                                         help="Include patents in literature search")
         
+        # 🔧 NEW: Autocorrect configuration section
+        st.markdown("##### 🔧 Autocorrect Settings")
+        lit_enable_autocorrect = st.checkbox("Enable Forbidden Element Autocorrect", value=True,
+                                           help="Automatically remove/replace Si, Al, Ge from PSMILES prompts (boron allowed)")
+        
+        if lit_enable_autocorrect:
+            lit_autocorrect_model = st.selectbox("Autocorrect Model", 
+                                               ["gpt-4o-mini", "gpt-4o", "gpt-4-turbo"], 
+                                               index=0, help="OpenAI model for autocorrection")
+            
+            with st.expander("🚫 Forbidden Elements Details"):
+                st.markdown("""
+                **Automatically removes/replaces:**
+                - **Silicon (Si)**: silicone, siloxane, organosilicon compounds
+                - **Aluminum (Al)**: alumina, aluminosilicate compounds
+                - **Germanium (Ge)**: organogermanium compounds
+                
+                **✅ ALLOWED (will be kept):**
+                - **Boron (B)**: borane, borate, organoboron compounds - BENEFICIAL for functionality
+                - All standard organic elements (C, H, N, O, S, P, F, Cl, Br, I)
+                
+                **Replaced with biocompatible alternatives:**
+                - Carbon-based polymers (PLA, PGA, PCL)
+                - Natural polymers (chitosan, alginate, cellulose)
+                - Biocompatible synthetic polymers
+                - Enhanced boron-containing compounds for added functionality
+                
+                ⚡ **Uses OpenAI to maintain scientific rigor while ensuring safety**
+                """)
+        else:
+            lit_autocorrect_model = "gpt-4o-mini"  # Default fallback
+        
         lit_openai_model = st.selectbox("Literature Analysis Model", 
                                       ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo"], 
                                       index=1, help="OpenAI model for literature analysis")
@@ -229,7 +261,9 @@ def render_active_learning():
                 'recent_only': lit_recent_only,
                 'include_patents': lit_include_patents,
                 'openai_model': lit_openai_model,
-                'temperature': lit_temperature
+                'temperature': lit_temperature,
+                'enable_autocorrect': lit_enable_autocorrect,
+                'autocorrect_model': lit_autocorrect_model
             },
             'psmiles_generation': {
                 'model': psmiles_model,
@@ -284,7 +318,7 @@ def render_active_learning():
     
     # Input parameters
     col1, col2 = st.columns(2)
-    
+
     with col1:
         initial_prompt = st.text_area(
             "Initial Research Prompt",
@@ -292,19 +326,25 @@ def render_active_learning():
             height=100,
             help="Describe what kind of material you want to discover"
         )
-    
+
     with col2:
-        st.subheader("Target Properties")
-        biocompatibility = st.slider("Biocompatibility", 0.0, 1.0, 0.9, 0.1)
-        degradation_rate = st.slider("Degradation Rate", 0.0, 1.0, 0.5, 0.1)
-        stability = st.slider("Stability", 0.0, 1.0, 0.8, 0.1)
+        st.markdown("### 📋 Active Learning Focus")
+        st.markdown("""
+        **The system will:**
+        - Mine relevant literature 
+        - Generate material candidates (PSMILES)
+        - Run MD simulations
+        - Analyze results to generate improved prompts
         
-        target_properties = {
-            "biocompatibility": biocompatibility,
-            "degradation_rate": degradation_rate,
-            "stability": stability
-        }
-    
+        **Optimization based on:**
+        - MD simulation observables (RMSD, energy, density, etc.)
+        - Literature-guided insights
+        - Iterative prompt refinement
+        
+        **⚠️ Note:** Only real computed properties are reported. 
+        No fallback or estimated properties are generated.
+        """)
+
     # Run button
     if st.button("🚀 Start Active Learning Loop", type="primary"):
         if not initial_prompt.strip():
@@ -313,12 +353,11 @@ def render_active_learning():
         
         run_active_learning_loop(
             initial_prompt=initial_prompt,
-            target_properties=target_properties,
             config=al_config
         )
 
 
-def run_active_learning_loop(initial_prompt, target_properties, config):
+def run_active_learning_loop(initial_prompt, config):
     """Run the active learning loop that connects existing tabs"""
     
     # Use the orchestrator that connects existing tab functions
@@ -425,7 +464,7 @@ def run_active_learning_loop(initial_prompt, target_properties, config):
         with st.spinner("🔄 Running active learning loop using existing tabs..."):
             results = orchestrator.run_simple_loop(
                 initial_prompt=initial_prompt,
-                target_properties=target_properties
+                target_properties=None # No target properties for this simplified loop
             )
         
         # Process and display results
@@ -489,17 +528,18 @@ def render_active_learning_runner(max_iterations, convergence_patience, score_th
             help="Describe the material discovery goal"
         )
         
-        # Target properties
-        with st.expander("🎯 Target Material Properties"):
-            biocompatibility = st.slider("Biocompatibility", 0.0, 1.0, 0.9, 0.1)
-            degradation_rate = st.slider("Degradation Rate", 0.0, 1.0, 0.5, 0.1)
-            stability = st.slider("Thermal Stability", 0.0, 1.0, 0.8, 0.1)
+        # Active learning focus
+        with st.expander("🎯 Active Learning Approach"):
+            st.markdown("""
+            **The system optimizes based on:**
+            - MD simulation observables (RMSD, energy, density, etc.)
+            - Literature-guided material insights
+            - Iterative prompt refinement
+            - Structural and dynamic properties from simulations
             
-            target_properties = {
-                "biocompatibility": biocompatibility,
-                "degradation_rate": degradation_rate,
-                "stability": stability
-            }
+            **⚠️ Note:** Only real computed properties are used.
+            No estimated or random properties are generated.
+            """)
     
     with col2:
         storage_path = st.text_input("Output Directory", value="simple_active_learning_output")
@@ -507,10 +547,60 @@ def render_active_learning_runner(max_iterations, convergence_patience, score_th
         if st.button("🚀 Run Simple Loop", type="primary"):
             run_simple_active_learning_loop(
                 initial_prompt=initial_prompt,
-                target_properties=target_properties,
                 max_iterations=max_iterations,
                 storage_path=storage_path
             )
+
+
+def run_simple_active_learning_loop(initial_prompt, max_iterations, storage_path):
+    """Run a simple active learning loop without target properties"""
+    
+    # Use the same configuration as the main loop but simplified
+    config = {
+        'max_iterations': max_iterations,
+        'storage_path': storage_path,
+        'literature_mining': {
+            'max_papers': 10,
+            'search_strategy': "Comprehensive (3000 tokens)",
+            'recent_only': True,
+            'include_patents': False,
+            'openai_model': "gpt-4o-mini",
+            'temperature': 0.7,
+            'enable_autocorrect': True,
+            'autocorrect_model': "gpt-4o-mini"
+        },
+        'psmiles_generation': {
+            'model': "gpt-4o",
+            'temperature': 0.7,
+            'num_candidates': 1,
+            'max_retries': 5,
+            'enable_functionalization': True,
+            'max_repair_attempts': 3
+        },
+        'md_simulation': {
+            'simulation_method': "Dual GAFF+AMBER (Recommended)",
+            'temperature': 310,
+            'equilibration_steps': 125000,
+            'production_steps': 500000,
+            'save_interval': 1000,
+            'polymer_chain_length': 10,
+            'num_polymer_chains': 1,
+            'max_simulations': 3,
+            'timeout_minutes': 30,
+            'total_time_ns': 1.25
+        },
+        'advanced': {
+            'enable_parallel_processing': False,
+            'save_intermediate_results': True,
+            'enable_detailed_logging': True
+        }
+    }
+    
+    # Run with the main loop function
+    run_active_learning_loop(
+        initial_prompt=initial_prompt,
+        config=config
+    )
 
 
 def render_system_status():

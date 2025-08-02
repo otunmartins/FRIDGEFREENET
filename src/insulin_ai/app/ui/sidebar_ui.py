@@ -142,6 +142,7 @@ def render_navigation():
         [
             "Framework Overview", 
             "Active Learning",
+            "Active Learning Results",
             "Literature Mining (LLM)", 
             "PSMILES Generation", 
             "MD Simulation"

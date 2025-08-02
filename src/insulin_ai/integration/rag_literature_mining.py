@@ -394,16 +394,21 @@ You are an expert materials scientist specializing in drug delivery systems and 
 
 Analyze this research question and generate a structured literature search strategy:
 
+CRITICAL ELEMENT EXCLUSIONS:
+- Do NOT search for silicon (Si), boron (B), aluminum (Al), or germanium (Ge) containing materials
+- EXCLUDE silicone, siloxane, organosilicon, PDMS, or any silicon-based compounds
+- Focus ONLY on biocompatible elements: C, N, O, S, P, F, Cl, Br
+
 RESEARCH QUESTION: {research_question}
 
 Extract and structure:
-1. Key search terms and synonyms for materials science databases
-2. Specific material types to focus on (polymers, hydrogels, nanoparticles, etc.)
+1. Key search terms and synonyms for materials science databases (exclude silicon-based terms)
+2. Specific material types to focus on (polymers, hydrogels, nanoparticles, etc. - carbon-based only)
 3. Critical material properties for insulin delivery (biocompatibility, permeability, stability, etc.)
 4. Research methodology focus areas
 
 Consider insulin delivery requirements:
-- Biocompatibility and safety
+- Biocompatibility and safety (silicon-free materials only)
 - Controlled release mechanisms  
 - Thermal stability for room temperature storage
 - Permeation enhancement for transdermal delivery
@@ -418,6 +423,11 @@ You are an expert in materials science and drug delivery systems.
 
 Analyze this research paper for insulin delivery material insights:
 
+CRITICAL ELEMENT EXCLUSIONS:
+- REJECT or LOWER SCORES for papers focusing on silicon (Si), boron (B), aluminum (Al), or germanium (Ge)
+- EXCLUDE silicone, siloxane, organosilicon, PDMS, or silicon-based materials from recommendations
+- PRIORITIZE papers with carbon-based materials using only: C, N, O, S, P, F, Cl, Br
+
 TITLE: {title}
 ABSTRACT: {abstract}
 AUTHORS: {authors}
@@ -425,14 +435,14 @@ JOURNAL: {journal}
 YEAR: {year}
 
 Extract:
-1. Materials mentioned (polymers, composites, nanostructures, etc.)
+1. Materials mentioned (polymers, composites, nanostructures, etc.) - prioritize silicon-free materials
 2. Key material properties with values and units
-3. Insulin delivery relevance (rate 0-1 with justification)
-4. Novel insights for insulin formulation
-5. Potential applications for room-temperature stable patches
+3. Insulin delivery relevance (rate 0-1 with justification) - lower score if silicon-based
+4. Novel insights for insulin formulation (exclude silicon-based insights)
+5. Potential applications for room-temperature stable patches (silicon-free applications only)
 
 Focus on:
-- Biocompatibility data
+- Biocompatibility data (silicon-free materials only)
 - Drug release kinetics
 - Mechanical properties
 - Thermal stability

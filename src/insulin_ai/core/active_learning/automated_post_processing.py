@@ -411,8 +411,11 @@ class AutomatedPostProcessing:
         
         # Fallback to basic calculations if advanced methods fail
         if not calculated_properties:
-            calculated_properties = self._generate_basic_properties(context)
-            logger.info("Using basic property calculations as fallback")
+            logger.warning("⚠️ All property calculation methods failed. No properties will be computed.")
+            logger.warning("   - Comprehensive analysis failed or unavailable")
+            logger.warning("   - Property scoring failed or unavailable") 
+            logger.warning("   - No fallback properties will be generated to avoid fake data")
+            calculated_properties = {}
         
         return calculated_properties
     
@@ -702,37 +705,6 @@ class AutomatedPostProcessing:
                 }
         
         return results
-    
-    def _generate_basic_properties(self, context: PostProcessingContext) -> Dict[str, Any]:
-        """Generate basic properties when advanced analysis fails."""
-        
-        import random
-        
-        # Generate basic properties from simulation results
-        basic_properties = {}
-        
-        if context.simulation_results:
-            basic_properties["energy_analysis"] = {
-                "final_energy": context.simulation_results.final_energy,
-                "energy_stability": random.uniform(0.5, 0.8)
-            }
-            
-            basic_properties["structural_properties"] = {
-                "density": context.simulation_results.density,
-                "temperature": context.simulation_results.temperature,
-                "pressure": context.simulation_results.pressure
-            }
-        
-        # Generate target-property-based estimations
-        for prop in context.target_properties.keys():
-            if "biocompatib" in prop.lower():
-                basic_properties["biocompatibility_estimate"] = random.uniform(0.6, 0.9)
-            elif "degradation" in prop.lower():
-                basic_properties["degradation_estimate"] = random.uniform(0.3, 0.7)
-            elif "mechanical" in prop.lower():
-                basic_properties["mechanical_estimate"] = random.uniform(0.4, 0.8)
-        
-        return basic_properties
     
     async def _generate_performance_metrics(self, calculated_properties: Dict[str, Any],
                                           context: PostProcessingContext,

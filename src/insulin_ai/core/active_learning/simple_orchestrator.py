@@ -19,8 +19,135 @@ from pathlib import Path
 from langchain_core.tools import tool
 from langchain_core.runnables import Runnable
 from pydantic import BaseModel, Field, field_validator
+import openai
+import os
 
 logger = logging.getLogger(__name__)
+
+def autocorrect_remove_forbidden_elements(prompt: str, openai_model: str = "gpt-4o-mini") -> Dict[str, Any]:
+    """
+    Use OpenAI to automatically remove or replace keywords related to silicon, aluminum, and germanium
+    from PSMILES generation prompts. Boron is allowed.
+    
+    Args:
+        prompt: The literature-derived prompt to clean
+        openai_model: OpenAI model to use for correction
+        
+    Returns:
+        Dict with corrected prompt and correction details
+    """
+    try:
+        # Check for OpenAI API key
+        if not os.getenv('OPENAI_API_KEY'):
+            logger.warning("No OpenAI API key found for autocorrect - returning original prompt")
+            return {
+                'success': True,
+                'corrected_prompt': prompt,
+                'original_prompt': prompt,
+                'corrections_made': [],
+                'correction_summary': 'No corrections applied (no API key)'
+            }
+        
+        # Create autocorrection system prompt
+        autocorrect_system_prompt = """You are an expert materials scientist focused on polymer design for biomedical applications. Your task is to review and correct material design prompts to ensure they avoid problematic elements.
+
+CRITICAL REQUIREMENTS:
+- REMOVE or REPLACE any mentions of silicon (Si), aluminum (Al), germanium (Ge)
+- Boron (B) compounds are ALLOWED and should be kept
+- These forbidden elements (Si, Al, Ge) are problematic in our polymer design context
+- Focus on carbon-based, biodegradable polymer systems instead
+- Maintain the original intent and scientific rigor of the prompt
+- Suggest better alternatives when removing forbidden elements
+
+FORBIDDEN ELEMENTS TO AVOID:
+- Silicon (Si, silicone, siloxane, organosilicon)
+- Aluminum (Al, alumina, aluminosilicate)
+- Germanium (Ge, organogermanium)
+
+ALLOWED ELEMENTS (keep these):
+- Boron (B, borane, borate, organoboron) - KEEP THESE
+- All standard organic elements (C, H, N, O, S, P, F, Cl, Br, I)
+
+PREFERRED ALTERNATIVES FOR FORBIDDEN ELEMENTS:
+- Carbon-based polymers (polyesters, polyethers, polyamides)
+- Biodegradable materials (PLA, PGA, PCL, chitosan)
+- Natural polymers (cellulose, alginate, hyaluronic acid)
+- Biocompatible synthetic polymers
+- Boron-containing compounds (boronic acids, borates) for enhanced functionality
+
+Return the corrected prompt that maintains scientific accuracy while avoiding only the forbidden elements (Si, Al, Ge)."""
+
+        # Create the correction request
+        user_prompt = f"""Please review and correct this polymer design prompt by removing or replacing any mentions of silicon, aluminum, or germanium with appropriate biocompatible alternatives. KEEP any boron compounds as they are allowed:
+
+ORIGINAL PROMPT:
+{prompt}
+
+CORRECTED PROMPT (maintain scientific rigor, avoid Si/Al/Ge but KEEP boron):"""
+
+        # Call OpenAI for autocorrection
+        client = openai.OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+        
+        response = client.chat.completions.create(
+            model=openai_model,
+            messages=[
+                {"role": "system", "content": autocorrect_system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            temperature=0.3,  # Low temperature for consistent corrections
+            max_tokens=1000
+        )
+        
+        corrected_prompt = response.choices[0].message.content.strip()
+        
+        # Analyze what corrections were made (UPDATED: removed boron keywords)
+        corrections_made = []
+        forbidden_keywords = [
+            'silicon', 'silicone', 'siloxane', 'organosilicon', 'Si',
+            'aluminum', 'alumina', 'aluminosilicate', 'Al',
+            'germanium', 'organogermanium', 'Ge'
+            # NOTE: Removed all boron-related keywords - boron is now allowed
+        ]
+        
+        # Check for removed keywords
+        for keyword in forbidden_keywords:
+            original_count = prompt.lower().count(keyword.lower())
+            corrected_count = corrected_prompt.lower().count(keyword.lower())
+            if original_count > corrected_count:
+                corrections_made.append({
+                    'keyword': keyword,
+                    'original_count': original_count,
+                    'corrected_count': corrected_count,
+                    'action': 'removed'
+                })
+        
+        # Create correction summary
+        if corrections_made:
+            correction_summary = f"Removed/replaced {len(corrections_made)} forbidden element references (Si/Al/Ge only)"
+        else:
+            correction_summary = "No forbidden elements detected - prompt is clean (boron allowed)"
+        
+        logger.info(f"Autocorrect applied: {correction_summary}")
+        
+        return {
+            'success': True,
+            'corrected_prompt': corrected_prompt,
+            'original_prompt': prompt,
+            'corrections_made': corrections_made,
+            'correction_summary': correction_summary,
+            'model_used': openai_model
+        }
+        
+    except Exception as e:
+        logger.error(f"Autocorrect failed: {e}")
+        return {
+            'success': False,
+            'corrected_prompt': prompt,  # Return original prompt on failure
+            'original_prompt': prompt,
+            'corrections_made': [],
+            'correction_summary': f'Autocorrect failed: {str(e)}',
+            'error': str(e)
+        }
 
 @tool
 def validate_md_simulation_inputs(psmiles: str, polymer_smiles: str = None) -> dict:
@@ -519,6 +646,11 @@ class SimpleActiveLearningOrchestrator:
             main_structure = structural_features[0]
             prompt_parts.append(f"designed as a {main_structure}")
         
+        # Add critical safety requirements - EXCLUDE SILICON COMPLETELY
+        prompt_parts.append("- CRITICAL: Use only biocompatible elements (C, N, O, S, P, F, Cl, Br, B)")
+        prompt_parts.append("- CRITICAL: Completely exclude silicon (Si), aluminum (Al), and germanium (Ge)")
+        prompt_parts.append("- BENEFICIAL: Boron (B) compounds like boronic acids are allowed for enhanced functionality")
+        
         enhanced_prompt = " ".join(prompt_parts)
         
         logger.info(f"🧬 Enhanced chemical prompt: {enhanced_prompt}")
@@ -656,11 +788,12 @@ class SimpleActiveLearningOrchestrator:
                     if not psmiles.replace('[*]', '').strip():
                         psmiles = "[*]CCOCCOCCCO[*]"  # Simple safe polymer fallback
                     
-                    # Remove any problematic elements
+                    # Remove any problematic elements (UPDATED: boron now allowed)
                     problematic_replacements = {
-                        'B': 'C',
                         'Si': 'C', 
-                        'Al': 'C'
+                        'Al': 'C',
+                        'Ge': 'C'
+                        # NOTE: Removed 'B': 'C' - boron is now allowed
                     }
                     for problematic, safe in problematic_replacements.items():
                         if problematic in psmiles:
@@ -709,6 +842,41 @@ class SimpleActiveLearningOrchestrator:
                     self._log_message(f"   🔄 FALLBACK: Created basic prompt from insights")
                 else:
                     raise ValueError("Literature mining must provide a specific psmiles_generation_prompt - no fallbacks allowed")
+            
+            # 🔧 AUTOCORRECT: Remove forbidden elements (Si, B, Al, Ge) from the prompt
+            lit_config = self.config.get('literature_mining', {})
+            enable_autocorrect = lit_config.get('enable_autocorrect', True)  # Default to enabled
+            
+            if enable_autocorrect:
+                self._log_message(f"   🔍 Applying autocorrect to remove forbidden elements...")
+                
+                # Get autocorrect configuration from literature mining settings
+                autocorrect_model = lit_config.get('autocorrect_model', lit_config.get('openai_model', 'gpt-4o-mini'))
+                
+                autocorrect_result = autocorrect_remove_forbidden_elements(
+                    prompt=psmiles_prompt,
+                    openai_model=autocorrect_model
+                )
+                
+                if autocorrect_result['success']:
+                    original_prompt = psmiles_prompt
+                    psmiles_prompt = autocorrect_result['corrected_prompt']
+                    corrections_summary = autocorrect_result['correction_summary']
+                    
+                    # Log autocorrect results
+                    if autocorrect_result['corrections_made']:
+                        self._log_message(f"   ✅ AUTOCORRECT: {corrections_summary}")
+                        for correction in autocorrect_result['corrections_made']:
+                            self._log_message(f"      • Removed {correction['original_count']} instances of '{correction['keyword']}'")
+                        self._log_message(f"   📝 ORIGINAL: '{original_prompt[:60]}...'")
+                        self._log_message(f"   📝 CORRECTED: '{psmiles_prompt[:60]}...'")
+                    else:
+                        self._log_message(f"   ✅ AUTOCORRECT: {corrections_summary}")
+                else:
+                    self._log_message(f"   ⚠️ AUTOCORRECT FAILED: {autocorrect_result.get('error', 'Unknown error')}")
+                    self._log_message(f"   🔄 Continuing with original prompt...")
+            else:
+                self._log_message(f"   ⏭️ AUTOCORRECT DISABLED: Using original prompt without forbidden element removal")
             
             self._log_message(f"   📝 Using prompt: '{psmiles_prompt[:80]}...'")
             
@@ -1424,6 +1592,11 @@ class SimpleActiveLearningOrchestrator:
             
         if architecture_specs:
             prompt_parts.append(f"using {' with '.join(architecture_specs)}")
+        
+        # Add critical safety requirements - EXCLUDE SILICON COMPLETELY
+        prompt_parts.append("- CRITICAL: Use only biocompatible elements (C, N, O, S, P, F, Cl, Br, B)")
+        prompt_parts.append("- CRITICAL: Completely exclude silicon (Si), aluminum (Al), and germanium (Ge)")
+        prompt_parts.append("- BENEFICIAL: Boron (B) compounds like boronic acids are allowed for enhanced functionality")
         
         # Finalize prompt with comprehensive chemical guidance
         new_prompt = " ".join(prompt_parts) + "."

@@ -68,14 +68,19 @@ class MaterialsLiteratureMiner:
 
 Your task is to generate effective search queries for finding research papers about materials for fridge-free insulin delivery patches.
 
+IMPORTANT ELEMENT EXCLUSIONS:
+- Do NOT search for silicon (Si), boron (B), aluminum (Al), or germanium (Ge) containing materials
+- Focus ONLY on biocompatible elements: C, N, O, S, P, F, Cl, Br
+- Avoid silicone, siloxane, organosilicon, or any silicon-based materials
+
 USER REQUEST: {user_request}
 
 Generate 3-5 specific search queries that would find relevant research papers. Focus on:
-1. Polymer materials for insulin encapsulation
-2. Thermal stability enhancers for insulin
-3. Transdermal delivery systems
-4. Biocompatible materials for drug delivery
-5. Insulin formulation stabilizers
+1. Polymer materials for insulin encapsulation (carbon-based only)
+2. Thermal stability enhancers for insulin (no silicon)
+3. Transdermal delivery systems (biocompatible materials only)
+4. Biocompatible materials for drug delivery (excluding silicon compounds)
+5. Insulin formulation stabilizers (organic compounds only)
 
 Return your response as a JSON list of search terms, like this:
 ["polymer insulin delivery", "thermal stable insulin formulation", "transdermal insulin patch"]
@@ -86,14 +91,20 @@ Search queries:"""
 
 Analyze this research paper abstract and determine its relevance to fridge-free insulin delivery patch development.
 
+IMPORTANT ELEMENT EXCLUSIONS:
+- REJECT papers focusing on silicon (Si), boron (B), aluminum (Al), or germanium (Ge) materials
+- LOWER relevance scores for papers mentioning silicone, siloxane, or organosilicon compounds
+- PRIORITIZE papers with carbon-based organic materials using only: C, N, O, S, P, F, Cl, Br
+
 ABSTRACT: {abstract}
 
 Evaluate the paper based on:
-1. Materials mentioned (polymers, hydrogels, nanoparticles, etc.)
+1. Materials mentioned (polymers, hydrogels, nanoparticles, etc.) - prioritize silicon-free materials
 2. Insulin stability or protein drug delivery
 3. Thermal stability or room temperature storage
 4. Transdermal or patch-based delivery
 5. Biocompatibility and safety
+6. Element composition - reject if silicon-based
 
 Provide your analysis as JSON:
 {{
@@ -102,19 +113,23 @@ Provide your analysis as JSON:
     "key_findings": "Brief summary of relevant findings",
     "thermal_stability": true/false,
     "insulin_related": true/false,
+    "contains_prohibited_elements": true/false,
     "recommended": true/false
 }}
 
 Analysis:"""
 
-        material_extraction_prompt = """You are an expert computational materials scientist.
+        material_extraction_prompt = """Extract and analyze materials information from this research abstract for insulin delivery applications.
 
-Extract and analyze materials information from this research abstract for insulin delivery applications.
+CRITICAL ELEMENT EXCLUSIONS:
+- Do NOT extract or recommend materials containing silicon (Si), boron (B), aluminum (Al), or germanium (Ge)
+- EXCLUDE silicone, siloxane, organosilicon, PDMS, or any silicon-based polymers
+- Focus ONLY on materials using safe biocompatible elements: C, N, O, S, P, F, Cl, Br
 
 ABSTRACT: {abstract}
 
-Extract the following information:
-1. Specific materials mentioned (polymers, composites, etc.)
+Extract the following information (ONLY for silicon-free materials):
+1. Specific materials mentioned (polymers, composites, etc.) - exclude any silicon-containing
 2. Material properties relevant to insulin delivery
 3. Thermal stability data if mentioned
 4. Biocompatibility information
@@ -128,7 +143,8 @@ Return as JSON:
             "type": "polymer/hydrogel/nanoparticle/etc",
             "properties": ["property1", "property2"],
             "insulin_compatibility": "high/medium/low/unknown",
-            "thermal_stability": "high/medium/low/unknown"
+            "thermal_stability": "high/medium/low/unknown",
+            "contains_prohibited_elements": false
         }}
     ],
     "key_findings": "Summary of material performance",

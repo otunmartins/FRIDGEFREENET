@@ -126,9 +126,15 @@ class LLMDecisionEngine:
             Your task is to select optimal monomers for polymer synthesis based on target properties
             and previous iteration results.
             
+            CRITICAL ELEMENT EXCLUSIONS:
+            - NEVER recommend monomers containing silicon (Si), boron (B), aluminum (Al), or germanium (Ge)
+            - EXCLUDE all silicone, siloxane, organosilicon, or silicon-based monomers
+            - Use ONLY biocompatible elements: C, N, O, S, P, F, Cl, Br
+            - Focus on carbon-based organic chemistry for safe biomedical applications
+            
             Consider:
-            - Structure-property relationships
-            - Synthesis feasibility
+            - Structure-property relationships (silicon-free only)
+            - Synthesis feasibility (using permitted elements only)
             - Biocompatibility (for medical applications)
             - Degradation characteristics
             - Processing conditions"""),
@@ -140,6 +146,7 @@ class LLMDecisionEngine:
             Constraints: {constraints}
             
             Select the best monomer combination and explain your reasoning.
+            IMPORTANT: Only recommend monomers using C, N, O, S, P, F, Cl, Br elements.
             
             {format_instructions}""")
         ])

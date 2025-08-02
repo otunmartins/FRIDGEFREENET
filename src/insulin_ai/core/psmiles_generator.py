@@ -157,7 +157,7 @@ STRICT REQUIREMENT: RETURN ONLY THE SMILES STRING, NO EXPLANATIONS OR EXTRA TEXT
             'benzene': 'c1ccccc1',
             'aspirin': 'CC(=O)OC1=CC=CC=C1C(=O)O',
             'caffeine': 'CN1C=NC2=C1C(=O)N(C(=O)N2C)C',
-            'glucose': 'C([C@@H]1[C@H]([C@@H]([C@H](C(O1)O)O)O)O)O',
+            'glucose': 'C([C@@H]1[C@H]([C@@H]([C@H](C(O1)O)O)O)O',
             'phenol': 'Oc1ccccc1',
             'aniline': 'Nc1ccccc1',
             'toluene': 'Cc1ccccc1',
@@ -250,17 +250,19 @@ STRICT REQUIREMENT: RETURN ONLY THE SMILES STRING, NO EXPLANATIONS OR EXTRA TEXT
             
             print(f"   Generated SMILES: {smiles}")
             
-            # **STEP 2.5: NEW - Apply silicon-specific corrections if needed**
-            if '[Si]' in smiles or 'Si' in smiles:
-                print(f"   🔧 Silicon detected - applying automatic valency corrections...")
-                corrected_smiles, corrections = self._apply_silicon_corrections(smiles)
-                if corrections:
-                    print(f"   ✅ Silicon corrections applied: {'; '.join(corrections)}")
-                    print(f"   🔄 Original: {smiles}")
-                    print(f"   ✅ Corrected: {corrected_smiles}")
-                    smiles = corrected_smiles
-                else:
-                    print(f"   ✅ Silicon already properly coordinated")
+            # **STEP 2.5: Element exclusion check - NO silicon or other prohibited elements allowed**
+            prohibited_elements = ['[Si]', 'Si', '[B]', 'B', '[Al]', 'Al', '[Ge]', 'Ge']
+            if any(element in smiles for element in prohibited_elements):
+                prohibited_found = [e for e in prohibited_elements if e in smiles]
+                print(f"   ❌ Prohibited elements detected: {prohibited_found} - rejecting SMILES")
+                return {
+                    'success': False,
+                    'smiles': None,
+                    'method': 'element_exclusion_check',
+                    'description': processed_description,
+                    'confidence': 0.0,
+                    'error': f"Prohibited elements detected: {prohibited_found}. Only C, N, O, S, P, F, Cl, Br are allowed."
+                }
             
             # **STEP 3: Apply Polymer-Specific Length Constraints**
             if polymer_constraints['strict_length_limit']:
@@ -763,21 +765,15 @@ CRITICAL RULES (ENHANCED WITH MOLLM MULTI-OBJECTIVE FRAMEWORK):
 7. For sulfur atoms, use valid patterns like CSC (thioether), c1sccc1 (thiophene), CSS (disulfide)
 8. **CRITICAL: NEVER generate radical species or unpaired electrons**
 9. **CRITICAL: ALL atoms must have complete valence shells (closed-shell structures only)**
-10. **CRITICAL: Ensure proper valence for all elements - any element is allowed if properly bonded**
+10. **CRITICAL: Ensure proper valence for all elements**
 
-**SILICON-SPECIFIC RULES (CRITICAL FOR INSULIN DELIVERY APPLICATIONS):**
-- Silicon atoms MUST ALWAYS have exactly 4 bonds (tetrahedral coordination)
-- NEVER write [Si]O[Si] - this creates radicals with only 2 bonds per silicon
-- ALWAYS use [Si](substituent)(substituent)O[Si](substituent)(substituent) patterns
-- Common substituents for silicon: methyl (C), phenyl (c1ccccc1), hydroxyl (O), alkoxy (OC)
-- VALID silicon patterns: [Si](C)(C)O (dimethylsiloxane), [Si](c1ccccc1)(C)O (phenylmethylsiloxane)
-- For POSS (polyhedral oligomeric silsesquioxane): Use [Si](O[Si])(O[Si])(O[Si])C patterns
-
-**SILICON EXAMPLES (ALL PROPERLY COORDINATED):**
-- Dimethylsiloxane repeat unit: [*][Si](C)(C)O[Si](C)(C)O[*]
-- Mixed organosilicon: [*]C[Si](C)(C)O[Si](C)(c1ccccc1)O[*]
-- Aminosiloxane: [*]CCN[Si](C)(C)O[Si](C)(C)O[*]
-- POSS-based monomer: [*]C[Si](C)(O[Si](C)(C)(C))(O[Si](C)(C)(C))[*]
+**ELEMENT EXCLUSION RULES (CRITICAL FOR SAFE INSULIN DELIVERY):**
+- **NEVER use silicon (Si) in any form** - Silicon is completely prohibited
+- **NEVER use boron (B) in any form** - Boron is completely prohibited  
+- **NEVER use aluminum (Al) in any form** - Aluminum is completely prohibited
+- **NEVER use germanium (Ge) in any form** - Germanium is completely prohibited
+- Use ONLY biocompatible elements: C, N, O, S, P, F, Cl, Br
+- Focus on carbon-based organic chemistry for safe biomedical applications
 
 **RADICAL PREVENTION RULES:**
 - ENSURE all atoms have complete valence shells (no unpaired electrons)
@@ -786,11 +782,9 @@ CRITICAL RULES (ENHANCED WITH MOLLM MULTI-OBJECTIVE FRAMEWORK):
 - ENSURE all nitrogen atoms have 3 bonds + lone pair (total 8 electrons)
 - ENSURE all oxygen atoms have 2 bonds + 2 lone pairs (total 8 electrons)
 - ENSURE all sulfur atoms follow stable bonding patterns
-- ENSURE boron atoms have 3 bonds (BCl3, BF3 patterns) or 4 bonds when coordinated
-- **ENSURE silicon atoms have EXACTLY 4 bonds (NEVER 2 or 3)**
-- ENSURE aluminum atoms have 3 bonds (AlCl3) or 6 bonds when coordinated
+- ENSURE phosphorus atoms have appropriate coordination
 - NO charged species ([NH3+], [O-]) unless absolutely necessary for the chemistry
-- FOCUS: Prevent unpaired electrons, not specific elements
+- FOCUS: Prevent unpaired electrons using only safe elements
 
 DIVERSIFICATION STRATEGY (FROM MOLLM RESEARCH 2025):
 - Vary functionalization types: ester, amide, ether, aromatic substitution, vinyl, sulfur-based
@@ -798,43 +792,44 @@ DIVERSIFICATION STRATEGY (FROM MOLLM RESEARCH 2025):
 - Combine different heteroatoms: N, O, S, P (when appropriate and stable)
 - Use different connection patterns: linear, branched, cyclic integration
 - **ALL variations must maintain closed-shell electronic structure**
+- **ALL variations must use only permitted elements (C, N, O, S, P, F, Cl, Br)**
 
 MOLECULAR WEIGHT CONSTRAINTS (VALID-MOL FRAMEWORK):
 - Target monomer repeat units: 50-500 Da (realistic monomer range)
 - PSMILES length: 8-100 characters (excludes [*] symbols)
 - Ensure chemical feasibility for polymerization
-- **Must be stable, closed-shell molecules only**
+- **Must be stable, closed-shell molecules using only safe elements**
 
 FUNCTIONALIZATION DIVERSITY (TSMMG TEACHER-STUDENT APPROACH):
 - Primary types: C(=O)O (ester), C(=O)N (amide), O (ether), c1ccccc1 (aromatic)
 - Secondary types: CSS (disulfide), CSC (thioether), C=C (vinyl), c1sccc1 (thiophene)
 - Tertiary types: P-containing (PO4 groups only), halogenated (F, Cl), cyclic structures
-- **ALL must be stable, non-radical species**
+- **ALL must be stable, non-radical species using only permitted elements**
 
 IMPORTANT SMILES SYNTAX:
 - NO explicit hydrogen atoms: Never write H, HS, SH, HSH, HCSH, etc.
 - Sulfur examples: CSC (thioether bridge), c1sccc1 (thiophene ring), CSS (disulfide)
 - Carbon backbone: CC, CCC, c1ccccc1 (aromatic)
 - Functional groups: C(=O) (carbonyl), C(=O)O (carboxyl), C(=O)N (amide)
-- **Silicon examples: [Si](C)(C)O (properly coordinated), [Si](c1ccccc1)(C)C (organosilicon)**
+- **NO silicon examples - silicon is completely prohibited**
 
-VALID MONOMER EXAMPLES (WITH DIVERSITY, ALL CLOSED-SHELL):
+VALID MONOMER EXAMPLES (WITH DIVERSITY, ALL CLOSED-SHELL, NO SILICON):
 - "monomer with aromatic rings": [*]c1ccccc1[*] OR [*]Cc1ccccc1C[*] OR [*]c1ccc(C)cc1[*]
 - "monomer with amide linkages": [*]C(=O)NC[*] OR [*]CC(=O)NCC[*] OR [*]C(=O)Nc1ccccc1[*]
 - "monomer with ester groups": [*]C(=O)OC[*] OR [*]CC(=O)OCC[*] OR [*]C(=O)Oc1ccccc1[*]
 - "ethylene-like monomer": [*]CC[*] OR [*]CCC[*] OR [*]C(C)C[*]
 - "monomer with hydroxyl groups": [*]C(O)C[*] OR [*]CC(O)CC[*] OR [*]c1ccc(O)cc1[*]
 - "sulfur-containing monomer": [*]CSC[*] OR [*]c1sccc1[*] OR [*]CSS[*] OR [*]CSCC[*]
-- "silicon-containing monomer": [*]C[Si](C)(C)O[Si](C)(C)C[*] OR [*]CC[Si](C)(c1ccccc1)O[*]
+- "phosphorus-containing monomer": [*]CP(=O)(O)OC[*] OR [*]CC(P(=O)(O)O)C[*]
 
 INVALID EXAMPLES TO AVOID:
 - [*]HSH[*] - NO explicit hydrogens
 - [*]HCSH[*] - NO explicit hydrogens
 - [*]SH[*] - NO explicit hydrogens
 - [*]HS[*] - NO explicit hydrogens
-- **[*][Si]O[Si][*] - INVALID! Silicon has only 2 bonds (radicals)**
-- **[*]CC[Si]O[Si]CN[*] - INVALID! Under-coordinated silicon**
-- **Any silicon structure with fewer than 4 bonds per silicon atom**
+- **ANY structure containing Si, B, Al, or Ge - these elements are completely prohibited**
+- **[*][Si]anything[*] - Silicon is forbidden in all forms**
+- **[*]anything[Si]anything[*] - Silicon is forbidden in all forms**
 
 TASK: Convert the user's description into a valid MONOMER PSMILES string.
 - Think about the MONOMER REPEAT UNIT they're describing
@@ -843,8 +838,10 @@ TASK: Convert the user's description into a valid MONOMER PSMILES string.
 - Ensure proper SMILES syntax and chemical validity
 - **CRITICAL: Ensure the molecule has no radicals or unpaired electrons**
 - **CRITICAL: Use only stable, closed-shell electronic configurations**
-- **CRITICAL: For silicon-containing requests, ALWAYS ensure 4 bonds per silicon**
+- **CRITICAL: NEVER use silicon (Si), boron (B), aluminum (Al), or germanium (Ge)**
+- **CRITICAL: Use only permitted elements: C, N, O, S, P, F, Cl, Br**
 - For sulfur requests, use CSC, CSS, or c1sccc1 patterns with variation
+- If a request mentions prohibited elements, create a safe alternative using permitted elements
 - Respond with just the PSMILES string, no explanation unless requested"""
 
         psmiles_prompt = ChatPromptTemplate.from_messages([
