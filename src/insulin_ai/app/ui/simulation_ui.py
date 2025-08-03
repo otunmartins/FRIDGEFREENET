@@ -1618,6 +1618,23 @@ def _run_regular_md_simulation(simulation_input_file: str, simulation_params: Di
         st.write(f"   • Production: {simulation_params['production_steps']} steps ({simulation_params['production_steps'] * 2 / 1000000:.1f} ns)")
         st.write(f"   • Save interval: {simulation_params['save_interval']} steps ({simulation_params['save_interval'] * 2 / 1000:.1f} ps)")
         
+        # Get polymer configuration from sidebar (Active Learning config) if available
+        polymer_chain_length = simulation_params.get('polymer_chain_length', 10)
+        num_polymer_chains = simulation_params.get('num_polymer_chains', 1)
+        
+        # Check if Active Learning sidebar configuration is available
+        if hasattr(st.session_state, 'active_learning_config') and st.session_state.active_learning_config:
+            al_md_config = st.session_state.active_learning_config.get('md_simulation', {})
+            polymer_chain_length = al_md_config.get('polymer_chain_length', polymer_chain_length)
+            num_polymer_chains = al_md_config.get('num_polymer_chains', num_polymer_chains)
+            st.info(f"🔧 Using Active Learning sidebar configuration: {num_polymer_chains} chains × {polymer_chain_length} units")
+        # Fallback to global polymer configuration from main sidebar
+        elif hasattr(st.session_state, 'global_polymer_config') and st.session_state.global_polymer_config:
+            global_config = st.session_state.global_polymer_config
+            polymer_chain_length = global_config.get('polymer_chain_length', polymer_chain_length)
+            num_polymer_chains = global_config.get('num_polymer_chains', num_polymer_chains)
+            st.info(f"🔧 Using Global sidebar configuration: {num_polymer_chains} chains × {polymer_chain_length} units")
+        
         simulation_id = st.session_state.md_integration.run_md_simulation_async(
             pdb_file=simulation_input_file,
             temperature=simulation_params['temperature'],
@@ -1625,7 +1642,10 @@ def _run_regular_md_simulation(simulation_input_file: str, simulation_params: Di
             production_steps=simulation_params['production_steps'],
             save_interval=simulation_params['save_interval'],
             output_callback=lambda msg: console_capture_ref.write(msg),
-            manual_polymer_dir=st.session_state.get('manual_polymer_dir')
+            manual_polymer_dir=st.session_state.get('manual_polymer_dir'),
+            # Add polymer configuration parameters
+            polymer_chain_length=polymer_chain_length,
+            num_polymer_chains=num_polymer_chains
         )
         
         st.success(f"✅ Regular MD simulation started with ID: {simulation_id}")
@@ -1684,6 +1704,23 @@ def _run_dual_gaff_amber_simulation(simulation_input_file: str, simulation_param
             progress_placeholder = st.empty()
             progress_placeholder.info("🚀 **Initializing Dual GAFF+AMBER insulin-polymer simulation...**")
             
+            # Get polymer configuration from sidebar (Active Learning config) if available
+            polymer_chain_length = simulation_params.get('polymer_chain_length', 10)
+            num_polymer_chains = simulation_params.get('num_polymer_chains', 1)
+            
+            # Check if Active Learning sidebar configuration is available
+            if hasattr(st.session_state, 'active_learning_config') and st.session_state.active_learning_config:
+                al_md_config = st.session_state.active_learning_config.get('md_simulation', {})
+                polymer_chain_length = al_md_config.get('polymer_chain_length', polymer_chain_length)
+                num_polymer_chains = al_md_config.get('num_polymer_chains', num_polymer_chains)
+                st.info(f"🔧 Using Active Learning sidebar configuration: {num_polymer_chains} chains × {polymer_chain_length} units")
+            # Fallback to global polymer configuration from main sidebar
+            elif hasattr(st.session_state, 'global_polymer_config') and st.session_state.global_polymer_config:
+                global_config = st.session_state.global_polymer_config
+                polymer_chain_length = global_config.get('polymer_chain_length', polymer_chain_length)
+                num_polymer_chains = global_config.get('num_polymer_chains', num_polymer_chains)
+                st.info(f"🔧 Using Global sidebar configuration: {num_polymer_chains} chains × {polymer_chain_length} units")
+            
             with st.spinner("Starting dual GAFF+AMBER simulation..."):
                 simulation_id = st.session_state.md_integration.run_md_simulation_async(
                     pdb_file=simulation_input_file,
@@ -1693,7 +1730,10 @@ def _run_dual_gaff_amber_simulation(simulation_input_file: str, simulation_param
                     save_interval=simulation_params['save_interval'],
                     output_callback=dual_console_callback,
                     manual_polymer_dir=st.session_state.get('manual_polymer_dir'),
-                    output_prefix=f"dual_psmiles_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                    output_prefix=f"dual_psmiles_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+                    # Add polymer configuration parameters
+                    polymer_chain_length=polymer_chain_length,
+                    num_polymer_chains=num_polymer_chains
                 )
             
             if simulation_id:

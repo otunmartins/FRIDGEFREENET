@@ -76,14 +76,21 @@ class AutomatedLiteratureMining:
     and information extraction.
     """
     
-    def __init__(self, storage_path: str = "automated_literature_mining"):
+    def __init__(self, storage_path: str = "automated_literature_mining", 
+                 openai_model: str = "gpt-4o-mini", temperature: float = 0.7):
         """Initialize automated literature mining system.
         
         Args:
             storage_path: Path to store literature mining data and results
+            openai_model: OpenAI model to use for literature analysis
+            temperature: Temperature setting for the model
         """
         self.storage_path = Path(storage_path)
         self.storage_path.mkdir(parents=True, exist_ok=True)
+        
+        # Store model configuration
+        self.openai_model = openai_model
+        self.temperature = temperature
         
         # Initialize literature mining systems
         self._initialize_mining_systems()
@@ -101,8 +108,8 @@ class AutomatedLiteratureMining:
             try:
                 self.materials_miner = MaterialsLiteratureMiner(
                     model_type="openai",
-                    openai_model="gpt-4o-mini",  # More cost-effective for literature mining
-                    temperature=0.3  # Lower temperature for more focused results
+                    openai_model=self.openai_model,
+                    temperature=self.temperature
                 )
                 logger.info("MaterialsLiteratureMiner initialized")
             except Exception as e:
@@ -114,7 +121,10 @@ class AutomatedLiteratureMining:
         # Initialize RAG Literature Mining System
         if RAG_MINER_AVAILABLE:
             try:
-                self.rag_miner = RAGLiteratureMiningSystem()
+                self.rag_miner = RAGLiteratureMiningSystem(
+                    openai_model=self.openai_model,
+                    temperature=self.temperature
+                )
                 logger.info("RAGLiteratureMiningSystem initialized")
             except Exception as e:
                 logger.warning(f"Failed to initialize RAGLiteratureMiningSystem: {e}")

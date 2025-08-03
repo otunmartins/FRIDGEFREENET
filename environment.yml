@@ -44,10 +44,6 @@ dependencies:
   - colorama=0.4.6=pyhd8ed1ab_1
   - comm=0.2.3=pyhe01879c_0
   - contourpy=1.3.3=py311hdf67eae_0
-  - cuda-cudart=12.9.79=h5888daf_0
-  - cuda-cudart_linux-64=12.9.79=h3f2d84a_0
-  - cuda-nvrtc=12.9.86=h5888daf_0
-  - cuda-version=12.9=h4f385c5_3
   - cycler=0.12.1=pyhd8ed1ab_1
   - debugpy=1.8.15=py311hc665b79_0
   - decorator=5.2.1=pyhd8ed1ab_0
@@ -56,7 +52,7 @@ dependencies:
   - exceptiongroup=1.3.0=pyhd8ed1ab_0
   - executing=2.2.0=pyhd8ed1ab_0
   - expat=2.7.1=h6a678d5_0
-  - faiss-gpu=1.11.0=py3.11_h4818125_0_cuda12.1.1
+  - faiss-gpu
   - fftw=3.3.10=nompi_hf1063bd_110
   - flexcache=0.3=pyhd8ed1ab_1
   - flexparser=0.4=pyhd8ed1ab_1
@@ -201,8 +197,8 @@ dependencies:
   - openff-units=0.3.1=pyhd8ed1ab_2
   - openff-utilities=0.1.15=pyhd8ed1ab_1
   - openjpeg=2.5.2=h488ebb8_0
-  - openmmforcefields=0.14.2=pyhd8ed1ab_0
-  - openmoltools=0.8.8=pyhd8ed1ab_1
+  - openmmforcefields
+  - openmoltools
   - openssl=3.5.1=h7b32b05_0
   - overrides=7.7.0=pyhd8ed1ab_1
   - packaging=25.0=pyh29332c3_1
@@ -393,28 +389,12 @@ dependencies:
       - mypy-extensions==1.1.0
       - narwhals==2.0.1
       - networkx==2.8.8
-      - nvidia-cublas-cu12==12.6.4.1
-      - nvidia-cuda-cupti-cu12==12.6.80
-      - nvidia-cuda-nvcc-cu12==12.9.86
-      - nvidia-cuda-nvrtc-cu12==12.6.77
-      - nvidia-cuda-runtime-cu12==12.6.77
-      - nvidia-cudnn-cu12==9.5.1.17
-      - nvidia-cufft-cu12==11.3.0.4
-      - nvidia-cufile-cu12==1.11.1.6
-      - nvidia-curand-cu12==10.3.7.77
-      - nvidia-cusolver-cu12==11.7.1.2
-      - nvidia-cusparse-cu12==12.5.4.2
-      - nvidia-cusparselt-cu12==0.6.3
-      - nvidia-nccl-cu12==2.26.2
-      - nvidia-nvjitlink-cu12==12.6.85
-      - nvidia-nvtx-cu12==12.6.77
       - oauthlib==3.3.1
-      - ollama==0.5.1
       - onnxruntime==1.22.1
       - openai==1.98.0
       - openapi-pydantic==0.5.1
-      - openmm==8.3.1
-      - openmm-cuda-12==8.3.1
+      - openmm
+      - openmm-cuda-12
       - opentelemetry-api==1.36.0
       - opentelemetry-exporter-otlp-proto-common==1.36.0
       - opentelemetry-exporter-otlp-proto-grpc==1.36.0

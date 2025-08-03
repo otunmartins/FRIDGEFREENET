@@ -27,9 +27,17 @@ def render_literature_mining_ui():
         from app.services.system_service import check_systems_initialized
         from app.utils.app_utils import add_to_material_library
         from insulin_ai.integration.rag_literature_mining import RAGLiteratureMiningSystem
+        import streamlit as st
         
-        # Test RAG system initialization
-        rag_system = RAGLiteratureMiningSystem()
+        # Get the globally selected model from session state
+        openai_model = st.session_state.get('openai_model', 'gpt-4o-mini')
+        temperature = st.session_state.get('temperature', 0.7)
+        
+        # Test RAG system initialization with global model
+        rag_system = RAGLiteratureMiningSystem(
+            openai_model=openai_model,
+            temperature=temperature
+        )
         systems_initialized = check_systems_initialized()
         rag_available = True
     except ImportError as e:

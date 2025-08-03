@@ -143,7 +143,10 @@ def clean_malformed_smiles(smiles_str):
     elif close_parens > open_parens:
         # Remove extra closing parentheses from the end
         for _ in range(close_parens - open_parens):
-            cleaned = cleaned.rsplit(')', 1)[0] + cleaned.rsplit(')', 1)[1]
+            # Find the last ')' and remove it
+            last_paren = cleaned.rfind(')')
+            if last_paren != -1:
+                cleaned = cleaned[:last_paren] + cleaned[last_paren+1:]
     
     # Balance brackets
     open_brackets = cleaned.count('[')
@@ -153,7 +156,10 @@ def clean_malformed_smiles(smiles_str):
     elif close_brackets > open_brackets:
         # Remove extra closing brackets from the end
         for _ in range(close_brackets - open_brackets):
-            cleaned = cleaned.rsplit(']', 1)[0] + cleaned.rsplit(']', 1)[1]
+            # Find the last ']' and remove it
+            last_bracket = cleaned.rfind(']')
+            if last_bracket != -1:
+                cleaned = cleaned[:last_bracket] + cleaned[last_bracket+1:]
     
     # Remove duplicate equals signs
     cleaned = re.sub(r'=+', '=', cleaned)

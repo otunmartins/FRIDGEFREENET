@@ -20,60 +20,84 @@ import os
 # Set up logging
 logger = logging.getLogger(__name__)
 
-def render_active_learning():
-    """Main function to render the active learning interface that connects existing tabs"""
-    st.title("🤖 Active Learning Material Discovery System")
-    st.markdown("**Automated Loop**: Connects existing Literature Mining → PSMILES Generation → MD Simulation tabs")
+def map_ui_properties_to_computed_properties(ui_properties: List[str]) -> Dict[str, float]:
+    """
+    Map UI property names to actual computed property names with target values.
     
-    # Important clarification
-    st.info("🔗 **This connects your existing working tabs without modifications:** Uses the same functions as Literature Mining tab, PSMILES Generation tab, and MD Simulation tab")
+    ONLY includes properties with REAL MD computational implementations.
+    All hardcoded/mock properties have been removed.
     
-    # Check if we can import the simple orchestrator
-    try:
-        from src.insulin_ai.core.active_learning.simple_orchestrator import SimpleActiveLearningOrchestrator
-        simple_active_learning_available = True
-    except ImportError as e:
-        simple_active_learning_available = False
-        import_error = str(e)
-    
-    if not simple_active_learning_available:
-        st.error("❌ Active Learning orchestrator is not available. Please check the installation.")
-        with st.expander("🔍 Import Error Details"):
-            st.code(import_error, language="python")
+    Args:
+        ui_properties: List of property names from the UI
         
-        # Show manual installation instructions
-        with st.expander("🛠️ Troubleshooting"):
-            st.markdown("""
-            **Possible Solutions:**
-            
-            1. **Check that the orchestrator exists:**
-            ```bash
-            ls src/insulin_ai/core/active_learning/simple_orchestrator.py
-            ```
-            
-            2. **Check if you're in the right directory:**
-            ```bash
-            pwd  # Should show: .../insulin-ai
-            ls src/insulin_ai/core/active_learning/  # Should show the files
-            ```
-            
-            3. **Try starting the app from the project root:**
-            ```bash
-            cd /path/to/insulin-ai
-            streamlit run src/insulin_ai/app.py
-            ```
-            
-            4. **Verify Python path:**
-            ```bash
-            python -c "import sys; print('\\n'.join(sys.path))"
-            ```
-            """)
+    Returns:
+        Dictionary mapping computed property names to target values
+    """
+    
+    # Mapping from UI display names to actual computed property names and target values
+    # ONLY properties with real MD computational implementations in:
+    # - src/insulin_ai/integration/analysis/insulin_comprehensive_analyzer.py
+    property_mapping = {
+        # Structural Properties (REAL implementations)
+        "RMSF (Å)": ("rmsf_polymer", 1.5),  # Line 698: md.rmsf() calculation
+        "Hydrogen Bond Count": ("hydrogen_bond_count", 50.0),  # Line 744-750: md.baker_hubbard() calculation
+        
+        # Transport Properties (REAL implementations)  
+        "Diffusion Coefficient Insulin (cm²/s)": ("diffusion_coefficient_drug", 1.0e-6),  # Line 880-990: MSD analysis of insulin movement through polymer matrix
+    }
+    
+    # Convert UI properties to target properties dict
+    target_properties = {}
+    for prop in ui_properties:
+        if prop in property_mapping:
+            computed_prop, target_value = property_mapping[prop]
+            target_properties[computed_prop] = target_value
+        else:
+            logger.warning(f"Unknown property: {prop}")
+    
+    return target_properties
+
+
+def render_active_learning():
+    """Main function to render the active learning interface with inner tabs for results"""
+    st.title("🤖 Active Learning Material Discovery System")
+    
+    # Check for required systems
+    if not st.session_state.get('systems_initialized'):
+        st.warning("⚠️ Please ensure all systems are initialized from the Framework Overview page.")
         return
     
-    # Check for OpenAI API key
-    if not os.getenv('OPENAI_API_KEY'):
-        st.error("❌ OpenAI API key is required for the decision engine. Please set OPENAI_API_KEY environment variable.")
+    if not st.session_state.get('literature_miner'):
+        st.error("❌ Literature mining system not available. Please check your configuration.")
         return
+    
+    if not st.session_state.get('md_integration_available'):
+        st.warning("""
+        ⚠️ **MD Integration not available**
+        
+        Active Learning requires MD simulation capabilities. Please ensure:
+        - GAFF force field files are properly installed
+        - AMBER tools are available  
+        - OpenMM is properly configured
+        
+        You can still test literature mining and PSMILES generation components independently.
+        """)
+        return
+    
+    # Create inner tabs similar to MD simulation structure
+    tab1, tab2 = st.tabs(["🚀 Active Learning", "📊 Results"])
+    
+    with tab1:
+        render_active_learning_main_tab()
+    
+    with tab2:
+        # Import and render the results UI within this tab
+        from insulin_ai.app.ui.active_learning_results_ui import render_active_learning_results_tab
+        render_active_learning_results_tab()
+
+
+def render_active_learning_main_tab():
+    """Render the main active learning configuration and execution tab"""
     
     # Sidebar configuration
     with st.sidebar:
@@ -106,171 +130,105 @@ def render_active_learning():
                                            help="Automatically remove/replace Si, Al, Ge from PSMILES prompts (boron allowed)")
         
         if lit_enable_autocorrect:
-            lit_autocorrect_model = st.selectbox("Autocorrect Model", 
-                                               ["gpt-4o-mini", "gpt-4o", "gpt-4-turbo"], 
-                                               index=0, help="OpenAI model for autocorrection")
+            # Forbidden elements (Si, Al, Ge)
+            st.markdown("**Forbidden Elements:** Si, Al, Ge")
             
-            with st.expander("🚫 Forbidden Elements Details"):
-                st.markdown("""
-                **Automatically removes/replaces:**
-                - **Silicon (Si)**: silicone, siloxane, organosilicon compounds
-                - **Aluminum (Al)**: alumina, aluminosilicate compounds
-                - **Germanium (Ge)**: organogermanium compounds
-                
-                **✅ ALLOWED (will be kept):**
-                - **Boron (B)**: borane, borate, organoboron compounds - BENEFICIAL for functionality
-                - All standard organic elements (C, H, N, O, S, P, F, Cl, Br, I)
-                
-                **Replaced with biocompatible alternatives:**
-                - Carbon-based polymers (PLA, PGA, PCL)
-                - Natural polymers (chitosan, alginate, cellulose)
-                - Biocompatible synthetic polymers
-                - Enhanced boron-containing compounds for added functionality
-                
-                ⚡ **Uses OpenAI to maintain scientific rigor while ensuring safety**
-                """)
+            # Replacement strategy
+            lit_replacement_strategy = st.selectbox(
+                "Replacement Strategy",
+                ["Remove entirely", "Replace with carbon", "Replace with oxygen", "Replace with nitrogen"],
+                index=1,
+                help="How to handle forbidden elements in generated PSMILES"
+            )
         else:
-            lit_autocorrect_model = "gpt-4o-mini"  # Default fallback
-        
-        lit_openai_model = st.selectbox("Literature Analysis Model", 
-                                      ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo"], 
-                                      index=1, help="OpenAI model for literature analysis")
-        lit_temperature = st.slider("Literature LLM Temperature", 0.0, 1.0, 0.7, 0.1,
-                                   help="Temperature for literature analysis LLM")
+            lit_replacement_strategy = "Remove entirely"
         
         st.markdown("---")
         
-        # PSMILES Generation Settings (Enhanced with all options from PSMILES Generation UI)
+        # PSMILES Generation Settings
         st.subheader("🧪 PSMILES Generation Settings")
-        psmiles_model = st.selectbox("PSMILES Generation Model",
-                                   ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo"],
-                                   index=0, help="OpenAI model for PSMILES generation")
-        psmiles_temperature = st.slider("PSMILES LLM Temperature", 0.0, 1.0, 0.7, 0.1,
-                                       help="Temperature for PSMILES generation")
-        psmiles_num_candidates = st.slider("Number of candidates per iteration", 1, 10, 1,
-                                         help="How many PSMILES candidates to generate per iteration")
-        psmiles_max_retries = st.number_input("Max Generation Retries", min_value=1, max_value=10, value=5,
-                                            help="Maximum retries for PSMILES generation")
-        psmiles_enable_functionalization = st.checkbox("Multi-step functionalization", value=True,
-                                                      help="Enable multi-step functionalization process")
-        psmiles_max_repair_attempts = st.number_input("Max Repair Attempts", min_value=1, max_value=10, value=3,
-                                                     help="Maximum attempts to repair invalid PSMILES")
+        psmiles_max_candidates = st.number_input("Max PSMILES per iteration", min_value=1, max_value=10, value=3)
+        psmiles_creativity_level = st.selectbox("Creativity Level", 
+                                               ["Conservative", "Balanced", "Creative"], 
+                                               index=1)
+        psmiles_enable_validation = st.checkbox("Enable PSMILES Validation", value=True,
+                                               help="Validate generated PSMILES for chemical correctness")
+        
+        # Autorepair configuration (from PSMILES Generation UI)
+        psmiles_enable_autorepair = st.checkbox("Enable Auto-Repair", value=True,
+                                               help="Automatically fix invalid PSMILES structures")
+        
+        if psmiles_enable_autorepair:
+            psmiles_max_repair_attempts = st.number_input("Max Repair Attempts", min_value=1, max_value=5, value=3)
+        else:
+            psmiles_max_repair_attempts = 1
         
         st.markdown("---")
         
-        # MD Simulation Settings (Enhanced with all options from Simulation UI)
+        # MD Simulation Settings (Enhanced with dual GAFF+AMBER options)
         st.subheader("⚛️ MD Simulation Settings")
         
-        # Simulation method selection (from Simulation UI)
-        md_simulation_method = st.selectbox(
-            "Force Field Approach",
-            options=["Dual GAFF+AMBER (Recommended)", "Enhanced (Stored SMILES)", "Standard (Legacy)"],
-            index=0,  # Default to dual approach
-            help="""
-            • **🚀 Dual GAFF+AMBER**: GAFF for polymers + AMBER for insulin (Fixed CYS/CYX issues)
-            • **⚡ Enhanced**: Uses pre-stored SMILES data for faster setup
-            • **🔧 Standard**: Original approach (may have template generator issues)
-            """
-        )
+        # System configuration
+        md_simulation_method = st.selectbox("Simulation Method", 
+                                          ["Dual GAFF+AMBER (Recommended)"], 
+                                          index=0,
+                                          help="Dual method uses GAFF for polymers and AMBER for insulin. This is the only supported method in the active learning loop.",
+                                          disabled=True)
         
-        md_temperature = st.slider("Temperature (K)", 250, 400, 310, 5,
-                                 help="Simulation temperature in Kelvin (physiological = 310 K)")
+        md_temperature = st.number_input("Temperature (K)", min_value=250, max_value=400, value=310,
+                                       help="Physiological temperature = 310K")
+        md_equilibration_steps = st.number_input("Equilibration Steps", min_value=1000, max_value=50000, value=10000)
+        md_production_steps = st.number_input("Production Steps", min_value=5000, max_value=500000, value=50000)
+        md_save_interval = st.number_input("Save Interval", min_value=100, max_value=5000, value=1000)
         
-        # Equilibration options (from Simulation UI)
-        equilibration_options = {
-            "Quick Test (250 ps)": 125000,
-            "Short (500 ps) - Recommended": 250000,
-            "Medium (1000 ps)": 500000,
-            "Long (2000 ps)": 1000000,
-            "Extended (4000 ps)": 2000000
-        }
-        md_equilibration_selection = st.selectbox(
-            "Equilibration Duration",
-            list(equilibration_options.keys()),
-            index=0,
-            help="Equilibration phase duration (2 fs timestep)"
-        )
-        md_equilibration_steps = equilibration_options[md_equilibration_selection]
+        # Enhanced polymer configuration (from dual GAFF+AMBER system)
+        st.markdown("##### 🧬 Polymer Configuration")
+        md_polymer_chain_length = st.number_input("Polymer Chain Length", min_value=5, max_value=50, value=20,
+                                                 help="Number of repeat units per polymer chain")
+        md_num_polymer_chains = st.number_input("Number of Polymer Chains", min_value=1, max_value=1000, value=3,
+                                               help="Multiple chains for realistic polymer matrix")
         
-        # Production options (from Simulation UI)
-        production_options = {
-            "Quick Test (1 ns)": 500000,
-            "Short (2.5 ns)": 1250000,
-            "Medium (5 ns) - Recommended": 2500000,
-            "Long (10 ns)": 5000000,
-            "Extended (25 ns)": 12500000
-        }
-        md_production_selection = st.selectbox(
-            "Production Duration",
-            list(production_options.keys()),
-            index=0,
-            help="Production phase duration (2 fs timestep)"
-        )
-        md_production_steps = production_options[md_production_selection]
+        # Simulation limits
+        md_max_simulations = st.number_input("Max Simulations per Iteration", min_value=1, max_value=5, value=2,
+                                           help="Number of simulations to run per generated PSMILES")
+        md_timeout = st.number_input("Simulation Timeout (minutes)", min_value=5, max_value=120, value=30)
         
-        # Save interval options (from Simulation UI)
-        save_options = {
-            "Frequent (1 ps)": 500,
-            "Normal (2 ps) - Recommended": 1000,
-            "Sparse (4 ps)": 2000,
-            "Very Sparse (8 ps)": 4000
-        }
-        md_save_selection = st.selectbox(
-            "Frame Saving Frequency",
-            list(save_options.keys()),
-            index=1,
-            help="How often to save trajectory frames"
-        )
-        md_save_interval = save_options[md_save_selection]
-        
-        # Polymer chain settings
-        md_polymer_chain_length = st.number_input("Polymer Chain Length", min_value=5, max_value=100, value=10,
-                                                 help="Length of each polymer chain in the simulation (number of repeat units)")
-        md_num_polymer_chains = st.number_input("Number of Polymer Chains", min_value=1, max_value=20, value=1,
-                                               help="Number of polymer chains to include in the simulation")
-        
-        md_max_simulations = st.number_input("Max Simulations per Iteration", min_value=1, max_value=10, value=3,
-                                           help="Maximum number of simulations to run per iteration")
-        md_timeout = st.number_input("Simulation Timeout (minutes)", min_value=5, max_value=120, value=30,
-                                   help="Timeout for individual simulations")
-        
-        # Calculate and display timing information
-        eq_time_ns = md_equilibration_steps * 2 / 1000000
-        prod_time_ns = md_production_steps * 2 / 1000000
-        total_time_ns = eq_time_ns + prod_time_ns
-        st.caption(f"⏱️ **Total simulation time: {total_time_ns:.1f} ns**")
+        # Calculate total simulation time
+        total_time_ns = (md_equilibration_steps + md_production_steps) * 0.002  # 2 fs timestep
+        st.info(f"💡 Total simulation time: ~{total_time_ns:.1f} ns per simulation")
         
         st.markdown("---")
         
-        # Advanced Options
-        st.subheader("🔬 Advanced Options")
+        # Advanced Settings
+        st.subheader("⚙️ Advanced Settings")
         enable_parallel_processing = st.checkbox("Enable Parallel Processing", value=False,
-                                                help="Run multiple simulations in parallel")
+                                                help="Run multiple components in parallel (experimental)")
         save_intermediate_results = st.checkbox("Save Intermediate Results", value=True,
-                                               help="Save results after each stage")
+                                               help="Save results after each step for debugging")
         enable_detailed_logging = st.checkbox("Enable Detailed Logging", value=True,
-                                            help="Enable verbose logging for debugging")
+                                             help="Generate detailed logs for troubleshooting")
         
-        # Package the enhanced configuration
-        al_config = {
+        # Configuration summary for the learning loop
+        config = {
             'max_iterations': max_iterations,
             'storage_path': storage_path,
+            # Top-level model configuration for orchestrator
+            'openai_model': st.session_state.get('openai_model', 'gpt-4o-mini'),
+            'temperature': st.session_state.get('temperature', 0.7),
             'literature_mining': {
                 'max_papers': lit_max_papers,
                 'search_strategy': lit_search_strategy,
                 'recent_only': lit_recent_only,
                 'include_patents': lit_include_patents,
-                'openai_model': lit_openai_model,
-                'temperature': lit_temperature,
                 'enable_autocorrect': lit_enable_autocorrect,
-                'autocorrect_model': lit_autocorrect_model
+                'replacement_strategy': lit_replacement_strategy,
+                'openai_model': st.session_state.get('openai_model', 'gpt-4o-mini'),
             },
             'psmiles_generation': {
-                'model': psmiles_model,
-                'temperature': psmiles_temperature,
-                'num_candidates': psmiles_num_candidates,
-                'max_retries': psmiles_max_retries,
-                'enable_functionalization': psmiles_enable_functionalization,
+                'max_candidates': psmiles_max_candidates,
+                'creativity_level': psmiles_creativity_level,
+                'enable_validation': psmiles_enable_validation,
+                'enable_autorepair': psmiles_enable_autorepair,
                 'max_repair_attempts': psmiles_max_repair_attempts
             },
             'md_simulation': {
@@ -322,39 +280,79 @@ def render_active_learning():
     with col1:
         initial_prompt = st.text_area(
             "Initial Research Prompt",
-            value="Design a biodegradable polymer for insulin delivery",
+            value="Design a biodegradable polymer for insulin delivery that is both biocompatible and stable.",
             height=100,
             help="Describe what kind of material you want to discover"
         )
 
     with col2:
         st.markdown("### 📋 Active Learning Focus")
-        st.markdown("""
-        **The system will:**
-        - Mine relevant literature 
-        - Generate material candidates (PSMILES)
-        - Run MD simulations
-        - Analyze results to generate improved prompts
         
-        **Optimization based on:**
-        - MD simulation observables (RMSD, energy, density, etc.)
-        - Literature-guided insights
-        - Iterative prompt refinement
-        
-        **⚠️ Note:** Only real computed properties are reported. 
-        No fallback or estimated properties are generated.
-        """)
-
-    # Run button
-    if st.button("🚀 Start Active Learning Loop", type="primary"):
-        if not initial_prompt.strip():
-            st.warning("⚠️ Please provide an initial research prompt")
-            return
-        
-        run_active_learning_loop(
-            initial_prompt=initial_prompt,
-            config=al_config
+        # Only include properties with REAL MD computational implementations
+        st.markdown("**🔬 Structural Properties (Real MD Calculations):**")
+        structural_properties = st.multiselect(
+            "Structural Analysis",
+            ["RMSF (Å)", "Hydrogen Bond Count"],
+            default=[],  # No defaults - user must choose
+            key="structural_props",
+            help="Select structural properties to optimize"
         )
+        
+        st.markdown("**🚶 Transport Properties (Real MD Calculations):**")
+        transport_properties = st.multiselect(
+            "Transport Analysis", 
+            ["Diffusion Coefficient Insulin (cm²/s)"],
+            default=[],  # No defaults - user must choose
+            key="transport_props",
+            help="Select transport properties to optimize - tracks insulin movement through polymer matrix"
+        )
+        
+        # Combine all selected properties
+        all_properties = structural_properties + transport_properties
+        
+        # Validation
+        if not all_properties:
+            st.warning("⚠️ Please select at least one property to optimize!")
+        else:
+            st.success(f"✅ Optimizing {len(all_properties)} properties")
+        
+        st.markdown("**⚙️ Convergence Settings:**")
+        convergence_threshold = st.number_input(
+            "Convergence Threshold (%)",
+            min_value=0.1,
+            max_value=10.0,
+            value=2.0,
+            step=0.1,
+            help="Stop when property improvement < threshold"
+        )
+    
+    st.markdown("---")
+    
+    # Execute active learning
+    execute_col1, execute_col2 = st.columns([3, 1])
+    
+    with execute_col1:
+        st.markdown("**Ready to start automated material discovery?**")
+        st.markdown("This will run literature mining → PSMILES generation → MD simulation in a loop")
+    
+    with execute_col2:
+        start_learning = st.button("🚀 Start Active Learning", type="primary", use_container_width=True)
+    
+    # Enhanced execution with full workflow
+    if start_learning:
+        if not initial_prompt.strip():
+            st.error("❌ Please provide an initial research prompt")
+        elif not all_properties:
+            st.error("❌ Please select at least one property to optimize!")
+        else:
+            # Store configuration in session state
+            st.session_state.active_learning_config = config
+            st.session_state.active_learning_prompt = initial_prompt
+            st.session_state.active_learning_focus = all_properties
+            st.session_state.convergence_threshold = convergence_threshold
+            
+            # Start the learning process
+            run_active_learning_loop(initial_prompt, config)
 
 
 def run_active_learning_loop(initial_prompt, config):
@@ -455,6 +453,10 @@ def run_active_learning_loop(initial_prompt, config):
     st.session_state.active_learning_orchestrator = orchestrator
     st.session_state.active_learning_storage_path = config['storage_path']
     
+    # Get target properties from config if available
+    target_properties_ui = st.session_state.get('active_learning_focus', [])
+    target_properties = map_ui_properties_to_computed_properties(target_properties_ui)
+
     # Run the active learning loop that uses existing tabs
     try:
         status_text.info("🚀 Starting active learning loop...")
@@ -464,7 +466,7 @@ def run_active_learning_loop(initial_prompt, config):
         with st.spinner("🔄 Running active learning loop using existing tabs..."):
             results = orchestrator.run_simple_loop(
                 initial_prompt=initial_prompt,
-                target_properties=None # No target properties for this simplified loop
+                target_properties=target_properties,
             )
         
         # Process and display results
@@ -545,62 +547,16 @@ def render_active_learning_runner(max_iterations, convergence_patience, score_th
         storage_path = st.text_input("Output Directory", value="simple_active_learning_output")
         
         if st.button("🚀 Run Simple Loop", type="primary"):
-            run_simple_active_learning_loop(
+            # This now properly uses the main active learning loop
+            config = st.session_state.get('active_learning_config', {})
+            config.update({
+                'max_iterations': max_iterations,
+                'storage_path': storage_path,
+            })
+            run_active_learning_loop(
                 initial_prompt=initial_prompt,
-                max_iterations=max_iterations,
-                storage_path=storage_path
+                config=config
             )
-
-
-def run_simple_active_learning_loop(initial_prompt, max_iterations, storage_path):
-    """Run a simple active learning loop without target properties"""
-    
-    # Use the same configuration as the main loop but simplified
-    config = {
-        'max_iterations': max_iterations,
-        'storage_path': storage_path,
-        'literature_mining': {
-            'max_papers': 10,
-            'search_strategy': "Comprehensive (3000 tokens)",
-            'recent_only': True,
-            'include_patents': False,
-            'openai_model': "gpt-4o-mini",
-            'temperature': 0.7,
-            'enable_autocorrect': True,
-            'autocorrect_model': "gpt-4o-mini"
-        },
-        'psmiles_generation': {
-            'model': "gpt-4o",
-            'temperature': 0.7,
-            'num_candidates': 1,
-            'max_retries': 5,
-            'enable_functionalization': True,
-            'max_repair_attempts': 3
-        },
-        'md_simulation': {
-            'simulation_method': "Dual GAFF+AMBER (Recommended)",
-            'temperature': 310,
-            'equilibration_steps': 125000,
-            'production_steps': 500000,
-            'save_interval': 1000,
-            'polymer_chain_length': 10,
-            'num_polymer_chains': 1,
-            'max_simulations': 3,
-            'timeout_minutes': 30,
-            'total_time_ns': 1.25
-        },
-        'advanced': {
-            'enable_parallel_processing': False,
-            'save_intermediate_results': True,
-            'enable_detailed_logging': True
-        }
-    }
-    
-    # Run with the main loop function
-    run_active_learning_loop(
-        initial_prompt=initial_prompt,
-        config=config
-    )
 
 
 def render_system_status():

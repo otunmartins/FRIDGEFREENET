@@ -96,7 +96,6 @@ from insulin_ai.app.ui import (
     render_literature_mining_ui,
     render_psmiles_generation,
     render_active_learning,
-    render_active_learning_results,
     render_simulation_ui
 )
 
@@ -622,9 +621,6 @@ def main():
         
     elif page == "Active Learning":
         render_active_learning()
-    
-    elif page == "Active Learning Results":
-        render_active_learning_results()
         
     elif page == "MD Simulation":
         render_simulation_ui()

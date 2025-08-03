@@ -38,6 +38,15 @@ except ImportError as e:
         NATURAL_SMILES_AVAILABLE = False
         logging.warning(f"⚠️ SMILES Self-Corrector not available: {e2}")
 
+# Import robust PSMILES validation and repair system
+try:
+    from .robust_psmiles_validation import validate_and_repair_psmiles, RobustPSMILESValidator
+    ROBUST_VALIDATION_AVAILABLE = True
+    logging.info("✅ Robust PSMILES Validation System loaded")
+except ImportError as e:
+    ROBUST_VALIDATION_AVAILABLE = False
+    logging.warning(f"⚠️ Robust PSMILES Validation System not available: {e}")
+
 # **NEW: OpenAI-Compatible Working Pipeline**
 # Adapted from the working utils/natural_language_smiles.py system
 class OpenAIWorkingPipeline:
@@ -1088,7 +1097,55 @@ TASK: Convert the user's description into a valid MONOMER PSMILES string.
             return psmiles
     
     def _validate_psmiles(self, psmiles: str) -> Tuple[bool, str]:
-        """Validate PSMILES string for chemical validity."""
+        """
+        Enhanced PSMILES validation using the robust validation and repair system.
+        This method now catches and fixes valence errors, radical electrons, and syntax issues.
+        """
+        try:
+            # **PRIMARY: Use robust validation system if available**
+            if ROBUST_VALIDATION_AVAILABLE:
+                print(f"🔍 Using robust validation system for: {psmiles}")
+                
+                validation_result = validate_and_repair_psmiles(psmiles, max_attempts=3)
+                
+                if validation_result['is_valid']:
+                    final_psmiles = validation_result['final_psmiles']
+                    was_repaired = validation_result['was_repaired']
+                    
+                    if was_repaired:
+                        print(f"   ✅ PSMILES validated and repaired: {psmiles} → {final_psmiles}")
+                        return True, f"Auto-repaired and validated: {final_psmiles}"
+                    else:
+                        print(f"   ✅ PSMILES validated without repair: {final_psmiles}")
+                        return True, "Valid PSMILES (robust validation)"
+                else:
+                    error_msg = validation_result.get('error_message', 'Unknown validation error')
+                    print(f"   ❌ Robust validation failed: {error_msg}")
+                    
+                    # Use the best attempt from robust validation if available
+                    if validation_result.get('final_psmiles') != psmiles:
+                        final_psmiles = validation_result['final_psmiles']
+                        print(f"   🔧 Using best repair attempt: {final_psmiles}")
+                        # Re-test with basic validation
+                        basic_result = self._basic_psmiles_validation(final_psmiles)
+                        if basic_result[0]:
+                            return True, f"Validated with repair attempt: {final_psmiles}"
+                    
+                    # If robust validation fails, try fallback validation
+                    print(f"   🔄 Falling back to basic validation...")
+                    return self._basic_psmiles_validation(psmiles)
+            else:
+                # **FALLBACK: Use basic validation if robust system not available**
+                print(f"🔍 Using basic validation system for: {psmiles}")
+                return self._basic_psmiles_validation(psmiles)
+                
+        except Exception as e:
+            print(f"⚠️ Validation system error: {e}")
+            # Emergency fallback to basic validation
+            return self._basic_psmiles_validation(psmiles)
+    
+    def _basic_psmiles_validation(self, psmiles: str) -> Tuple[bool, str]:
+        """Basic PSMILES validation (original logic)."""
         try:
             # Check for exactly 2 connection points
             star_count = psmiles.count('[*]')
@@ -1106,7 +1163,7 @@ TASK: Convert the user's description into a valid MONOMER PSMILES string.
             if psmiles.count('(') != psmiles.count(')'):
                 return False, "Unbalanced parentheses"
             
-            # **NEW: PSMILES-specific valence pre-validation**
+            # **ENHANCED: PSMILES-specific valence pre-validation**
             valence_check = self._check_psmiles_valence_issues(psmiles)
             if not valence_check[0]:
                 # Attempt auto-repair

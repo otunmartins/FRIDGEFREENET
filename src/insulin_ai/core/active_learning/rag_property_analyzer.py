@@ -90,14 +90,21 @@ class RAGPropertyAnalyzer:
     benchmark comparison, improvement suggestions, and next iteration planning.
     """
     
-    def __init__(self, storage_path: str = "rag_property_analysis"):
+    def __init__(self, storage_path: str = "rag_property_analysis", 
+                 openai_model: str = "gpt-4o-mini", temperature: float = 0.3):
         """Initialize RAG property analyzer.
         
         Args:
             storage_path: Path to store analysis data and results
+            openai_model: OpenAI model to use for analysis
+            temperature: Temperature setting for the model
         """
         self.storage_path = Path(storage_path)
         self.storage_path.mkdir(parents=True, exist_ok=True)
+        
+        # Store model configuration
+        self.openai_model = openai_model
+        self.temperature = temperature
         
         # Initialize web search and RAG systems
         self._initialize_rag_systems()
@@ -114,8 +121,8 @@ class RAGPropertyAnalyzer:
         if OPENAI_AVAILABLE:
             try:
                 self.llm = ChatOpenAI(
-                    model="gpt-4o-mini",
-                    temperature=0.3,  # Lower temperature for more factual analysis
+                    model=self.openai_model,
+                    temperature=self.temperature,  # Lower temperature for more factual analysis
                     timeout=60
                 )
                 logger.info("OpenAI initialized for RAG analysis")
@@ -142,7 +149,10 @@ class RAGPropertyAnalyzer:
         # Initialize RAG literature mining
         if RAG_LITERATURE_AVAILABLE:
             try:
-                self.rag_literature = RAGLiteratureMiningSystem()
+                self.rag_literature = RAGLiteratureMiningSystem(
+                    openai_model=self.openai_model,
+                    temperature=self.temperature
+                )
                 logger.info("RAG Literature Mining initialized")
             except Exception as e:
                 logger.warning(f"Failed to initialize RAG Literature Mining: {e}")

@@ -501,8 +501,12 @@ class MolecularValidator:
                 corrected += ')' * bracket_diff
                 corrections.append(f"Added {bracket_diff} closing parentheses")
             else:
-                corrected = '(' * abs(bracket_diff) + corrected
-                corrections.append(f"Added {abs(bracket_diff)} opening parentheses")
+                # Remove extra closing parentheses
+                for _ in range(abs(bracket_diff)):
+                    last_paren = corrected.rfind(')')
+                    if last_paren != -1:
+                        corrected = corrected[:last_paren] + corrected[last_paren+1:]
+                corrections.append(f"Removed {abs(bracket_diff)} extra closing parentheses")
         
         # Check for unpaired square brackets
         if corrected.count('[') != corrected.count(']'):
@@ -511,8 +515,12 @@ class MolecularValidator:
                 corrected += ']' * bracket_diff
                 corrections.append(f"Added {bracket_diff} closing square brackets")
             else:
-                corrected = '[' * abs(bracket_diff) + corrected
-                corrections.append(f"Added {abs(bracket_diff)} opening square brackets")
+                # Remove extra closing square brackets
+                for _ in range(abs(bracket_diff)):
+                    last_bracket = corrected.rfind(']')
+                    if last_bracket != -1:
+                        corrected = corrected[:last_bracket] + corrected[last_bracket+1:]
+                corrections.append(f"Removed {abs(bracket_diff)} extra closing square brackets")
         
         # **NEW: Silicon-specific valency correction**
         if '[Si]' in corrected or 'Si' in corrected:

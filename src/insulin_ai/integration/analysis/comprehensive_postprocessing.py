@@ -58,8 +58,15 @@ class ComprehensivePostProcessor:
     Integrates all analysis capabilities with progress tracking and user-friendly reporting
     """
     
-    def __init__(self, output_dir: str = "postprocessing_results"):
-        """Initialize the comprehensive post-processor"""
+    def __init__(self, output_dir: str = "postprocessing_results", 
+                 openai_model: str = "gpt-4o-mini", temperature: float = 0.7):
+        """Initialize the comprehensive post-processor
+        
+        Args:
+            output_dir: Directory for storing analysis results
+            openai_model: OpenAI model to use for analysis
+            temperature: Temperature setting for the model
+        """
         
         # Check dependencies
         self.dependencies_available = self._check_dependencies()
@@ -71,6 +78,10 @@ class ComprehensivePostProcessor:
         
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(exist_ok=True)
+        
+        # Store model configuration
+        self.openai_model = openai_model
+        self.temperature = temperature
         
         # Initialize analyzers
         if COMPREHENSIVE_ANALYZER_AVAILABLE:
@@ -88,7 +99,7 @@ class ComprehensivePostProcessor:
         
         if RAG_LITERATURE_AVAILABLE:
             rag_output = self.output_dir / "literature_analysis"
-            self.rag_system = RAGLiteratureMiningSystem(str(rag_output))
+            self.rag_system = RAGLiteratureMiningSystem(str(rag_output), openai_model=self.openai_model, temperature=self.temperature)
         else:
             self.rag_system = None
         

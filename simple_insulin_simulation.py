@@ -62,7 +62,7 @@ def run_simple_insulin_simulation(pdb_file: str):
     
     # Create simulation with CUDA platform
     print("🎬 Creating simulation...")
-    platform = Platform.getPlatformByName('CUDA')
+    platform = Platform.getPlatformByName('OpenCL')#CUDA')
     simulation = Simulation(modeller.topology, system, integrator, platform)
     simulation.context.setPositions(modeller.positions)
     

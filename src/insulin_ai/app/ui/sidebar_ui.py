@@ -142,7 +142,6 @@ def render_navigation():
         [
             "Framework Overview", 
             "Active Learning",
-            "Active Learning Results",
             "Literature Mining (LLM)", 
             "PSMILES Generation", 
             "MD Simulation"
@@ -297,9 +296,42 @@ def render_sidebar() -> Dict[str, Any]:
     # Navigation
     page = render_navigation()
     
+    # Global Polymer Configuration
+    st.sidebar.markdown("---")
+    st.sidebar.header("🧬 Global Polymer Configuration")
+    st.sidebar.markdown("*These settings apply to all simulation tabs*")
+    
+    global_polymer_chain_length = st.sidebar.number_input(
+        "Polymer Chain Length", 
+        min_value=5, 
+        max_value=50, 
+        value=20,
+        key="global_polymer_chain_length",
+        help="Number of repeat units per polymer chain (applies to all tabs)"
+    )
+    
+    global_num_polymer_chains = st.sidebar.number_input(
+        "Number of Polymer Chains", 
+        min_value=1, 
+        max_value=1000, 
+        value=3,
+        key="global_num_polymer_chains",
+        help="Number of polymer chains in the system (applies to all tabs)"
+    )
+    
+    # Store in session state for easy access by all tabs
+    st.session_state.global_polymer_config = {
+        'polymer_chain_length': global_polymer_chain_length,
+        'num_polymer_chains': global_num_polymer_chains
+    }
+    
     return {
         'openai_configured': openai_configured,
         'selected_model': model,
         'temperature': temperature,
-        'selected_page': page
+        'selected_page': page,
+        'global_polymer_config': {
+            'polymer_chain_length': global_polymer_chain_length,
+            'num_polymer_chains': global_num_polymer_chains
+        }
     } 

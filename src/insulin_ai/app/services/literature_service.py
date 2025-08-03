@@ -26,9 +26,17 @@ def literature_mining_with_llm(query: str, iteration_context: Optional[Dict] = N
     try:
         # Import the real RAG literature mining system
         from insulin_ai.integration.rag_literature_mining import RAGLiteratureMiningSystem
+        import streamlit as st
         
-        # Initialize the RAG literature mining system
-        rag_system = RAGLiteratureMiningSystem()
+        # Get the globally selected model from session state
+        openai_model = st.session_state.get('openai_model', 'gpt-4o-mini')
+        temperature = st.session_state.get('temperature', 0.7)
+        
+        # Initialize the RAG literature mining system with the global model
+        rag_system = RAGLiteratureMiningSystem(
+            openai_model=openai_model,
+            temperature=temperature
+        )
         
         # Perform the actual literature mining using RAG
         result = perform_real_literature_mining(rag_system, query, iteration_context)
