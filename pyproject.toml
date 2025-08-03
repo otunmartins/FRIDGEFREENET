@@ -138,7 +138,8 @@ Repository = "https://github.com/insulin-ai/insulin-ai"
 
 [project.scripts]
 insulin-ai = "insulin_ai.cli:main"
-insulin-ai-web = "insulin_ai.app:main"
+insulin-ai-web = "insulin_ai.main:run_streamlit_app"
+insulin-ai-streamlit = "insulin_ai.main:run_streamlit_app"
 
 [project.entry-points."insulin_ai.plugins"]
 # Plugin system for extensibility

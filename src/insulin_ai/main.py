@@ -5,13 +5,6 @@ Comprehensive material discovery platform for insulin delivery patches
 MODULARIZED VERSION - Uses UI modules for clean architecture
 """
 
-# Add project root to Python path (needed when running from app/ directory)
-import sys
-from pathlib import Path
-project_root = Path(__file__).parent.parent
-if str(project_root) not in sys.path:
-    sys.path.insert(0, str(project_root))
-
 import os
 import tempfile
 from typing import Dict, List, Optional, Any, Callable
@@ -41,8 +34,8 @@ from insulin_ai import InsulinAIChatbot, MaterialsLiteratureMiner, PSMILESGenera
 
 # Import PSMILES auto-corrector
 try:
-    from integration.corrections.psmiles_auto_corrector import create_psmiles_auto_corrector
-    from integration.corrections.instant_psmiles_corrector import apply_instant_corrections_ui
+    from insulin_ai.integration.corrections.psmiles_auto_corrector import create_psmiles_auto_corrector
+    from insulin_ai.integration.corrections.instant_psmiles_corrector import apply_instant_corrections_ui
     AUTOCORRECTOR_AVAILABLE = True
 except ImportError:
     AUTOCORRECTOR_AVAILABLE = False
@@ -50,14 +43,14 @@ except ImportError:
 # Import MD simulation integration - USING NEW SIMPLE WORKING SYSTEM
 try:
     # Import our NEW SIMPLE WORKING system based on openmm_test.py
-    from integration.analysis.dual_gaff_amber_integration import DualGaffAmberIntegration
+    from insulin_ai.integration.analysis.dual_gaff_amber_integration import DualGaffAmberIntegration
     MD_INTEGRATION_AVAILABLE = True
     print("✅ Dual GAFF/AMBER Integration imported successfully")
 except ImportError as e:
     # Fallback to old streamlined system
     try:
-        from integration.analysis.streamlined_md_integration import StreamlinedMDIntegration as SimpleMDIntegration
-        from integration.analysis.streamlined_md_integration import run_streamlined_md
+        from insulin_ai.integration.analysis.streamlined_md_integration import StreamlinedMDIntegration as SimpleMDIntegration
+        from insulin_ai.integration.analysis.streamlined_md_integration import run_streamlined_md
         MD_INTEGRATION_AVAILABLE = True
         print("⚠️ Using fallback streamlined system (simple working system not available)")
     except ImportError as e2:
@@ -67,15 +60,15 @@ except ImportError as e:
     
 # Import legacy system for compatibility (if needed)
 try:
-    from integration.analysis.md_simulation_integration import get_insulin_polymer_pdb_files
+    from insulin_ai.integration.analysis.md_simulation_integration import get_insulin_polymer_pdb_files
     LEGACY_MD_UTILS_AVAILABLE = True
 except ImportError:
     LEGACY_MD_UTILS_AVAILABLE = False
 
 # Import comprehensive analysis system
 try:
-    from integration.analysis.insulin_delivery_analysis_integration import InsulinDeliveryAnalysisIntegration
-    from integration.analysis.insulin_comprehensive_analyzer import InsulinComprehensiveAnalyzer
+    from insulin_ai.integration.analysis.insulin_delivery_analysis_integration import InsulinDeliveryAnalysisIntegration
+    from insulin_ai.integration.analysis.insulin_comprehensive_analyzer import InsulinComprehensiveAnalyzer
     COMPREHENSIVE_ANALYSIS_AVAILABLE = True
 except ImportError:
     COMPREHENSIVE_ANALYSIS_AVAILABLE = False
@@ -97,7 +90,7 @@ except ImportError:
     DEBUGGING_AVAILABLE = False
 
 # Import UI modules
-from app.ui import (
+from insulin_ai.app.ui import (
     render_navigation,
     render_framework_overview,
     render_literature_mining_ui,
@@ -107,7 +100,7 @@ from app.ui import (
     render_simulation_ui
 )
 
-from app.utils.session_utils import initialize_session_state, safe_get_session_object
+from insulin_ai.app.utils.session_utils import initialize_session_state, safe_get_session_object
 
 # **NEW: Initialize comprehensive session state matching old app**
 if 'literature_iterations' not in st.session_state:
@@ -277,7 +270,7 @@ def ensure_systems_initialized() -> bool:
 # CORE GENERATION FUNCTION
 # ==================================================
 # Import the new SMILES storage utility
-from app.utils.psmiles_smiles_storage import enhance_psmiles_generation_with_smiles_storage
+from insulin_ai.app.utils.psmiles_smiles_storage import enhance_psmiles_generation_with_smiles_storage
 
 def psmiles_generation_with_llm(material_request, conversation_memory=None):
     """
@@ -639,5 +632,22 @@ def main():
 # ==================================================
 # RUN APP
 # ==================================================
+
+def run_streamlit_app():
+    """Entry point for running the Streamlit app via package entry point."""
+    import subprocess
+    import sys
+    import os
+    
+    # Get the current file path
+    current_file = os.path.abspath(__file__)
+    
+    # Run streamlit with this file
+    subprocess.run([
+        sys.executable, "-m", "streamlit", "run", current_file,
+        "--server.headless", "true",
+        "--browser.gatherUsageStats", "false"
+    ] + sys.argv[1:])
+
 if __name__ == "__main__":
     main() 

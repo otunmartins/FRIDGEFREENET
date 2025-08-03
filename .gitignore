@@ -4,6 +4,7 @@ __pycache__/
 *$py.class
 *.md
 .cursor/
+*.pdb
 
 # C extensions
 *.so

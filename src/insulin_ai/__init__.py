@@ -66,6 +66,19 @@ DATA_DIR.mkdir(exist_ok=True)
 CONFIG_DIR.mkdir(exist_ok=True)
 TEMPLATES_DIR.mkdir(exist_ok=True)
 
+# Check availability of optional components
+try:
+    from .integration.analysis import DualGaffAmberIntegration
+    MD_AVAILABLE = True
+except ImportError:
+    MD_AVAILABLE = False
+
+try:
+    from .integration.automation import AutomationPipeline
+    AUTOMATION_AVAILABLE = True
+except ImportError:
+    AUTOMATION_AVAILABLE = False
+
 # Environment setup
 def setup_environment():
     """Setup default environment variables and configurations."""
