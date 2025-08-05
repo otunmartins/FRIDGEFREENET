@@ -8,6 +8,13 @@ MODULARIZED VERSION - Uses UI modules for clean architecture
 import os
 import tempfile
 from typing import Dict, List, Optional, Any, Callable
+import warnings
+
+# Suppress specific warnings early
+warnings.filterwarnings('ignore', message='.*importing.*simtk.openmm.*deprecated.*')
+warnings.filterwarnings('ignore', message='.*ScriptRunContext.*')
+warnings.filterwarnings('ignore', category=UserWarning, module='streamlit')
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -26,8 +33,6 @@ import shutil
 from pathlib import Path
 from io import BytesIO
 import streamlit.components.v1 as components
-import warnings
-warnings.filterwarnings('ignore')
 
 # **NEW: Import real systems**
 from insulin_ai import InsulinAIChatbot, MaterialsLiteratureMiner, PSMILESGenerator, PSMILESProcessor
@@ -634,16 +639,42 @@ def run_streamlit_app():
     import subprocess
     import sys
     import os
+    import warnings
+    
+    # Suppress warnings early in the subprocess call
+    warnings.filterwarnings('ignore', message='.*importing.*simtk.openmm.*deprecated.*')
+    warnings.filterwarnings('ignore', message='.*ScriptRunContext.*')
+    warnings.filterwarnings('ignore', category=UserWarning, module='streamlit')
     
     # Get the current file path
     current_file = os.path.abspath(__file__)
     
-    # Run streamlit with this file
-    subprocess.run([
+    # Run streamlit with this file and additional configuration
+    cmd = [
         sys.executable, "-m", "streamlit", "run", current_file,
         "--server.headless", "true",
-        "--browser.gatherUsageStats", "false"
-    ] + sys.argv[1:])
+        "--browser.gatherUsageStats", "false",
+        "--server.port", "8502",
+        "--server.address", "0.0.0.0"
+    ] + sys.argv[1:]
+    
+    # Set environment variables to suppress warnings
+    env = os.environ.copy()
+    env['PYTHONWARNINGS'] = 'ignore::UserWarning,ignore::DeprecationWarning'
+    
+    subprocess.run(cmd, env=env)
 
 if __name__ == "__main__":
-    main() 
+    # Check if we're running in a Streamlit context
+    try:
+        # Try to access Streamlit context
+        import streamlit as st
+        # If we can access session_state, we're in proper Streamlit context
+        _ = st.session_state
+        # Run the main app
+        main()
+    except (AttributeError, RuntimeError, ImportError):
+        # We're not in Streamlit context, so just run the streamlit command
+        import warnings
+        warnings.filterwarnings('ignore')
+        run_streamlit_app() 

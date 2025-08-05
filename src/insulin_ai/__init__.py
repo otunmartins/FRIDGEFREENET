@@ -1,10 +1,15 @@
 """
 Insulin-AI: AI-Powered Drug Delivery System for Insulin Patch Materials Discovery
 
-A comprehensive platform for intelligent material discovery and optimization for 
-insulin delivery patches using AI, molecular dynamics simulations, and advanced 
-polymer chemistry.
+A comprehensive platform that combines AI, molecular dynamics simulations, and 
+materials science for intelligent insulin delivery patch development.
 """
+
+import warnings
+# Suppress common warnings that occur during package import
+warnings.filterwarnings('ignore', message='.*importing.*simtk.openmm.*deprecated.*')
+warnings.filterwarnings('ignore', message='.*ScriptRunContext.*')
+warnings.filterwarnings('ignore', category=UserWarning, module='streamlit')
 
 __version__ = "0.1.0"
 __author__ = "Insulin-AI Team"

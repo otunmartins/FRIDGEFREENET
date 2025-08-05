@@ -1,11 +1,14 @@
 """
-MD Simulation UI Module for Insulin-AI App
+Simulation UI Module
 
-This module provides the user interface for molecular dynamics simulation integration,
-including file management, simulation parameters, live monitoring, and results analysis.
-
-Author: AI-Driven Material Discovery Team
+Provides UI components for molecular dynamics simulation functionality.
 """
+
+import warnings
+# Suppress OpenMM deprecation warnings and Streamlit context warnings
+warnings.filterwarnings('ignore', message='.*importing.*simtk.openmm.*deprecated.*')
+warnings.filterwarnings('ignore', message='.*ScriptRunContext.*')
+warnings.filterwarnings('ignore', category=UserWarning, module='streamlit')
 
 import streamlit as st
 import pandas as pd

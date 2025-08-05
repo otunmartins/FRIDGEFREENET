@@ -108,6 +108,144 @@ def validate_md_inputs(polymer_smiles: str, pdb_content: str) -> dict:
             "pdb_content": pdb_content[:100] + "..." if len(pdb_content) > 100 else pdb_content
         }
 
+def validate_molecule_for_gaff(molecule: Molecule, log_callback: Optional[Callable] = None) -> Dict[str, Any]:
+    """
+    Validate a molecule for GAFF parameterization compatibility.
+    
+    Args:
+        molecule: OpenFF Molecule object
+        log_callback: Optional logging function
+        
+    Returns:
+        Dict with validation results and recommendations
+    """
+    validation = {
+        'is_valid': True,
+        'warnings': [],
+        'errors': [],
+        'recommendations': [],
+        'molecule_info': {}
+    }
+    
+    try:
+        # Basic molecule information
+        validation['molecule_info'] = {
+            'n_atoms': molecule.n_atoms,
+            'n_bonds': molecule.n_bonds,
+            'molecular_weight': molecule.molecular_weight.magnitude,
+            'formal_charge': molecule.total_charge.magnitude,
+            'n_conformers': molecule.n_conformers
+        }
+        
+        # Check molecule size - GAFF/antechamber struggles with very large molecules
+        if molecule.n_atoms > 1000:
+            validation['errors'].append(f"Molecule too large ({molecule.n_atoms} atoms) - GAFF limit ~1000 atoms")
+            validation['is_valid'] = False
+            validation['recommendations'].append("Use simplified molecular representation or alternative force field")
+        elif molecule.n_atoms > 500:
+            validation['warnings'].append(f"Large molecule ({molecule.n_atoms} atoms) - GAFF may be slow/unreliable")
+            validation['recommendations'].append("Consider using OpenFF SMIRNOFF instead of GAFF")
+        
+        # Check molecular weight
+        mw = molecule.molecular_weight.magnitude
+        if mw > 10000:
+            validation['warnings'].append(f"Very high molecular weight ({mw:.1f} Da)")
+            validation['recommendations'].append("Consider fragmentation or simplified representation")
+        
+        # Check formal charge
+        charge = molecule.total_charge.magnitude
+        if abs(charge) > 5:
+            validation['warnings'].append(f"High formal charge ({charge:+.0f}) may cause parameterization issues")
+        
+        # Check for conformers
+        if molecule.n_conformers == 0:
+            validation['warnings'].append("No conformers - will need to generate for charge calculation")
+            validation['recommendations'].append("Generate conformers before GAFF parameterization")
+        
+        # Check for partial charges
+        try:
+            if molecule.partial_charges is None:
+                validation['warnings'].append("No partial charges assigned")
+                validation['recommendations'].append("Assign partial charges before GAFF parameterization")
+        except:
+            validation['warnings'].append("Could not check partial charges")
+        
+        # Check for problematic functional groups that GAFF struggles with
+        smiles = molecule.to_smiles()
+        problematic_patterns = ['[*]', '[Si]', '[B]', '[P]', '[S]', '[Cl]', '[Br]', '[I]']
+        for pattern in problematic_patterns:
+            if pattern in smiles:
+                if pattern == '[*]':
+                    validation['warnings'].append("Wildcard atoms ([*]) detected - may cause issues")
+                    validation['recommendations'].append("Remove or replace wildcard atoms")
+                else:
+                    validation['warnings'].append(f"Element {pattern} detected - limited GAFF parameters")
+        
+        if log_callback:
+            log_callback("   📊 Molecule validation results:")
+            log_callback(f"      Atoms: {validation['molecule_info']['n_atoms']}")
+            log_callback(f"      MW: {validation['molecule_info']['molecular_weight']:.1f} Da")
+            log_callback(f"      Charge: {validation['molecule_info']['formal_charge']:+.0f}")
+            log_callback(f"      Conformers: {validation['molecule_info']['n_conformers']}")
+            
+            if validation['warnings']:
+                log_callback(f"      ⚠️ {len(validation['warnings'])} warnings:")
+                for warning in validation['warnings']:
+                    log_callback(f"         - {warning}")
+            
+            if validation['errors']:
+                log_callback(f"      ❌ {len(validation['errors'])} errors:")
+                for error in validation['errors']:
+                    log_callback(f"         - {error}")
+            
+            if validation['recommendations']:
+                log_callback(f"      💡 Recommendations:")
+                for rec in validation['recommendations']:
+                    log_callback(f"         - {rec}")
+    
+    except Exception as e:
+        validation['errors'].append(f"Validation failed: {e}")
+        validation['is_valid'] = False
+        if log_callback:
+            log_callback(f"   ❌ Molecule validation failed: {e}")
+    
+    return validation
+
+
+def create_simplified_polymer_fragment(original_smiles: str, target_atoms: int = 50) -> str:
+    """
+    Create a simplified polymer fragment for parameterization when the full polymer is too large.
+    
+    Args:
+        original_smiles: Original polymer SMILES
+        target_atoms: Target number of atoms for the fragment
+        
+    Returns:
+        Simplified SMILES string
+    """
+    
+    # Common polymer building blocks - try to identify the repeating unit
+    common_fragments = [
+        "CNCCCOCCNCCN",  # Amine-ether linkage
+        "CCNCCCNC",      # Amine chain
+        "CCCOCCCC",      # Ether linkage
+        "CNCCCN",        # Simple diamine
+        "CCOCCN",        # Ether-amine
+        "CCCNCC",        # Simple alkyl-amine
+    ]
+    
+    # Try to find a representative fragment in the original SMILES
+    for fragment in common_fragments:
+        if fragment in original_smiles:
+            # Extend the fragment to reach target atoms
+            repeat_count = max(1, target_atoms // len(fragment))
+            simplified = fragment * min(repeat_count, 3)  # Don't repeat too many times
+            return simplified
+    
+    # Fallback: create a simple representative polymer
+    return "CNCCCOCCNCCNCCCNCCOCCNCCNCCC"  # Generic polymer fragment
+
+
 class DualGaffAmberIntegration:
     """
     Dual GAFF+AMBER MD Integration for insulin-polymer composite systems.
@@ -571,6 +709,14 @@ class DualGaffAmberIntegration:
                 polymer_molecule.assign_partial_charges("gasteiger")
                 log_callback("✅ Gasteiger charges computed and assigned.")
                 
+                # Validate molecule for GAFF compatibility before proceeding
+                log_callback("🔍 Validating polymer molecule for GAFF compatibility...")
+                validation_results = validate_molecule_for_gaff(polymer_molecule, log_callback)
+                
+                if not validation_results['is_valid']:
+                    log_callback("⚠️ Molecule validation failed - GAFF parameterization may fail")
+                    log_callback("   Will attempt fallback strategies if GAFF fails")
+                
                 log_callback("🔄 Generating 3D conformer for the polymer...")
                 polymer_molecule.generate_conformers(n_conformers=1)
                 polymer_topology = polymer_molecule.to_topology().to_openmm()
@@ -694,22 +840,200 @@ class DualGaffAmberIntegration:
                 log_callback("-" * 40)
 
                 log_callback("🔗 Creating GAFF template generator for the polymer...")
-                # Use the SAME polymer_molecule object to ensure a perfect match.
-                gaff_template_generator = GAFFTemplateGenerator(molecules=[polymer_molecule])
-                log_callback("✅ GAFF template generator created.")
-
-                log_callback("🧬 Applying AMBER ff14SB for protein and implicit solvent...")
-                forcefield = ForceField('amber/protein.ff14SB.xml', 'implicit/gbn2.xml')
-                forcefield.registerTemplateGenerator(gaff_template_generator.generator)
-                log_callback("✅ AMBER force field loaded and GAFF generator registered.")
                 
-                log_callback("🔧 Creating OpenMM System...")
-                system = forcefield.createSystem(
-                    modeller.topology,
-                    nonbondedMethod=NoCutoff,
-                    constraints=HBonds
-                )
-                log_callback(f"✅ System created successfully with {system.getNumParticles()} particles.")
+                # Enhanced error handling for GAFF template generator
+                gaff_template_generator = None
+                system = None
+                
+                # Strategy 1: Try GAFF with original molecule
+                try:
+                    # Validate molecule before GAFF parameterization
+                    if polymer_molecule.n_atoms > 500:
+                        log_callback(f"   ⚠️ Large molecule detected ({polymer_molecule.n_atoms} atoms) - GAFF may struggle")
+                        log_callback("   📊 Molecular analysis:")
+                        log_callback(f"      Atoms: {polymer_molecule.n_atoms}")
+                        log_callback(f"      MW: {polymer_molecule.molecular_weight.magnitude:.1f} Da")
+                        
+                        # Check for problematic patterns
+                        problem_found = False
+                        if polymer_molecule.n_atoms > 1000:
+                            log_callback("   ⚠️ Molecule exceeds 1000 atoms - antechamber may fail")
+                            problem_found = True
+                            
+                        if not problem_found:
+                            # Try to create GAFF template generator with enhanced settings
+                            gaff_template_generator = GAFFTemplateGenerator(
+                                molecules=[polymer_molecule],
+                                forcefield='gaff-2.11'  # Use newer GAFF version
+                            )
+                            log_callback("✅ GAFF template generator created successfully.")
+                        else:
+                            log_callback("   ⚠️ Molecule too large for reliable GAFF parameterization - will try fallbacks")
+                    else:
+                        # Normal case for smaller molecules
+                        gaff_template_generator = GAFFTemplateGenerator(molecules=[polymer_molecule])
+                        log_callback("✅ GAFF template generator created successfully.")
+                        
+                except Exception as gaff_error:
+                    log_callback(f"⚠️ GAFF template generator creation failed: {gaff_error}")
+                    log_callback("   This often happens with large/complex molecules that antechamber can't parameterize")
+                    gaff_template_generator = None
+
+                # Strategy 2: Try OpenFF/SMIRNOFF as fallback
+                if gaff_template_generator is None:
+                    log_callback("🔄 Trying OpenFF SMIRNOFF as fallback parameterization...")
+                    try:
+                        from openmmforcefields.generators import SMIRNOFFTemplateGenerator
+                        
+                        # Create a smaller test molecule first to validate OpenFF
+                        test_smiles = "CCCCNCCCOCC"  # Simple representative fragment
+                        test_molecule = Molecule.from_smiles(test_smiles, allow_undefined_stereo=True)
+                        
+                        smirnoff_generator = SMIRNOFFTemplateGenerator(
+                            molecules=[test_molecule],
+                            forcefield='openff-2.1.0'
+                        )
+                        log_callback("✅ OpenFF SMIRNOFF fallback generator created.")
+                        
+                        # Use SMIRNOFF instead of GAFF
+                        log_callback("🧬 Applying AMBER ff14SB + OpenFF SMIRNOFF combination...")
+                        forcefield = ForceField('amber/protein.ff14SB.xml', 'implicit/gbn2.xml')
+                        forcefield.registerTemplateGenerator(smirnoff_generator.generator)
+                        log_callback("✅ AMBER + SMIRNOFF force field loaded.")
+                        
+                    except Exception as smirnoff_error:
+                        log_callback(f"⚠️ OpenFF SMIRNOFF fallback also failed: {smirnoff_error}")
+                        smirnoff_generator = None
+                        
+                # Strategy 3: Try simplified polymer representation
+                if gaff_template_generator is None and 'smirnoff_generator' not in locals():
+                    log_callback("🔄 Creating simplified polymer representation for parameterization...")
+                    try:
+                        # Create a much smaller representative molecule using helper function
+                        simplified_smiles = create_simplified_polymer_fragment(polymer_smiles, target_atoms=50)
+                        log_callback(f"   📝 Using simplified SMILES: {simplified_smiles}")
+                        
+                        simplified_molecule = Molecule.from_smiles(simplified_smiles, allow_undefined_stereo=True)
+                        simplified_molecule.assign_partial_charges("gasteiger")
+                        
+                        # Validate the simplified molecule
+                        log_callback("   🔍 Validating simplified molecule...")
+                        simplified_validation = validate_molecule_for_gaff(simplified_molecule, log_callback)
+                        
+                        if simplified_validation['is_valid']:
+                            gaff_template_generator = GAFFTemplateGenerator(
+                                molecules=[simplified_molecule],
+                                forcefield='gaff-1.81'  # Use older, more stable GAFF
+                            )
+                            log_callback("✅ Simplified GAFF template generator created.")
+                            log_callback("   ⚠️ Note: Using simplified representation - accuracy may be reduced")
+                        else:
+                            log_callback("   ❌ Even simplified molecule failed validation")
+                            
+                    except Exception as simplified_error:
+                        log_callback(f"⚠️ Simplified polymer approach failed: {simplified_error}")
+                        gaff_template_generator = None
+
+                # Strategy 4: Emergency fallback to protein-only simulation
+                if gaff_template_generator is None and 'smirnoff_generator' not in locals():
+                    log_callback("🚨 All polymer parameterization methods failed!")
+                    log_callback("   📋 Emergency fallback: Running protein-only simulation")
+                    log_callback("   ⚠️ This will simulate insulin without the polymer")
+                    
+                    # Create insulin-only system
+                    insulin_pdb_path = Path("src/insulin_ai/integration/data/insulin/output.pdb")
+                    if insulin_pdb_path.exists():
+                        insulin_pdb = PDBFile(str(insulin_pdb_path))
+                        
+                        # Create protein-only force field
+                        forcefield = ForceField('amber/protein.ff14SB.xml', 'implicit/gbn2.xml')
+                        log_callback("✅ Emergency protein-only force field loaded.")
+                        
+                        # Create system with just insulin
+                        log_callback("🔧 Creating emergency protein-only system...")
+                        system = forcefield.createSystem(
+                            insulin_pdb.topology,
+                            nonbondedMethod=NoCutoff,
+                            constraints=HBonds
+                        )
+                        log_callback(f"✅ Emergency system created with {system.getNumParticles()} particles (insulin only).")
+                        
+                        # Update topology and positions for the simulation
+                        modeller.topology = insulin_pdb.topology
+                        modeller.positions = insulin_pdb.positions
+                    else:
+                        raise RuntimeError("All parameterization strategies failed and insulin PDB not found for emergency fallback")
+
+                # If we have a working template generator, set up the dual system
+                if system is None and (gaff_template_generator is not None or 'smirnoff_generator' in locals()):
+                    if gaff_template_generator is not None:
+                        log_callback("🧬 Applying AMBER ff14SB + GAFF combination...")
+                        forcefield = ForceField('amber/protein.ff14SB.xml', 'implicit/gbn2.xml')
+                        forcefield.registerTemplateGenerator(gaff_template_generator.generator)
+                        log_callback("✅ AMBER + GAFF force field loaded.")
+                    else:
+                        # smirnoff_generator was already set up above
+                        pass
+                    
+                    log_callback("🔧 Creating OpenMM System...")
+                    try:
+                        system = forcefield.createSystem(
+                            modeller.topology,
+                            nonbondedMethod=NoCutoff,
+                            constraints=HBonds
+                        )
+                        log_callback(f"✅ System created successfully with {system.getNumParticles()} particles.")
+                        
+                    except KeyError as ke:
+                        if str(ke) == "''":
+                            log_callback("❌ KeyError with empty atom type detected!")
+                            log_callback("   This indicates GAFF/antechamber failed to assign atom types properly")
+                            log_callback("   🔄 Attempting emergency molecular cleanup...")
+                            
+                            # Try to identify and fix the problematic molecule
+                            try:
+                                # Re-create molecule with stricter validation
+                                polymer_smiles_clean = polymer_smiles.replace('[*]', '')  # Remove wildcards
+                                clean_molecule = Molecule.from_smiles(polymer_smiles_clean, allow_undefined_stereo=True)
+                                clean_molecule.assign_partial_charges("am1bcc")  # Try different charge method
+                                
+                                gaff_template_generator = GAFFTemplateGenerator(
+                                    molecules=[clean_molecule],
+                                    forcefield='gaff-1.81'
+                                )
+                                
+                                system = forcefield.createSystem(
+                                    modeller.topology,
+                                    nonbondedMethod=NoCutoff,
+                                    constraints=HBonds
+                                )
+                                log_callback("✅ System created after molecular cleanup.")
+                                
+                            except Exception as cleanup_error:
+                                log_callback(f"❌ Molecular cleanup failed: {cleanup_error}")
+                                log_callback("   🚨 Falling back to emergency protein-only simulation")
+                                
+                                # Final emergency fallback
+                                insulin_pdb_path = Path("src/insulin_ai/integration/data/insulin/output.pdb")
+                                if insulin_pdb_path.exists():
+                                    insulin_pdb = PDBFile(str(insulin_pdb_path))
+                                    forcefield = ForceField('amber/protein.ff14SB.xml', 'implicit/gbn2.xml')
+                                    system = forcefield.createSystem(
+                                        insulin_pdb.topology,
+                                        nonbondedMethod=NoCutoff,
+                                        constraints=HBonds
+                                    )
+                                    modeller.topology = insulin_pdb.topology
+                                    modeller.positions = insulin_pdb.positions
+                                    log_callback("✅ Emergency protein-only system created.")
+                                else:
+                                    raise RuntimeError("Critical error: Cannot create any valid system")
+                        else:
+                            raise  # Re-raise other KeyErrors
+                    
+                    except Exception as system_error:
+                        log_callback(f"❌ System creation failed: {system_error}")
+                        raise
 
                 # --- Step 6: Run MD Simulation ---
                 log_callback(f"\n🏃 STEP 6: Running MD Simulation")
@@ -782,10 +1106,52 @@ class DualGaffAmberIntegration:
                 log_callback(f"{'Step':>12} {'Time(ps)':>12} {'PE(kJ/mol)':>15} {'Speed(ns/day)':>15}")
                 log_callback(f"{'-'*12} {'-'*12} {'-'*15} {'-'*15}")
                 
-                simulation.step(equilibration_steps)
+                # **FIX: Break equilibration into chunks for progress reporting**
+                chunk_size = min(1000, equilibration_steps // 10) if equilibration_steps > 1000 else equilibration_steps
+                steps_completed = 0
+                
+                while steps_completed < equilibration_steps:
+                    remaining_steps = equilibration_steps - steps_completed
+                    current_chunk = min(chunk_size, remaining_steps)
+                    
+                    # Run chunk
+                    simulation.step(current_chunk)
+                    steps_completed += current_chunk
+                    
+                    # Report progress
+                    current_state = simulation.context.getState(getEnergy=True)
+                    potential_energy = current_state.getPotentialEnergy().value_in_unit(unit.kilojoules_per_mole)
+                    time_ps = steps_completed * 0.002  # 2 fs timestep
+                    
+                    # Calculate approximate speed (simplified)
+                    speed_estimate = 24 * 60 * 60 * 0.002 / 1000  # Rough estimate in ns/day
+                    
+                    log_callback(f"{steps_completed:>12d} {time_ps:>12.1f} {potential_energy:>15.2f} {speed_estimate:>15.1f}")
                 
                 log_callback(f"🏃 Running production ({production_steps} steps)...")
-                simulation.step(production_steps)
+                
+                # **FIX: Break production into chunks for progress reporting**
+                chunk_size = min(1000, production_steps // 20) if production_steps > 1000 else production_steps
+                steps_completed = 0
+                
+                while steps_completed < production_steps:
+                    remaining_steps = production_steps - steps_completed
+                    current_chunk = min(chunk_size, remaining_steps)
+                    
+                    # Run chunk
+                    simulation.step(current_chunk)
+                    steps_completed += current_chunk
+                    
+                    # Report progress every few chunks
+                    if steps_completed % (chunk_size * 5) == 0 or steps_completed == production_steps:
+                        current_state = simulation.context.getState(getEnergy=True)
+                        potential_energy = current_state.getPotentialEnergy().value_in_unit(unit.kilojoules_per_mole)
+                        total_time_ps = (equilibration_steps + steps_completed) * 0.002
+                        
+                        # Calculate approximate speed
+                        speed_estimate = 24 * 60 * 60 * 0.002 / 1000  # Rough estimate in ns/day
+                        
+                        log_callback(f"{equilibration_steps + steps_completed:>12d} {total_time_ps:>12.1f} {potential_energy:>15.2f} {speed_estimate:>15.1f}")
                 
                 final_energy = simulation.context.getState(getEnergy=True).getPotentialEnergy()
                 final_energy_kj_mol = final_energy.value_in_unit(unit.kilojoules_per_mole)

@@ -24,6 +24,12 @@ import openai
 import os
 from ...core.robust_psmiles_validation import validate_and_repair_psmiles
 
+# Add streamlit import for session state access
+import streamlit as st
+
+# Import autocorrect function for PSMILES generation
+# from insulin_ai.app.services.literature_service import autocorrect_remove_forbidden_elements
+
 logger = logging.getLogger(__name__)
 
 def autocorrect_remove_forbidden_elements(prompt: str, openai_model: str = "gpt-4o-mini") -> Dict[str, Any]:
@@ -946,6 +952,9 @@ class SimpleActiveLearningOrchestrator:
         Run PSMILES generation with enhanced retry logic.
         Generate only ONE candidate, retrying until successful.
         """
+        # Initialize variables that need to be accessible in except block
+        auto_functionalize = True  # Default value
+        
         try:
             self._log_message(f"   🧪 Initializing PSMILES generation system...")
             
@@ -995,24 +1004,16 @@ class SimpleActiveLearningOrchestrator:
                     psmiles_prompt = autocorrect_result['corrected_prompt']
                     corrections_summary = autocorrect_result['correction_summary']
                     
-                    # Log autocorrect results
-                    if autocorrect_result['corrections_made']:
-                        self._log_message(f"   ✅ AUTOCORRECT: {corrections_summary}")
-                        for correction in autocorrect_result['corrections_made']:
-                            self._log_message(f"      • Removed {correction['original_count']} instances of '{correction['keyword']}'")
-                        self._log_message(f"   📝 ORIGINAL: '{original_prompt[:60]}...'")
-                        self._log_message(f"   📝 CORRECTED: '{psmiles_prompt[:60]}...'")
+                    if original_prompt != psmiles_prompt:
+                        self._log_message(f"   ✅ Autocorrect applied: {corrections_summary}")
+                        # Log the corrected prompt for transparency
+                        self._log_message(f"   🔄 CORRECTED PROMPT: {psmiles_prompt}")
                     else:
-                        self._log_message(f"   ✅ AUTOCORRECT: {corrections_summary}")
+                        self._log_message(f"   ✅ Autocorrect: No changes needed")
                 else:
-                    self._log_message(f"   ⚠️ AUTOCORRECT FAILED: {autocorrect_result.get('error', 'Unknown error')}")
-                    self._log_message(f"   🔄 Continuing with original prompt...")
-            else:
-                self._log_message(f"   ⏭️ AUTOCORRECT DISABLED: Using original prompt without forbidden element removal")
+                    self._log_message(f"   ⚠️ Autocorrect failed: {autocorrect_result.get('error')}, using original prompt")
             
-            self._log_message(f"   📝 Using prompt: '{psmiles_prompt[:80]}...'")
-            
-            # Get PSMILES generation configuration
+            # Get PSMILES configuration
             psmiles_config = self.config.get('psmiles_generation', {})
             max_retries = psmiles_config.get('max_retries', 5)
             num_candidates = psmiles_config.get('num_candidates', 1)
@@ -1023,67 +1024,104 @@ class SimpleActiveLearningOrchestrator:
             self._log_message(f"   🔧 Configuration: {num_candidates} candidates | Max retries: {max_retries}")
             self._log_message(f"   ⚙️ Functionalization: {auto_functionalize} | Repair attempts: {max_repair_attempts}")
             
-            # Use the orchestrator's own PSMILES generator (no session state dependency)
-            self._log_message(f"   🚀 Starting diverse candidate generation...")
-            psmiles_generator = self.psmiles_generator
+            # **FIX: Call the workflow function correctly with proper parameters**
+            self._log_message(f"   🚀 Starting PSMILES generation with auto-repair workflow...")
             
-            # Use the exact same method as the working tab
-            diverse_results = psmiles_generator.generate_diverse_candidates(
-                base_request=psmiles_prompt,
-                num_candidates=num_candidates * 2,  # Generate more to ensure diversity (same as manual tab)
-                temperature_range=(0.6, 1.0)  # Same temperature range as manual tab
+            # Get the processor from session state (same way the UI tab does it)
+            import streamlit as st
+            if hasattr(st, 'session_state') and hasattr(st.session_state, 'psmiles_processor'):
+                processor = st.session_state.psmiles_processor
+            else:
+                # Fallback: create processor if not available
+                from insulin_ai.core.psmiles.psmiles_processor import PSMILESProcessor
+                processor = PSMILESProcessor()
+                self._log_message(f"   🔧 Created fallback processor")
+            
+            # **CORRECT FUNCTION CALL: Use the proper signature**
+            workflow_result = process_psmiles_workflow_with_autorepair(
+                processor=processor,  # ✅ Correct: processor object
+                material_request=psmiles_prompt,  # ✅ Correct: string description  
+                num_candidates=num_candidates,  # ✅ Correct: number of candidates
+                auto_functionalize=auto_functionalize,  # ✅ Correct: boolean flag
+                max_repair_attempts=max_repair_attempts,  # ✅ Correct: int
+                use_truly_diverse=True,  # ✅ Correct: use diverse generation
+                diversity_threshold=0.4  # ✅ Correct: diversity threshold
             )
             
-            # Process results in the exact same format as the working tab
-            if diverse_results.get('success') and diverse_results.get('candidates'):
-                candidates_list = diverse_results['candidates']
+            if workflow_result and workflow_result.get('success'):
+                # Extract candidates from the workflow result
+                candidates_list = workflow_result.get('candidates', [])
+                self._log_message(f"   ✅ Workflow completed: {len(candidates_list)} candidates generated")
+                
                 molecules = []
+                for i, candidate in enumerate(candidates_list):
+                    try:
+                        psmiles = candidate.get('psmiles', '')
+                        if not psmiles:
+                            self._log_message(f"   ⚠️ Candidate {i+1} has no PSMILES, skipping")
+                            continue
+                        
+                        confidence = candidate.get('confidence', 0.8)
+                        self._log_message(f"   ✅ Candidate {i+1}: {psmiles[:40]}... (confidence: {confidence:.2f})")
+                        
+                        molecules.append({
+                            'id': f'mol_{len(molecules)+1}',
+                            'psmiles': psmiles,
+                            'original_psmiles': psmiles,
+                            'smiles': candidate.get('smiles', ''),
+                            'confidence': confidence,
+                            'description': candidate.get('explanation', 'Literature-derived polymer with auto-repair'),
+                            'generation_method': 'robust_workflow_with_autorepair',
+                            'prompt_used': psmiles_prompt,
+                            'temperature_used': candidate.get('generation_temperature', 0.8),
+                            'repair_applied': True,  # Workflow always includes repair
+                            'functionalization': candidate.get('functionalization_method', 'None'),
+                            'processing_success': True
+                        })
+                        
+                    except Exception as candidate_e:
+                        self._log_message(f"   ❌ Error processing candidate {i+1}: {candidate_e}")
+                        continue
                 
-                self._log_message(f"   🎯 Processing {len(candidates_list)} generated candidates...")
-                
-                for i, result in enumerate(candidates_list[:num_candidates]):  # Take only requested number
-                    psmiles = result['psmiles']
-                    confidence = result.get('confidence', 0.8)
-                    self._log_message(f"   📄 Candidate {i+1}: {psmiles[:40]}... (confidence: {confidence:.2f})")
+                # Final validation
+                if molecules:
+                    self._log_message(f"   ✅ PSMILES generation completed with {len(molecules)} robust molecules")
+                    self._log_message(f"   📊 Using same robust workflow as dedicated PSMILES tab")
                     
-                    molecules.append({
-                        'id': f'mol_{i+1}',
-                        'psmiles': psmiles,
-                        'smiles': result.get('smiles', ''),  # May not have SMILES from diverse generation
-                        'confidence': confidence,
-                        'description': result.get('explanation', 'Literature-derived polymer structure'),
-                        'generation_method': result.get('generation_method', 'working_pipeline_diverse'),
-                        'prompt_used': result.get('diversity_prompt', psmiles_prompt),
-                        'temperature_used': result.get('temperature_used', 0.8)
-                    })
-                
-                diversity_score = diverse_results.get('diversity_score', 0.8)
-                validity_score = diverse_results.get('validity_score', 0.9)
-                
-                self._log_message(f"   ✅ Successfully generated {len(molecules)} candidates")
-                self._log_message(f"   📊 Diversity score: {diversity_score:.2f} | Validity score: {validity_score:.2f}")
-                
-                return {
-                    'success': True,
-                    'molecules': molecules,
-                    'num_generated': len(molecules),
-                    'generation_method': 'direct_psmiles_generator',
-                    'attempts_needed': 1,
-                    'diversity_score': diversity_score,
-                    'validity_score': validity_score,
-                    'raw_result': diverse_results
-                }
+                    return {
+                        'success': True,
+                        'molecules': molecules,
+                        'num_generated': len(molecules),
+                        'generation_method': 'robust_workflow_matching_dedicated_tab',
+                        'auto_repair_used': True,
+                        'functionalization_applied': auto_functionalize,
+                        'robustness_score': sum(m['confidence'] for m in molecules) / len(molecules)
+                    }
+                else:
+                    error_msg = "No valid molecules generated from workflow"
+                    self._log_message(f"   ❌ {error_msg}")
+                    return {
+                        'success': False,
+                        'error': error_msg,
+                        'molecules': [],
+                        'num_generated': 0,
+                        'generation_method': 'robust_workflow_error',
+                        'auto_repair_used': True,
+                        'functionalization_applied': auto_functionalize,
+                        'robustness_score': 0.0
+                    }
             else:
-                error_msg = f"PSMILES generation failed: {diverse_results.get('error', 'Unknown error')}"
+                error_msg = f"Workflow failed: {workflow_result.get('error', 'Unknown error') if workflow_result else 'No workflow result'}"
                 self._log_message(f"   ❌ {error_msg}")
                 return {
                     'success': False,
                     'error': error_msg,
                     'molecules': [],
                     'num_generated': 0,
-                    'generation_method': 'direct_psmiles_generator',
-                    'attempts_needed': 0,
-                    'raw_result': diverse_results
+                    'generation_method': 'robust_workflow_error',
+                    'auto_repair_used': True,
+                    'functionalization_applied': auto_functionalize,
+                    'robustness_score': 0.0
                 }
                 
         except Exception as e:
@@ -1094,9 +1132,10 @@ class SimpleActiveLearningOrchestrator:
                 'error': error_msg,
                 'molecules': [],
                 'num_generated': 0,
-                'generation_method': 'direct_psmiles_generator_error',
-                'attempts_needed': 0,
-                'raw_result': {}
+                'generation_method': 'robust_workflow_error',
+                'auto_repair_used': True,
+                'functionalization_applied': auto_functionalize,
+                'robustness_score': 0.0
             }
     
     def _run_md_simulation(self, generated_molecules: Dict[str, Any]) -> Dict[str, Any]:

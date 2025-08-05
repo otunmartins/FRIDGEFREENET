@@ -6,6 +6,12 @@ progress tracking, advanced functionalization, and enhanced visualization to mat
 the original app's sophisticated functionality.
 """
 
+import warnings
+# Suppress OpenMM deprecation warnings and Streamlit context warnings
+warnings.filterwarnings('ignore', message='.*importing.*simtk.openmm.*deprecated.*')
+warnings.filterwarnings('ignore', message='.*ScriptRunContext.*')
+warnings.filterwarnings('ignore', category=UserWarning, module='streamlit')
+
 import streamlit as st
 import pandas as pd
 import numpy as np
