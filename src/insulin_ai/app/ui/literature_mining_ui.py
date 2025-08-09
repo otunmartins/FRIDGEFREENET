@@ -27,7 +27,6 @@ def render_literature_mining_ui():
         from app.services.system_service import check_systems_initialized
         from app.utils.app_utils import add_to_material_library
         from insulin_ai.integration.rag_literature_mining import RAGLiteratureMiningSystem
-        import streamlit as st
         
         # Get the globally selected model from session state
         openai_model = st.session_state.get('openai_model', 'gpt-4o-mini')
