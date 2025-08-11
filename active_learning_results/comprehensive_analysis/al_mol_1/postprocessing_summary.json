@@ -1,0 +1,26 @@
+{
+  "analysis_job_id": "analysis_0f74ab62",
+  "simulation_id": "al_mol_1",
+  "timestamp": "2025-08-09T09:46:45.908946",
+  "summary_metrics": {
+    "rmsd_mean_A": 1.9369831085205078,
+    "stability_assessment": "stable"
+  },
+  "processing_time": {
+    "comprehensive_analysis": 0.9985506534576416
+  },
+  "total_processing_time": 0,
+  "analyses_performed": [
+    "basic_analysis",
+    "insulin_stability",
+    "binding_energy",
+    "diffusion_analysis",
+    "mesh_analysis",
+    "volume_analysis",
+    "interaction_analysis"
+  ],
+  "success_status": {
+    "basic_trajectory": true,
+    "insulin_stability": true
+  }
+}

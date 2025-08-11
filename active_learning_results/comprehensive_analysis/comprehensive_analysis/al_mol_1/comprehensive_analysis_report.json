@@ -1,0 +1,21 @@
+{
+  "simulation_id": "al_mol_1",
+  "timestamp": "2025-08-09T09:46:46.894212",
+  "trajectory_info": {
+    "n_frames": 60,
+    "n_atoms": 1226,
+    "simulation_time_ps": 59.0
+  },
+  "analysis_summary": {
+    "basic_trajectory": {
+      "num_frames": 60,
+      "num_atoms": 1226,
+      "time_ps": 59.0
+    },
+    "insulin_stability": {
+      "rmsd_mean_A": 1.9369831085205078,
+      "stability_assessment": "stable",
+      "rg_change_percent": 4.6852777551998415
+    }
+  }
+}
