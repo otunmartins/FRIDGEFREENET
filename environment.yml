@@ -5,6 +5,7 @@ channels:
   - conda-forge
   - omnia
 dependencies:
+  - python=3.11
   - _libgcc_mutex=0.1=main
   - _openmp_mutex=5.1=1_gnu
   - alabaster=1.0.0=pyhd8ed1ab_1
