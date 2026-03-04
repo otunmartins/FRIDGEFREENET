@@ -171,12 +171,20 @@ Enhanced literature mining with structured analysis
 
 ### Active Learning with MD Feedback
 
+**CLI:**
 ```bash
 # Run full feedback loop (literature + MD evaluation)
 python run_active_learning.py --iterations 2
 
 # Literature-only mode (no MD)
 python run_active_learning.py --no-md --iterations 1
+```
+
+**Web API:**
+```bash
+curl -X POST http://localhost:5000/api/active-learning/run \
+  -H "Content-Type: application/json" \
+  -d '{"iterations": 2, "use_md": true}'
 ```
 
 Requires: `openmm`, `openmmforcefields`, `rdkit`. Falls back to RDKit descriptor proxy when full MD unavailable.

@@ -36,6 +36,10 @@ const elements = {
     statusDot: document.getElementById('statusDot'),
     statusText: document.getElementById('statusText'),
     
+    // Active learning
+    activeLearningBtn: document.getElementById('activeLearningBtn'),
+    activeLearningStatus: document.getElementById('activeLearningStatus'),
+    
     // Modal elements
     errorModal: document.getElementById('errorModal'),
     errorMessage: document.getElementById('errorMessage')
@@ -172,6 +176,9 @@ function setupEventListeners() {
     
     // Clear chat button
     elements.clearChatBtn?.addEventListener('click', clearChat);
+    
+    // Active learning button
+    elements.activeLearningBtn?.addEventListener('click', runActiveLearning);
     
     // Mode buttons
     elements.modeButtons.forEach(btn => {
@@ -811,6 +818,44 @@ function updateExamples(mode) {
         });
         elements.examplesList.appendChild(exampleDiv);
     });
+}
+
+// ====== Active Learning ======
+async function runActiveLearning() {
+    const btn = elements.activeLearningBtn;
+    const statusEl = elements.activeLearningStatus;
+    if (!btn || btn.disabled) return;
+    
+    btn.disabled = true;
+    if (statusEl) statusEl.textContent = 'Running...';
+    
+    try {
+        const response = await fetch('/api/active-learning/run', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ iterations: 2, use_md: true })
+        });
+        const data = await response.json();
+        
+        if (response.ok && data.success) {
+            const summary = data.summary.map(s => 
+                `Iteration ${s.iteration}: ${s.candidates} candidates, ${s.high_performers} high performers`
+            ).join('\n');
+            addMessage('assistant', 
+                `**Active Learning Complete**\n\n${summary}\n\nResults saved to \`${data.cycle_results_dir}/\``, 
+                'general');
+            if (statusEl) statusEl.textContent = 'Done';
+        } else {
+            addMessage('assistant', `Error: ${data.error || 'Unknown error'}`, 'general');
+            if (statusEl) statusEl.textContent = 'Failed';
+        }
+    } catch (error) {
+        addMessage('assistant', `Error: ${error.message}`, 'general');
+        if (statusEl) statusEl.textContent = 'Error';
+    } finally {
+        btn.disabled = false;
+        if (statusEl) setTimeout(() => { statusEl.textContent = ''; }, 3000);
+    }
 }
 
 // ====== Status Management ======

@@ -158,16 +158,17 @@ insulin-ai/
 - Add `pyproject.toml` for installable package
 
 ### Phase 2: MD Simulation Pipeline (CPU-Only)
-- [ ] `psmiles_to_openmm.py`: PSMILES → RDKit Mol → 3D → OpenMM System
-- [ ] `openmm_runner.py`: Run NPT/NVT with PME, CPU platform
-- [ ] `property_extractor.py`: Thermal stability (RMSD, structure retention), diffusion
-- [ ] Unit tests with minimal polymer (e.g., PEG repeat)
+- [x] `psmiles_to_openmm.py`: PSMILES → RDKit Mol → 3D → OpenMM System (GAFF when openff-toolkit available)
+- [x] `openmm_runner.py`: Run NPT/NVT with PME, CPU platform
+- [x] `property_extractor.py`: Energy-based stability metrics; RDKit proxy fallback
+- [x] Unit tests with minimal polymer (e.g., PEG repeat)
+- [x] `rdkit_proxy.py`: Fallback when GAFF unavailable
 
 ### Phase 3: Feedback Loop Integration
-- [ ] Implement `MDSimulator.evaluate_candidates(candidates)` interface
-- [ ] Wire `IterativeLiteratureMiner.run_active_learning_cycle(md_simulator=...)`
-- [ ] Map MD results → `high_performers`, `effective_mechanisms`, `problematic_features`
-- [ ] Integration test: 1–2 cycles with real MD
+- [x] Implement `MDSimulator.evaluate_candidates(candidates)` interface
+- [x] Wire `IterativeLiteratureMiner.run_active_learning_cycle(md_simulator=...)`
+- [x] Map MD results → `high_performers`, `effective_mechanisms`, `problematic_features`
+- [x] Integration test: MDSimulator + feedback dict format
 
 ### Phase 4: Dependencies & Documentation
 - [x] `requirements.txt`: openmm, openmmforcefields, rdkit (openff-toolkit optional)

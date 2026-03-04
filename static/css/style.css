@@ -173,13 +173,51 @@ body {
   overflow-y: auto;
 }
 
-.examples-section h4 {
+.examples-section h4,
+.active-learning-section h4 {
   font-size: 0.875rem;
   font-weight: 600;
   color: var(--text-secondary);
   margin-bottom: var(--spacing-md);
   text-transform: uppercase;
   letter-spacing: 0.5px;
+}
+
+.active-learning-section {
+  padding: var(--spacing-md) var(--spacing-lg);
+  border-top: 1px solid var(--border-color);
+}
+
+.active-learning-btn {
+  width: 100%;
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: var(--accent-color);
+  color: white;
+  border: none;
+  border-radius: var(--border-radius-md);
+  cursor: pointer;
+  font-size: 0.875rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-sm);
+  transition: background var(--transition-fast);
+}
+
+.active-learning-btn:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.active-learning-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.active-learning-status {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-top: var(--spacing-xs);
+  min-height: 1em;
 }
 
 .example-item {

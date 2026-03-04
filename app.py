@@ -8,6 +8,7 @@ and interactive chat with the AI system for insulin delivery research.
 """
 
 import os
+import sys
 import json
 import uuid
 from datetime import datetime
@@ -1549,6 +1550,26 @@ def status():
                            if system.get('status') == 'active')
         total_systems = len(status_data['systems'])
         
+        # MD simulation status (CPU-only pipeline)
+        try:
+            _src = os.path.join(os.path.dirname(__file__), 'src', 'python')
+            if _src not in sys.path:
+                sys.path.insert(0, _src)
+            from insulin_ai.simulation import MDSimulator
+            _md_test = MDSimulator()
+            md_available = _md_test.runner is not None
+            status_data['systems']['md_simulation'] = {
+                'status': 'active' if md_available else 'proxy_only',
+                'mode': 'OpenMM+PME' if md_available else 'RDKit proxy',
+                'platform': 'CPU'
+            }
+        except Exception:
+            status_data['systems']['md_simulation'] = {
+                'status': 'available',
+                'mode': 'RDKit proxy',
+                'platform': 'CPU'
+            }
+        
         status_data['overall'] = {
             'healthy': active_systems >= 2,  # At least chatbot and one other system
             'active_systems': active_systems,
@@ -1559,6 +1580,63 @@ def status():
         
     except Exception as e:
         return jsonify({'error': f'Status check failed: {str(e)}'}), 500
+
+@app.route('/api/active-learning/run', methods=['POST'])
+def run_active_learning():
+    """
+    Run active learning cycle: literature -> MD evaluation -> feedback.
+    POST body: { "iterations": 2, "use_md": true }
+    """
+    try:
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src', 'python'))
+        sys.path.insert(0, os.path.dirname(__file__))
+        
+        from iterative_literature_mining import IterativeLiteratureMiner
+        from insulin_ai.simulation import MDSimulator
+        
+        data = request.get_json() or {}
+        iterations = min(int(data.get('iterations', 1)), 5)
+        use_md = data.get('use_md', True)
+        
+        md_simulator = MDSimulator(n_steps=5000) if use_md else None
+        
+        if not literature_miner:
+            return jsonify({'error': 'Literature miner not initialized'}), 503
+        
+        miner = IterativeLiteratureMiner(
+            semantic_scholar_api_key=os.environ.get('SEMANTIC_SCHOLAR_API_KEY'),
+            ollama_model=os.environ.get('OLLAMA_MODEL', 'llama3.2'),
+            ollama_host=os.environ.get('OLLAMA_HOST', 'http://localhost:11434')
+        )
+        
+        results = miner.run_active_learning_cycle(
+            max_iterations=iterations,
+            md_simulator=md_simulator,
+            generative_model=None
+        )
+        
+        summary = []
+        for i, r in enumerate(results):
+            n_cand = len(r.get('material_candidates', []))
+            md_ev = r.get('md_evaluation', {})
+            high_perf = md_ev.get('high_performers', []) if md_ev else []
+            summary.append({
+                'iteration': i + 1,
+                'candidates': n_cand,
+                'high_performers': len(high_perf)
+            })
+        
+        return jsonify({
+            'success': True,
+            'iterations': iterations,
+            'summary': summary,
+            'cycle_results_dir': 'cycle_results'
+        })
+        
+    except ImportError as e:
+        return jsonify({'error': f'Import error: {str(e)}'}), 500
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/examples')
 def examples():
