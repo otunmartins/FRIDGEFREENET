@@ -23,6 +23,9 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Chemistry",
 ]
 
+[project.scripts]
+insulin-ai = "insulin_ai.cli:main"
+
 [project.optional-dependencies]
 simulation = [
     "openmm>=8.0",

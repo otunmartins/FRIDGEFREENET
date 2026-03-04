@@ -1,6 +1,6 @@
 # Insulin AI: AI-Driven Design of Fridge-Free Insulin Delivery Patches 🧬💊
 
-A comprehensive AI-powered research platform for discovering and optimizing materials for fridge-free insulin delivery patches. The system integrates large language models (LLMs) for scientific literature mining with PSMILES-based generative modeling, creating an iterative active learning discovery pipeline.
+A **CLI-first** materials discovery platform designed for **OpenCode.ai**, Claude Code, and terminal-based AI coding agents. The system integrates literature mining with PSMILES and CPU-only MD simulation, creating an iterative active learning feedback loop. **The code is the platform** – no web UI required.
 
 ## 🎯 Project Overview
 
@@ -169,25 +169,32 @@ Enhanced literature mining with structured analysis
 "Search for nanoparticle formulations for protein preservation"
 ```
 
-### Active Learning with MD Feedback
+### Active Learning (CLI – OpenCode / Claude Code Interface)
 
-**CLI:**
+**Primary interface: CLI**
+
 ```bash
-# Run full feedback loop (literature + MD evaluation)
-python run_active_learning.py --iterations 2
+# Full feedback loop (literature + MD evaluation)
+insulin-ai discover --iterations 2
 
-# Literature-only mode (no MD)
-python run_active_learning.py --no-md --iterations 1
+# Literature-only (no MD)
+insulin-ai discover --no-md -n 1
+
+# Literature mining only
+insulin-ai mine
+
+# Evaluate PSMILES
+insulin-ai evaluate "[*]OCC[*]" "[*]CC[*]"
+
+# Status
+insulin-ai status
 ```
 
-**Web API:**
-```bash
-curl -X POST http://localhost:5000/api/active-learning/run \
-  -H "Content-Type: application/json" \
-  -d '{"iterations": 2, "use_md": true}'
-```
+Without installing: `python insulin_ai_cli.py discover` (from project root)
 
-Requires: `openmm`, `openmmforcefields`, `rdkit`. Falls back to RDKit descriptor proxy when full MD unavailable.
+Requires: `openmm`, `openmmforcefields`, `rdkit`. Falls back to RDKit proxy when full MD unavailable.
+
+See **OpenCode_PLATFORM.md** for OpenCode-as-platform workflow.
 
 ### Programmatic Usage
 

@@ -2,9 +2,11 @@
 
 **Project**: AI-Driven Design of Fridge-Free Insulin Delivery Patches  
 **Revision**: Complete revamp using code-as-platform paradigm  
-**Reference**: [OpenCode.ai](https://opencode.ai) – code-first, composable development  
-**Focus**: Impact feedback loop for polymeric insulin patch material discovery  
-**Constraint**: **CPU-only execution** – no GPU dependencies
+**Reference**: [OpenCode.ai](https://opencode.ai) – **CLI-first**, terminal-based AI coding agent (like Claude Code)  
+**Focus**: OpenCode becomes the materials discovery platform – code and CLI are the interface  
+**Constraint**: **CPU-only execution** – no GPU dependencies  
+
+**Interface**: CLI only. No web buttons. OpenCode/Claude Code operate in the terminal.
 
 ---
 
