@@ -25,7 +25,10 @@ from literature_mining_system import MaterialsLiteratureMiner
 from chatbot_system import InsulinAIChatbot
 from mcp_client import SimplifiedMCPLiteratureMinerSync
 from psmiles_generator import PSMILESGenerator
-from psmiles_processor import PSMILESProcessor
+try:
+    from psmiles_processor import PSMILESProcessor
+except ImportError:
+    PSMILESProcessor = None
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'insulin-ai-secret-key-2024')
@@ -78,13 +81,17 @@ def initialize_systems():
             print(f"⚠️ PSMILES Generator initialization failed: {e}")
             psmiles_generator = None
         
-        # Initialize enhanced PSMILES processor
-        try:
-            psmiles_processor = PSMILESProcessor()
-            print("✅ PSMILES Processor initialized successfully!")
-        except Exception as e:
-            print(f"⚠️ PSMILES Processor initialization failed: {e}")
+        # Initialize enhanced PSMILES processor (optional)
+        if PSMILESProcessor is not None:
+            try:
+                psmiles_processor = PSMILESProcessor()
+                print("✅ PSMILES Processor initialized successfully!")
+            except Exception as e:
+                print(f"⚠️ PSMILES Processor initialization failed: {e}")
+                psmiles_processor = None
+        else:
             psmiles_processor = None
+            print("ℹ️ PSMILES Processor module not found (optional)")
         
         # Initialize MCP-enhanced literature miner (kept for future use, currently disabled)
         # try:

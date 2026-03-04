@@ -21,6 +21,11 @@ rdkit>=2024.9.1
 rdchiral>=1.1.0
 py3Dmol==2.0.4
 
+# CPU-only MD simulation (OpenMM + PME, no GPU)
+openmm>=8.0
+openmmforcefields>=0.14.0
+# openff-toolkit>=0.15.0  # Optional: for GAFF; openmmforcefields may bundle it
+
 # Development and testing
 pytest==7.4.3
 python-dotenv==1.0.0

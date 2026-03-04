@@ -77,9 +77,9 @@ This project implements an active learning framework that systematically combine
 
 ### Prerequisites
 - Python 3.8+
-- Ollama installed and running
+- Ollama installed and running (for LLM modes)
 - 8GB+ RAM (16GB recommended)
-- CUDA-compatible GPU (optional, for performance)
+- **CPU-only**: No GPU required; MD simulations run on CPU (OpenMM + PME)
 
 ### Quick Setup
 
@@ -168,6 +168,18 @@ Enhanced literature mining with structured analysis
 "Analyze PLGA-based insulin delivery systems"
 "Search for nanoparticle formulations for protein preservation"
 ```
+
+### Active Learning with MD Feedback
+
+```bash
+# Run full feedback loop (literature + MD evaluation)
+python run_active_learning.py --iterations 2
+
+# Literature-only mode (no MD)
+python run_active_learning.py --no-md --iterations 1
+```
+
+Requires: `openmm`, `openmmforcefields`, `rdkit`. Falls back to RDKit descriptor proxy when full MD unavailable.
 
 ### Programmatic Usage
 
@@ -329,10 +341,11 @@ Returns:
 - Persistent memory across sessions
 - Web interface with multiple chat modes
 
-### 🔄 Milestone 3: UMA-ASE MD Simulation Pipeline (In Progress)
-- Meta FAIR's UMA force field integration
-- Atomic Simulation Environment (ASE) workflows
-- Material property evaluation through MD simulations
+### ✅ Milestone 3: CPU-Only MD Simulation Pipeline (Revamp)
+- **OpenMM + PME** (Particle Mesh Ewald) for long-range electrostatics
+- **CPU-only** execution – no GPU required
+- RDKit proxy fallback when GAFF parameterization unavailable (e.g., openff-toolkit)
+- Integrated into active learning feedback loop
 
 ### 📋 Milestone 4: Complete Active Learning Framework
 - Integration of all components
@@ -408,10 +421,11 @@ python test_mcp_integration.py
 - Add delays between requests
 
 ### Performance Tips
-- Use GPU acceleration if available
+- **MD simulations**: Run entirely on CPU; install `openmm openmmforcefields` for full MD
 - Allocate sufficient system memory (8GB+)
 - Consider model size vs response quality trade-offs
 - Monitor system resources during heavy usage
+- See `REVAMP_PLAN.md` for code-as-platform architecture
 
 ## 📁 File Structure
 

@@ -371,13 +371,11 @@ Extract information ONLY if supported by the provided papers."""
     
     def _update_feedback_state(self, md_results: Dict, current_state: Dict) -> Dict:
         """Update feedback state based on MD simulation results."""
-        # This will be implemented when integrating with MD simulations
-        # For now, return updated state structure
         return {
-            "top_candidates": md_results.get("successful_materials", []),
+            "top_candidates": md_results.get("successful_materials", md_results.get("high_performers", [])),
             "stability_mechanisms": md_results.get("effective_mechanisms", []),
             "target_properties": md_results.get("target_improvements", {}),
-            "limitations": md_results.get("failed_features", [])
+            "limitations": md_results.get("failed_features", md_results.get("problematic_features", []))
         }
     
     def _save_complete_cycle_results(self, all_results: List[Dict]):
