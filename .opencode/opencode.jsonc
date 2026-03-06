@@ -1,0 +1,11 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "defaultAgent": "materials-discovery",
+  "mcp": {
+    "insulin-ai": {
+      "type": "local",
+      "command": ["python3", "insulin_ai_mcp_server.py"],
+      "enabled": true
+    }
+  }
+}

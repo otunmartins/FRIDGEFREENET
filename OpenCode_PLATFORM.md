@@ -1,6 +1,6 @@
 # OpenCode as the Materials Discovery Platform
 
-**Insulin AI** is designed so that **OpenCode.ai** (or Claude Code, Cursor Agent, etc.) is the primary interface. The platform is **CLI-first** – no web UI or buttons required.
+**Insulin AI** uses **OpenCode** ([github.com/anomalyco/opencode](https://github.com/anomalyco/opencode)) as the basis. The coding agent becomes a **materials discovery agent**. Run `opencode` from this repo – it loads `.opencode/` with the materials-discovery agent and MCP tools.
 
 ## Why CLI / OpenCode?
 

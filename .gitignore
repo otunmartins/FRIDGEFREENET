@@ -54,6 +54,9 @@ Thumbs.db
 mining_results/*.json
 *.log
 
+# OpenCode source (clone separately: git clone https://github.com/anomalyco/opencode.git opencode_src)
+opencode_src/
+
 # Jupyter Notebooks
 .ipynb_checkpoints
 
