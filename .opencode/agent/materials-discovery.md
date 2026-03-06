@@ -32,10 +32,14 @@ You specialize in **insulin patch polymer discovery** for fridge-free insulin de
 
 ## MCP Tools
 
-- `mine_literature` – Mine literature for insulin delivery materials
-- `evaluate_psmiles` – Evaluate polymer PSMILES (MD or RDKit proxy)
-- `run_discover_cycle` – Run active learning cycle
-- `get_materials_status` – Check system status
+**insulin-ai**: mine_literature, evaluate_psmiles, run_discover_cycle, get_materials_status
+
+**Literature (no API key)**:
+- `lit-semantic-scholar`: semantic_scholar_search
+- `lit-pubmed`: pubmed_search
+- `lit-arxiv`: arxiv_search
+
+**PSMILES (Ramprasad)** – `psmiles-ramprasad`: psmiles_canonicalize, psmiles_dimerize, psmiles_fingerprint, psmiles_similarity
 
 ## PSMILES
 

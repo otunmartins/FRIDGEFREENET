@@ -6,6 +6,31 @@
       "type": "local",
       "command": ["python3", "insulin_ai_mcp_server.py"],
       "enabled": true
+    },
+    "lit-semantic-scholar": {
+      "type": "local",
+      "command": ["python3", "mcp_servers/mcp_lit_semantic_scholar.py"],
+      "enabled": true
+    },
+    "lit-pubmed": {
+      "type": "local",
+      "command": ["python3", "mcp_servers/mcp_lit_pubmed.py"],
+      "enabled": true
+    },
+    "lit-arxiv": {
+      "type": "local",
+      "command": ["python3", "mcp_servers/mcp_lit_arxiv.py"],
+      "enabled": true
+    },
+    "psmiles-ramprasad": {
+      "type": "local",
+      "command": ["python3", "mcp_servers/mcp_psmiles_ramprasad.py"],
+      "enabled": true
+    },
+    "lit-semantic-scholar-full": {
+      "type": "local",
+      "command": ["python3", "semantic_scholar_server.py"],
+      "enabled": false
     }
   }
 }

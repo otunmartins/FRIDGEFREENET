@@ -31,4 +31,6 @@ jsonschema==4.19.2
 
 # MCP (Model Context Protocol) dependencies
 fastmcp>=0.1.0
-mcp>=1.0.0 
+mcp>=1.0.0
+
+# Ramprasad PSMILES (optional): pip install "psmiles[mordred,polyBERT] @ git+https://github.com/Ramprasad-Group/psmiles.git"

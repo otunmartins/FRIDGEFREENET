@@ -88,6 +88,14 @@ python insulin_ai_cli.py status
 - `iterative_results/` – Per-iteration mining
 - `mining_results/` – Literature mining
 
+## MCP Servers
+
+All literature and PSMILES options: see [docs/MCP_SERVERS.md](docs/MCP_SERVERS.md).
+
+- **Literature** (no API key): Semantic Scholar, PubMed, arXiv
+- **PSMILES** (Ramprasad): canonicalize, dimerize, fingerprints
+- **API keys** (optional): `SEMANTIC_SCHOLAR_API_KEY`, `NCBI_API_KEY` at runtime
+
 ## References
 
 - [OpenCode](https://opencode.ai) | [GitHub](https://github.com/anomalyco/opencode)
