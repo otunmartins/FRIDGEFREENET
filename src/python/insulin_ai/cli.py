@@ -22,7 +22,7 @@ sys.path.insert(0, os.path.join(ROOT, "src", "python"))
 
 
 def cmd_discover(args):
-    """Run active learning: literature → evaluate → feedback → iterate."""
+    """Run active learning: literature → mutation → evaluate → feedback → iterate."""
     from iterative_literature_mining import IterativeLiteratureMiner
 
     md_sim = None
@@ -33,11 +33,21 @@ def cmd_discover(args):
         except ImportError:
             print("⚠️ MD unavailable, using literature-only mode")
 
+    mutator = None
+    if getattr(args, "mutate", False):
+        try:
+            from insulin_ai.mutation import MaterialMutator
+            mutator = MaterialMutator(random_seed=42)
+        except ImportError as e:
+            print(f"⚠️ Mutation unavailable: {e}")
+
     miner = IterativeLiteratureMiner()
     results = miner.run_active_learning_cycle(
         max_iterations=args.iterations,
         md_simulator=md_sim,
         generative_model=None,
+        material_mutator=mutator,
+        mutation_size=getattr(args, "mutation_size", 10),
     )
     print("\n" + "=" * 50)
     for i, r in enumerate(results):
@@ -81,16 +91,21 @@ def cmd_evaluate(args):
 
 
 def cmd_status(args):
-    """Print system status (literature, MD, proxy)."""
+    """Print system status (literature, MD, mutation, proxy)."""
     print("Insulin AI – Materials Discovery Platform (CLI)")
     print("=" * 50)
     try:
         from insulin_ai.simulation import MDSimulator
         sim = MDSimulator()
         md_ok = sim.runner is not None
-        print(f"MD Simulation: {'OpenMM+PME' if md_ok else 'RDKit proxy'} (CPU)")
+        print(f"MD Simulation: {'insulin + polymer (implicit solvent)' if md_ok else 'unavailable'} (CPU)")
     except Exception:
         print("MD Simulation: unavailable")
+    try:
+        from insulin_ai.mutation import MaterialMutator
+        print("Mutation: available (cheminformatics)")
+    except ImportError:
+        print("Mutation: unavailable (pip install psmiles)")
     try:
         from literature_mining_system import MaterialsLiteratureMiner
         print("Literature Mining: available (needs Ollama + Semantic Scholar)")
@@ -110,6 +125,8 @@ def main():
     p_discover = sub.add_parser("discover", help="Run active learning feedback loop")
     p_discover.add_argument("--iterations", "-n", type=int, default=2)
     p_discover.add_argument("--no-md", action="store_true", help="Literature only, no MD")
+    p_discover.add_argument("--mutate", action="store_true", help="Add cheminformatics mutation candidates")
+    p_discover.add_argument("--mutation-size", type=int, default=10, help="Candidates per mutation batch")
     p_discover.set_defaults(func=cmd_discover)
 
     # mine

@@ -4,10 +4,18 @@
 
 import json
 import os
+import re
 from typing import List, Dict, Optional, Any
 from datetime import datetime
 
 from literature_mining_system import MaterialsLiteratureMiner
+
+# Keyword patterns when Ollama unavailable (no pydantic/ollama dependency)
+_MATERIAL_PATTERNS = [
+    r"\b(chitosan|PEG|PLGA|PVA|PMMA|hydrogel|alginate|hyaluronic acid|cellulose|collagen)\b",
+    r"\b(poly\w+-based|peg-based|polymer)\b",
+    r"\b(copolymer|block polymer|composite)\b",
+]
 
 
 class IterativeLiteratureMiner(MaterialsLiteratureMiner):
@@ -184,9 +192,13 @@ class IterativeLiteratureMiner(MaterialsLiteratureMiner):
                                      num_candidates: int) -> List[Dict]:
         """
         Extract material data using prompts that evolve based on feedback.
+        Falls back to keyword extraction when Ollama unavailable.
         """
+        if self.ollama is None:
+            return self._extract_with_keywords(papers, num_candidates)
+
         extraction_prompt = self._build_dynamic_prompt(
-            iteration, top_candidates, stability_mechanisms, 
+            iteration, top_candidates, stability_mechanisms,
             target_properties, limitations, num_candidates
         )
         
@@ -204,7 +216,27 @@ class IterativeLiteratureMiner(MaterialsLiteratureMiner):
             
         except Exception as e:
             print(f"Error in iterative extraction: {e}")
-            return []
+            return self._extract_with_keywords(papers, num_candidates)
+
+    def _extract_with_keywords(self, papers: List[Dict], num_candidates: int) -> List[Dict]:
+        """Keyword-based extraction when Ollama unavailable. Enriches with PSMILES mappings."""
+        seen = set()
+        candidates = []
+        for p in papers:
+            text = (p.get("title", "") + " " + p.get("abstract", "")).lower()
+            for pat in _MATERIAL_PATTERNS:
+                for m in re.finditer(pat, text, re.I):
+                    name = m.group(1) if m.lastindex else m.group(0)
+                    name = name.strip()
+                    if name and name not in seen and len(candidates) < num_candidates:
+                        seen.add(name)
+                        candidates.append({
+                            "material_name": name,
+                            "material_composition": name,
+                            "chemical_structure": "",
+                            "generation_method": "keyword_extraction",
+                        })
+        return candidates
     
     def _build_dynamic_prompt(self, iteration: int, top_candidates: List[str],
                              stability_mechanisms: List[str], target_properties: Dict,
@@ -302,24 +334,28 @@ Extract information ONLY if supported by the provided papers."""
         
         print(f"💾 Iterative results saved to: {filename}")
     
-    def run_active_learning_cycle(self, max_iterations: int = 5, 
-                                 md_simulator=None, 
-                                 generative_model=None) -> List[Dict]:
+    def run_active_learning_cycle(self, max_iterations: int = 5,
+                                 md_simulator=None,
+                                 generative_model=None,
+                                 material_mutator=None,
+                                 mutation_size: int = 10) -> List[Dict]:
         """
         Run complete active learning cycle for Milestone 4.
-        
+
         This orchestrates the full pipeline:
         1. Literature mining
-        2. Generative model candidate generation
+        2. Mutation (cheminformatics) and/or generative model
         3. MD simulation evaluation
         4. Feedback integration
         5. Next iteration
-        
+
         Args:
             max_iterations (int): Maximum number of learning cycles
             md_simulator: MD simulation component (from Milestone 3)
             generative_model: Generative model component (from Milestone 2)
-        
+            material_mutator: MaterialMutator or True for default mutator
+            mutation_size: Number of mutated candidates when material_mutator enabled
+
         Returns:
             List[Dict]: Results from all iterations
         """
@@ -328,14 +364,16 @@ Extract information ONLY if supported by the provided papers."""
             "top_candidates": [],
             "stability_mechanisms": [],
             "target_properties": {},
-            "limitations": []
+            "limitations": [],
+            "high_performer_psmiles": [],
+            "problematic_psmiles": [],
         }
-        
+
         for iteration in range(1, max_iterations + 1):
             print(f"\n{'='*60}")
             print(f"ACTIVE LEARNING CYCLE - ITERATION {iteration}")
             print(f"{'='*60}")
-            
+
             # Step 1: Literature mining with current feedback
             mining_results = self.mine_with_feedback(
                 iteration=iteration,
@@ -344,38 +382,95 @@ Extract information ONLY if supported by the provided papers."""
                 target_properties=feedback_state["target_properties"],
                 limitations=feedback_state["limitations"]
             )
-            
-            # Step 2: Generate candidates with generative model (Milestone 2)
+
+            candidates = list(mining_results["material_candidates"])
+
+            # Step 2a: Cheminformatics mutation
+            if material_mutator:
+                try:
+                    from insulin_ai.mutation import MaterialMutator, feedback_guided_mutation
+                    mutator = material_mutator if isinstance(material_mutator, MaterialMutator) else MaterialMutator()
+                    if iteration > 1 and feedback_state.get("high_performer_psmiles"):
+                        mutated = feedback_guided_mutation(
+                            feedback_state, library_size=mutation_size,
+                            feedback_fraction=0.7, random_seed=42 + iteration
+                        )
+                    else:
+                        mutated = mutator.generate_library(library_size=mutation_size)
+                    mining_results["generated_candidates"] = mutated
+                    candidates.extend(mutated)
+                    print(f"  Added {len(mutated)} mutated candidates")
+                except ImportError as e:
+                    print(f"  Mutation skipped: {e}")
+
+            # Step 2b: Legacy generative model
             if generative_model:
                 generated_candidates = generative_model.generate_candidates(
                     base_materials=mining_results["material_candidates"]
                 )
-                mining_results["generated_candidates"] = generated_candidates
-            
+                mining_results["generated_candidates"] = mining_results.get("generated_candidates", []) + generated_candidates
+                candidates.extend(generated_candidates)
+
+            mining_results["material_candidates"] = candidates
+
             # Step 3: Evaluate with MD simulations (Milestone 3)
             if md_simulator:
                 md_results = md_simulator.evaluate_candidates(
-                    mining_results["material_candidates"]
+                    candidates, max_candidates=len(candidates)
                 )
                 mining_results["md_evaluation"] = md_results
-                
-                # Step 4: Update feedback state
-                feedback_state = self._update_feedback_state(md_results, feedback_state)
-            
+
+                # Step 4: Update feedback state (with psmiles for mutation)
+                feedback_state = self._update_feedback_state(
+                    md_results, feedback_state, candidates
+                )
+
             all_results.append(mining_results)
-            
-            print(f"Iteration {iteration} complete. Found {len(mining_results['material_candidates'])} candidates.")
-        
+
+            print(f"Iteration {iteration} complete. Found {len(candidates)} candidates.")
         self._save_complete_cycle_results(all_results)
         return all_results
     
-    def _update_feedback_state(self, md_results: Dict, current_state: Dict) -> Dict:
+    def _update_feedback_state(
+        self, md_results: Dict, current_state: Dict,
+        candidates: Optional[List[Dict]] = None,
+    ) -> Dict:
         """Update feedback state based on MD simulation results."""
+        top = md_results.get("successful_materials", md_results.get("high_performers", []))
+        limitations = md_results.get("failed_features", md_results.get("problematic_features", []))
+
+        # Build high_performer_psmiles and problematic_psmiles for mutation
+        name_to_psmiles: Dict[str, str] = {}
+        if candidates:
+            for c in candidates:
+                name = c.get("material_name") or c.get("candidate_id")
+                psm = c.get("chemical_structure") or c.get("psmiles")
+                if name and psm:
+                    name_to_psmiles[str(name)] = psm
+
+        high_psmiles = []
+        for name in top:
+            psm = name_to_psmiles.get(str(name)) or (name if name and ("[*]" in str(name)) else None)
+            if psm:
+                high_psmiles.append(psm)
+
+        # Problematic: often prefixed like "high_energy_drift_X"; try to resolve
+        problematic_psmiles = []
+        for item in limitations:
+            if isinstance(item, str) and "[*]" in item:
+                problematic_psmiles.append(item)
+            else:
+                psm = name_to_psmiles.get(str(item))
+                if psm:
+                    problematic_psmiles.append(psm)
+
         return {
-            "top_candidates": md_results.get("successful_materials", md_results.get("high_performers", [])),
+            "top_candidates": top,
             "stability_mechanisms": md_results.get("effective_mechanisms", []),
             "target_properties": md_results.get("target_improvements", {}),
-            "limitations": md_results.get("failed_features", md_results.get("problematic_features", []))
+            "limitations": limitations,
+            "high_performer_psmiles": high_psmiles,
+            "problematic_psmiles": problematic_psmiles,
         }
     
     def _save_complete_cycle_results(self, all_results: List[Dict]):

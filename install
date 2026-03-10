@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+# Insulin AI Materials Discovery - Install
+#
+# Installs OpenCode (upstream) and creates an insulin-ai launcher.
+# Our project = MCP config + Python backend; OpenCode loads it when run from here.
+#
+# Usage: ./install [--no-path]
+
+set -euo pipefail
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+NC='\033[0m'
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BIN_NAME="insulin-ai"
+
+usage() {
+  cat <<EOF
+Insulin AI Materials Discovery – Install
+
+Usage: ./install [options]
+
+Installs OpenCode (upstream) and sets up the insulin-ai launcher.
+Run from the insulin-ai repo root.
+
+Options:
+  -h, --help     Show this help
+  --no-path      Don't add install dir to PATH in shell config
+
+Prerequisites:
+  - None (install script fetches OpenCode)
+EOF
+}
+
+no_modify_path=false
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help) usage; exit 0 ;;
+    --no-path) no_modify_path=true; shift ;;
+    *) echo -e "${RED}Unknown option: $1${NC}"; usage; exit 1 ;;
+  esac
+done
+
+# Install directory for our launcher
+INSTALL_DIR="${OPENCODE_INSTALL_DIR:-${XDG_BIN_DIR:-$HOME/.local/bin}}"
+mkdir -p "$INSTALL_DIR"
+
+echo -e "${GREEN}Insulin AI Materials Discovery – Install${NC}"
+echo ""
+
+# 1. Install OpenCode if not present
+if ! command -v opencode >/dev/null 2>&1; then
+  echo "Installing OpenCode (upstream)..."
+  curl -fsSL https://opencode.ai/install | bash
+  echo "  Done"
+  # OpenCode installs to ~/.opencode/bin; ensure it's in PATH for this script
+  export PATH="$HOME/.opencode/bin:$PATH"
+else
+  echo "OpenCode already installed"
+fi
+
+# 2. Create insulin-ai launcher (runs opencode from this project dir)
+LAUNCHER="$INSTALL_DIR/$BIN_NAME"
+cat > "$LAUNCHER" <<LAUNCHER_SCRIPT
+#!/usr/bin/env bash
+# Insulin AI Materials Discovery – launches OpenCode with this project
+INSULIN_AI_ROOT="$SCRIPT_DIR"
+PROJECT="\${1:-\$INSULIN_AI_ROOT}"
+cd "\$INSULIN_AI_ROOT"
+exec opencode "\$PROJECT"
+LAUNCHER_SCRIPT
+chmod +x "$LAUNCHER"
+
+echo ""
+echo -e "${GREEN}Installed launcher to $LAUNCHER${NC}"
+echo ""
+echo "Run:"
+echo "  $BIN_NAME"
+echo "  $BIN_NAME /path/to/project"
+echo ""
+echo "Or from this directory:  opencode ."
+echo ""
+
+# 3. Add launcher dir to PATH if requested
+if [[ "$no_modify_path" != "true" ]] && [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
+  for rc in .bashrc .zshrc .bash_profile .profile; do
+    if [[ -f "$HOME/$rc" ]]; then
+      if ! grep -q "insulin-ai\|$INSTALL_DIR" "$HOME/$rc" 2>/dev/null; then
+        echo "" >> "$HOME/$rc"
+        echo "# Insulin AI Materials Discovery" >> "$HOME/$rc"
+        echo "export PATH=\"$INSTALL_DIR:\$PATH\"" >> "$HOME/$rc"
+        echo "  Added $INSTALL_DIR to PATH in $HOME/$rc"
+        break
+      fi
+    fi
+  done
+  echo ""
+  echo "Restart your shell or run: export PATH=\"$INSTALL_DIR:\$PATH\""
+fi

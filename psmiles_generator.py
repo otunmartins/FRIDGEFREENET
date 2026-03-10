@@ -303,23 +303,7 @@ RESPONSE FORMAT:
                 'similar', 'alternative', 'other', 'examples', 'modify', 'change'
             ])
             
-            # First, try direct mapping for common requests
-            direct_result = self._direct_psmiles_mapping(request)
-            if direct_result and not is_followup:
-                # Save to memory for direct mappings too
-                self.memory.chat_memory.add_user_message(request)
-                self.memory.chat_memory.add_ai_message(f"PSMILES: {direct_result['psmiles']}\n\nEXPLANATION: {direct_result['explanation']}")
-                
-                return {
-                    'success': True,
-                    'request': request,
-                    'psmiles': direct_result['psmiles'],
-                    'explanation': f"PSMILES: {direct_result['psmiles']}\n\nEXPLANATION: {direct_result['explanation']}",
-                    'conversation_turn': self.conversation_count,
-                    'rule_reinforcement': False,
-                    'timestamp': datetime.now().isoformat()
-                }
-            
+            # No hardcoded name→PSMILES mappings. LLM generates; validate via RDKit/psmiles only.
             # Build context-aware prompt including conversation history and rules
             base_rules = """
 CRITICAL PSMILES (Polymer SMILES) RULES - FOLLOW EXACTLY:
@@ -434,112 +418,8 @@ YOUR RESPONSE MUST START WITH "PSMILES: " and contain exactly 2 [*] symbols.
                 'timestamp': datetime.now().isoformat()
             }
     
-    def _direct_psmiles_mapping(self, request: str) -> Optional[Dict]:
-        """Direct mapping for common polymer requests to ensure correct PSMILES."""
-        request_lower = request.lower()
-        
-        # Comprehensive mapping with correct PSMILES - ALL must have exactly 2 [*] symbols
-        direct_mapping = {
-            'peg': {
-                'psmiles': '[*]OCC[*]',
-                'explanation': 'This represents the polyethylene glycol repeat unit -O-CH2-CH2- with connection points marked by [*]'
-            },
-            'peg materials': {
-                'psmiles': '[*]OCC[*]', 
-                'explanation': 'This represents the polyethylene glycol repeat unit -O-CH2-CH2- with connection points marked by [*]'
-            },
-            'polyethylene glycol': {
-                'psmiles': '[*]OCC[*]',
-                'explanation': 'This represents the polyethylene glycol repeat unit -O-CH2-CH2- with connection points marked by [*]'
-            },
-            'ethylene glycol': {
-                'psmiles': '[*]OCC[*]',
-                'explanation': 'This represents the ethylene glycol repeat unit -O-CH2-CH2- with connection points marked by [*]'
-            },
-            'polyethylene': {
-                'psmiles': '[*]CC[*]',
-                'explanation': 'This represents the ethylene repeat unit -CH2-CH2- with exactly 2 connection points'
-            },
-            'ethylene': {
-                'psmiles': '[*]CC[*]',
-                'explanation': 'This represents the ethylene repeat unit -CH2-CH2- with exactly 2 connection points'
-            },
-            'polystyrene': {
-                'psmiles': '[*]CC([*])C1=CC=CC=C1',
-                'explanation': 'This represents the styrene repeat unit with benzene ring and exactly 2 connection points'
-            },
-            'styrene': {
-                'psmiles': '[*]CC([*])C1=CC=CC=C1',
-                'explanation': 'This represents the styrene repeat unit with benzene ring and exactly 2 connection points'
-            },
-            'polypropylene': {
-                'psmiles': '[*]CC([*])C',
-                'explanation': 'This represents the propylene repeat unit -CH2-CH(CH3)- with exactly 2 connection points'
-            },
-            'propylene': {
-                'psmiles': '[*]CC([*])C',
-                'explanation': 'This represents the propylene repeat unit -CH2-CH(CH3)- with exactly 2 connection points'
-            },
-            'nylon': {
-                'psmiles': '[*]NC(=O)CCCCC[*]',
-                'explanation': 'This represents a nylon repeat unit with exactly 2 connection points'
-            },
-            'polyamide': {
-                'psmiles': '[*]NC(=O)C[*]',
-                'explanation': 'This represents a polyamide repeat unit with exactly 2 connection points'
-            },
-        }
-        
-        # Check for exact matches first
-        for key, info in direct_mapping.items():
-            if key == request_lower:
-                return info
-        
-        # Check for partial matches
-        for key, info in direct_mapping.items():
-            if key in request_lower:
-                return info
-        
-        return None
-    
     def _fallback_psmiles_extraction(self, request: str, response: str) -> Dict:
-        """Enhanced fallback mechanism for PSMILES extraction."""
-        # Try to match common polymer requests to known PSMILES
-        request_lower = request.lower()
-        
-        # Updated fallback mapping - ALL must have exactly 2 [*] symbols
-        fallback_mapping = {
-            'peg': '[*]OCC[*]',
-            'peg materials': '[*]OCC[*]',
-            'polyethylene glycol': '[*]OCC[*]',
-            'ethylene glycol': '[*]OCC[*]',
-            'polyethylene': '[*]CC[*]',
-            'ethylene': '[*]CC[*]',
-            'polystyrene': '[*]CC([*])C1=CC=CC=C1',
-            'styrene': '[*]CC([*])C1=CC=CC=C1',
-            'polypropylene': '[*]CC([*])C',
-            'propylene': '[*]CC([*])C',
-            'nylon': '[*]NC(=O)CCCCC[*]',
-            'polyamide': '[*]NC(=O)C[*]',
-            'polyester': '[*]OC(=O)C[*]',
-            'pet': '[*]OC(=O)C1=CC=C(C[*])C=C1',
-            'pvp': '[*]CC([*])C1=CN(C)C=C1',
-            'pva': '[*]CC([*])O',
-            'pmma': '[*]CC([*])(C)C(=O)OC',
-            'meta phenylene': '[*]C1=CC([*])=CC=C1',
-            'para phenylene': '[*]C1=CC=C([*])C=C1',
-            'ortho phenylene': '[*]C1=C([*])C=CC=C1'
-        }
-        
-        for keyword, psmiles in fallback_mapping.items():
-            if keyword in request_lower:
-                return {
-                    'psmiles': psmiles,
-                    'pattern': 'fallback_mapping',
-                    'note': f'Used fallback mapping for {keyword}'
-                }
-        
-        # If no fallback found, try to find any chemical-looking string in response
+        """Extract PSMILES from LLM response via pattern matching. No hardcoded name→PSMILES mappings."""
         chemical_patterns = [
             r'([A-Z][A-Za-z0-9\[\]\(\)\=\#\*]+)',  # Chemical-looking strings (includes [*])
             r'([A-Za-z]{2,}[\[\]\(\)\=\#\*]*[A-Za-z0-9]*)',  # Multi-character chemistry

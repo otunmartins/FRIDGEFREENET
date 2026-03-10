@@ -162,9 +162,8 @@ insulin-ai/
 ### Phase 2: MD Simulation Pipeline (CPU-Only)
 - [x] `psmiles_to_openmm.py`: PSMILES → RDKit Mol → 3D → OpenMM System (GAFF when openff-toolkit available)
 - [x] `openmm_runner.py`: Run NPT/NVT with PME, CPU platform
-- [x] `property_extractor.py`: Energy-based stability metrics; RDKit proxy fallback
+- [x] `property_extractor.py`: Energy-based stability metrics
 - [x] Unit tests with minimal polymer (e.g., PEG repeat)
-- [x] `rdkit_proxy.py`: Fallback when GAFF unavailable
 
 ### Phase 3: Feedback Loop Integration
 - [x] Implement `MDSimulator.evaluate_candidates(candidates)` interface
@@ -175,7 +174,7 @@ insulin-ai/
 ### Phase 4: Dependencies & Documentation
 - [x] `requirements.txt`: openmm, openmmforcefields, rdkit (openff-toolkit optional)
 - [x] `docs/method_notes.md`: PME params, force field, units
-- [x] RDKit proxy fallback when GAFF parameterization fails (e.g., openff-toolkit unavailable)
+- [x] MD evaluation via OpenMM (insulin + polymer); no proxy fallback
 
 ---
 

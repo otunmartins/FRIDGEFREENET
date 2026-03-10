@@ -19,14 +19,16 @@ TIMESTEP_FS = 2.0
 PSMILES_CANDIDATES = ["[*]OCC[*]", "[*]CC[*]", "[*]CC(C)[*]"]
 
 
-def benchmark_rdkit_proxy(n_candidates: int = 10) -> float:
-    """Benchmark RDKit proxy evaluator (fallback path)."""
+def benchmark_md_evaluate(n_candidates: int = 3) -> float:
+    """Benchmark MD evaluator (insulin + polymer). Returns -1 if MD unavailable."""
     from insulin_ai.simulation import MDSimulator
-    
+
     sim = MDSimulator()
-    candidates = [{"material_name": f"Polymer_{i}", "chemical_structure": "[*]OCC[*]"} 
+    if sim.runner is None:
+        return -1.0
+    candidates = [{"material_name": f"Polymer_{i}", "chemical_structure": "[*]OCC[*]"}
                  for i in range(n_candidates)]
-    
+
     t0 = time.perf_counter()
     _ = sim.evaluate_candidates(candidates, max_candidates=n_candidates)
     return time.perf_counter() - t0
@@ -51,9 +53,10 @@ def main():
     print("Insulin AI - CPU-Only MD Benchmark")
     print("=" * 60)
     
-    # RDKit proxy (always works)
-    t_proxy = benchmark_rdkit_proxy(5)
-    print(f"\nRDKit Proxy (5 candidates): {t_proxy:.3f} s")
+    # MD evaluate (requires OpenMM + GAFF)
+    t_md = benchmark_md_evaluate(3)
+    status = f"{t_md:.3f} s" if t_md >= 0 else "UNAVAILABLE (OpenMM/GAFF required)"
+    print(f"\nMD insulin+polymer (3 candidates): {status}")
     
     # OpenMM (may fail without openff-toolkit)
     print("\nOpenMM single runs:")

@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Launch Insulin AI Materials Discovery chat.
+# Usage: ./run
+# Requires: ./install first (installs OpenCode)
+
+cd "$(dirname "$0")"
+if command -v insulin-ai >/dev/null 2>&1; then
+  exec insulin-ai .
+elif command -v opencode >/dev/null 2>&1; then
+  exec opencode .
+else
+  echo "Run ./install first to install OpenCode."
+  echo ""
+  echo "Or use the Python CLI:"
+  echo "  python insulin_ai_cli.py discover --iterations 2 --mutate"
+  exit 1
+fi

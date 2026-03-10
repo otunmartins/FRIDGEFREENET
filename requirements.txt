@@ -33,4 +33,10 @@ jsonschema==4.19.2
 fastmcp>=0.1.0
 mcp>=1.0.0
 
-# Ramprasad PSMILES (optional): pip install "psmiles[mordred,polyBERT] @ git+https://github.com/Ramprasad-Group/psmiles.git"
+# API-free web search (DuckDuckGo MCP)
+duckduckgo-search>=8.0.0
+
+# PaperQA2: RAG over PDFs (deep reading + synthesis with citations)
+paper-qa>=2026.2
+
+# PSMILES (optional): pip install git+https://github.com/FermiQ/psmiles.git

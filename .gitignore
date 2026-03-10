@@ -52,10 +52,34 @@ Thumbs.db
 
 # Project specific
 mining_results/*.json
+
+# Chat / caches (chatbot_system used chat_memory/)
+chat_memory/
+*.pkl
+
+# LaTeX build artifacts (proposal.tex)
+*.aux
+*.bbl
+*.blg
+*.out
+*.toc
+cycle_results/
+iterative_results/
+discovery_state/
 *.log
+
+# Papers (PDFs for PaperQA2 – user-provided, not tracked)
+papers/*.pdf
+papers/**/*.pdf
 
 # OpenCode source (clone separately: git clone https://github.com/anomalyco/opencode.git opencode_src)
 opencode_src/
+
+# Conda env temp files
+condaenv.*.requirements.txt
+
+# Local clone of FRIDGEFREENET (separate repo; push via remote)
+FRIDGEFREENET/
 
 # Jupyter Notebooks
 .ipynb_checkpoints

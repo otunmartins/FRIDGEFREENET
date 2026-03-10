@@ -1,48 +1,62 @@
 # MCP Servers for Insulin AI
 
-OpenCode supports multiple MCP servers. All listed here can be enabled in `.opencode/opencode.jsonc`.
+OpenCode uses a **single MCP server** (insulin-ai) that exposes all materials discovery tools.
 
-## Literature Mining (No API Key Required)
+## insulin-ai (Consolidated)
 
-| Server | Command | API Key | Description |
-|--------|---------|---------|-------------|
-| **lit-semantic-scholar** | `mcp_servers/mcp_lit_semantic_scholar.py` | Optional (`SEMANTIC_SCHOLAR_API_KEY`) | Semantic Scholar search |
-| **lit-pubmed** | `mcp_servers/mcp_lit_pubmed.py` | Optional (`NCBI_API_KEY`) | PubMed/NCBI search |
-| **lit-arxiv** | `mcp_servers/mcp_lit_arxiv.py` | None | arXiv preprint search |
+| Command | Config |
+|---------|--------|
+| `bash scripts/run_mcp_server.sh` | `.opencode/opencode.jsonc` (uses insulin-ai-sim env) |
 
-## Literature (API Key / Ollama)
+**Tools:**
 
-| Server | Command | Requirements | Description |
-|--------|---------|--------------|-------------|
-| **lit-semantic-scholar-full** | `semantic_scholar_server.py` | Ollama | Full analysis, LLM relevance, material extraction |
+| Category | Tools |
+|----------|-------|
+| **Discovery** | `mine_literature` (includes PaperQA2 when indexed), `paper_qa`, `paper_qa_index_status`, `index_papers` |
+| **Literature** | `semantic_scholar_search`, `pubmed_search`, `arxiv_search`, `web_search`, `lookup_material` |
+| **PSMILES** | `validate_psmiles`, `psmiles_canonicalize`, `psmiles_dimerize`, `psmiles_fingerprint`, `psmiles_similarity` |
+| **Evaluation** | `evaluate_psmiles`, `mutate_psmiles` |
+| **State** | `save_discovery_state`, `load_discovery_state`, `get_materials_status` |
 
-## PSMILES (Ramprasad Group)
+## PaperQA2 (Deep Reading + RAG)
 
-| Server | Command | Install | Description |
-|--------|---------|---------|-------------|
-| **psmiles-ramprasad** | `mcp_servers/mcp_psmiles_ramprasad.py` | `pip install 'psmiles[mordred,polyBERT]'` | Canonicalize, dimerize, fingerprints, similarity |
+PaperQA2 is built into insulin-ai. Add PDFs to `papers/`, build the index, and `mine_literature` will automatically include synthesis from your PDFs when indexed.
 
-## Materials Discovery (Combined)
+**Setup:**
 
-| Server | Command | Description |
-|--------|---------|-------------|
-| **insulin-ai** | `insulin_ai_mcp_server.py` | mine_literature, evaluate_psmiles, run_discover_cycle, get_materials_status |
+```bash
+# 1. Add PDFs to papers/
+cp ~/Downloads/insulin-paper.pdf papers/
+
+# 2. Build the search index (one-time, re-run when adding papers)
+# OpenAI:
+OPENAI_API_KEY=sk-... ./scripts/index_papers.sh
+# Or Ollama (no API key):
+PQA_EMBEDDING=ollama/nomic-embed-text ./scripts/index_papers.sh
+# (run: ollama pull nomic-embed-text first)
+
+# 3. Launch
+insulin-ai
+```
+
+**Environment variables** (optional, in `.opencode/opencode.jsonc` or shell):
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `PAPER_DIRECTORY` | `./papers` | PDF directory |
+| `PQA_LLM` | `gpt-4o-mini` | LLM for reasoning (use `ollama/llama3.2` for local) |
+| `PQA_SUMMARY_LLM` | `gpt-4o-mini` | LLM for summarizing |
+| `PQA_EMBEDDING` | `text-embedding-3-small` | Embeddings (use `ollama/nomic-embed-text` for local) |
+| `OPENAI_API_KEY` | — | Required only when using OpenAI models |
 
 ## API Keys (Runtime)
 
-Set via environment before starting OpenCode:
-
 ```bash
+export OPENAI_API_KEY=sk-...               # For PaperQA2 (or use Ollama)
 export SEMANTIC_SCHOLAR_API_KEY=your_key   # Higher Semantic Scholar rate limit
 export NCBI_API_KEY=your_key               # Higher PubMed rate limit (free from ncbi.nlm.nih.gov)
 ```
 
-## 5-Iteration Test Results (No API Keys)
+## MCP Server Environment
 
-Run: `python run_discover_no_ollama.py`
-
-**Materials obtained** (24 unique):
-
-1. hydrogel, 2. alginate, 3. polymer, 4. chitosan, 5. hyaluronic acid, 6. pva, 7. cellulose, 8. composite, 9. collagen, 10. peg, 11. plga, 12. copolymer, 13. pmma, 14. polyurethane-based, 15. polypyrrole-based, 16. polyamine-based, 17. peg-based, ...
-
-Sources: Semantic Scholar, PubMed, arXiv (direct APIs, no LLM).
+The MCP server runs via `scripts/run_mcp_server.sh`, which uses the `insulin-ai-sim` conda environment when mamba/conda is available. Create it with `mamba env create -f environment-simulation.yml`.

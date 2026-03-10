@@ -35,6 +35,39 @@ except ImportError:
     OPENMMFORCEFIELDS_AVAILABLE = False
 
 
+def embed_mol_3d(mol: "Chem.Mol", random_seed: int = 42) -> bool:
+    """
+    Generate 3D coordinates via RDKit embedding.
+    Shared by PSMILestoOpenMM and InsulinPolymerSystemBuilder.
+    Modifies mol in place. Returns True on success.
+    """
+    if not RDKIT_AVAILABLE:
+        return False
+    try:
+        result = AllChem.EmbedMolecule(mol, randomSeed=random_seed)
+        if result != 0:
+            AllChem.EmbedMolecule(mol, randomSeed=random_seed, useRandomCoords=True)
+        AllChem.MMFFOptimizeMolecule(mol)
+        return True
+    except Exception:
+        return False
+
+
+def register_gaff_for_smiles(ff: "openmm.app.ForceField", smiles: str) -> None:
+    """
+    Register GAFF template generator for given SMILES.
+    No-op if openff-toolkit or openmmforcefields unavailable.
+    """
+    if not OPENMMFORCEFIELDS_AVAILABLE or not smiles:
+        return
+    try:
+        off_mol = Molecule.from_smiles(smiles)
+        gen = GAFFTemplateGenerator(molecules=off_mol)
+        ff.registerTemplateGenerator(gen.generator)
+    except Exception:
+        pass
+
+
 class PSMILestoOpenMM:
     """
     Converts PSMILES to OpenMM simulation-ready system.
@@ -77,14 +110,7 @@ class PSMILestoOpenMM:
     
     def mol_to_3d(self, mol: "Chem.Mol") -> bool:
         """Generate 3D coordinates via RDKit embedding."""
-        try:
-            result = AllChem.EmbedMolecule(mol, randomSeed=42)
-            if result != 0:
-                AllChem.EmbedMolecule(mol, randomSeed=42, useRandomCoords=True)
-            AllChem.MMFFOptimizeMolecule(mol)
-            return True
-        except Exception:
-            return False
+        return embed_mol_3d(mol, random_seed=42)
     
     def build_openmm_system(
         self,
@@ -137,14 +163,7 @@ class PSMILestoOpenMM:
         # Force field: GAFF-2.0 for small molecules/polymer repeat units
         # No solvent - gas-phase/vacuum for screening
         ff = openmm.app.ForceField("amber14-all.xml")
-        if OPENMMFORCEFIELDS_AVAILABLE:
-            try:
-                capped = self._cap_psmiles(psmiles)
-                off_mol = Molecule.from_smiles(capped)
-                gen = GAFFTemplateGenerator(molecules=off_mol)
-                ff.registerTemplateGenerator(gen.generator)
-            except Exception:
-                pass
+        register_gaff_for_smiles(ff, self._cap_psmiles(psmiles))
         
         try:
             system = ff.createSystem(

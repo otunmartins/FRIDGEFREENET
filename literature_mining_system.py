@@ -1,10 +1,12 @@
 import json
 import os
+import re
 from typing import List, Dict, Optional
 from datetime import datetime
 
 from semantic_scholar_client import SemanticScholarClient
-from ollama_client import OllamaClient
+
+# OllamaClient imported lazily in __init__ to avoid pydantic/ollama dependency at import time
 
 
 class MaterialsLiteratureMiner:
@@ -26,10 +28,17 @@ class MaterialsLiteratureMiner:
             ollama_host (str): OLLAMA server host URL
         """
         self.scholar = SemanticScholarClient(api_key=semantic_scholar_api_key)
-        self.ollama = OllamaClient(model_name=ollama_model, host=ollama_host)
-        
-        print("Materials Literature Mining System initialized!")
-        print(f"Using OLLAMA model: {ollama_model}")
+        self.ollama = None
+        try:
+            from ollama_client import OllamaClient
+            self.ollama = OllamaClient(model_name=ollama_model, host=ollama_host)
+            print("Materials Literature Mining System initialized!")
+            print(f"Using OLLAMA model: {ollama_model}")
+        except ImportError as e:
+            print("Ollama unavailable (install ollama + 'ollama pull llama3.2' for LLM extraction).")
+            print("Using keyword-based extraction.")
+        except Exception as e:
+            print(f"Ollama init failed: {e}. Using keyword-based extraction.")
         print(f"Semantic Scholar API: {'Authenticated' if semantic_scholar_api_key else 'Public (rate limited)'}")
     
     def intelligent_mining(self,

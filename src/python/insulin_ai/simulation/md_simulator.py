@@ -10,7 +10,6 @@ Returns feedback dict compatible with _process_md_feedback().
 from typing import List, Dict, Any, Optional
 
 from .property_extractor import PropertyExtractor
-from .rdkit_proxy import evaluate_candidates_proxy
 
 try:
     from .openmm_runner import OpenMMRunner
@@ -42,12 +41,19 @@ class MDSimulator:
         """
         self.runner = None
         if OPENMM_AVAILABLE and OpenMMRunner:
-            self.runner = OpenMMRunner(
-                temperature=temperature,
-                pressure=1.01325,
-                timestep_fs=2.0,
-                platform_name="CPU",
-            )
+            try:
+                self.runner = OpenMMRunner(
+                    temperature=temperature,
+                    pressure=1.01325,
+                    timestep_fs=2.0,
+                    platform_name="CPU",
+                )
+            except Exception as e:
+                import warnings
+                warnings.warn(f"OpenMM runner init failed: {e}. Install: pip install openmm openmmforcefields openff-toolkit")
+        if not self.runner and OPENMM_AVAILABLE:
+            import warnings
+            warnings.warn("MD unavailable: OpenMM or dependencies missing. Install: pip install insulin-ai[simulation]")
         self.extractor = PropertyExtractor()
         self.n_steps = n_steps
         self.random_seed = random_seed
@@ -65,21 +71,9 @@ class MDSimulator:
         return None
     
     def _psmiles_from_material_name(self, name: str) -> Optional[str]:
-        """Map common material names to PSMILES for evaluation."""
-        mapping = {
-            "peg": "[*]OCC[*]",
-            "polyethylene glycol": "[*]OCC[*]",
-            "peg-based": "[*]OCC[*]",
-            "polyethylene": "[*]CC[*]",
-            "chitosan": "[*]CC([*])OC1OC(C)C(O)C(O)C1O",
-            "plga": "[*]CC(=O)O[*]",
-            "pva": "[*]CC([*])O",
-            "pmma": "[*]CC([*])(C)C(=O)OC",
-        }
-        name_lower = name.lower()
-        for key, psmiles in mapping.items():
-            if key in name_lower:
-                return psmiles
+        """Only use if agent passed a PSMILES as material_name. No static name mapping."""
+        if name and "[*]" in str(name):
+            return str(name)
         return None
     
     def evaluate_candidates(
@@ -100,39 +94,63 @@ class MDSimulator:
         """
         md_results = []
         material_names = []
-        
-        for i, cand in enumerate(candidates[:max_candidates]):
+        to_eval = candidates[:max_candidates]
+        n_with_psmiles = sum(
+            1 for c in to_eval
+            if (c.get("chemical_structure") or c.get("psmiles")) and "[*]" in str(c.get("chemical_structure") or c.get("psmiles") or "")
+        )
+        mode = "OpenMM (insulin+polymer)" if self.runner else "MD unavailable"
+        print(f"  🔬 Evaluating {len(to_eval)} candidates ({n_with_psmiles} with PSMILES) via {mode}...")
+
+        for i, cand in enumerate(to_eval):
             psmiles = self._get_psmiles(cand)
             if not psmiles and isinstance(cand, dict):
                 psmiles = self._psmiles_from_material_name(
                     cand.get("material_name", "") or cand.get("material_composition", "")
                 )
-            if not psmiles:
+            if not psmiles or (psmiles and "[*]" not in str(psmiles)):
                 md_results.append(None)
                 material_names.append(cand.get("material_name", f"candidate_{i}"))
                 continue
-            
+
             name = cand.get("material_name", psmiles) if isinstance(cand, dict) else psmiles
             material_names.append(name)
-            
+
             res = None
             if self.runner:
                 try:
+                    if (i + 1) % 5 == 0 or i == 0:
+                        print(f"     MD candidate {i+1}/{len(to_eval)}: {name[:40]}...")
                     res = self.runner.run(
                         psmiles,
                         n_steps=self.n_steps,
                         random_seed=self.random_seed + i,
                     )
-                except Exception:
-                    pass
+                except Exception as e:
+                    if not getattr(self, "_md_error_logged", False):
+                        print(f"     ⚠️ MD error: {e}")
+                        print(f"     Tip: pip install openmm openmmforcefields openff-toolkit rdkit")
+                        self._md_error_logged = True
             md_results.append(res)
-        
-        # Use MD feedback if we got any valid results; else fall back to RDKit proxy
+
+        # Use MD feedback only; no RDKit proxy fallback
         n_valid = sum(1 for r in md_results if r is not None)
         if n_valid > 0:
             feedback = self.extractor.extract_feedback(md_results, material_names)
+            print(f"  ✅ MD complete: {len(feedback['high_performers'])} high performers")
         else:
-            feedback = evaluate_candidates_proxy(candidates, max_candidates=max_candidates)
+            err_hint = ""
+            if not self.runner:
+                err_hint = " (OpenMM not installed: pip install insulin-ai[simulation])"
+            else:
+                err_hint = " (check logs above for errors; ensure insulin PDB at data/4F1C.pdb)"
+            print(f"  ⚠️ MD had no valid results{err_hint}")
+            feedback = {
+                "high_performers": [],
+                "effective_mechanisms": [],
+                "problematic_features": ["md_unavailable"] if not self.runner else ["md_failed"],
+                "property_analysis": {},
+            }
         
         return {
             "high_performers": feedback["high_performers"],

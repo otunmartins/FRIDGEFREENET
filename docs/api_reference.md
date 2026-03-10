@@ -1,51 +1,64 @@
 # Insulin AI API Reference
 
-## Active Learning
+## CLI
 
-### POST /api/active-learning/run
+The primary interface for materials discovery. Run from the project root.
 
-Run the active learning feedback loop: literature mining → MD evaluation → feedback → next iteration.
+```bash
+# Full feedback loop with MD and mutation
+python insulin_ai_cli.py discover --iterations 2 --mutate
 
-**Request body (JSON):**
-```json
-{
-  "iterations": 2,
-  "use_md": true
-}
+# Full feedback loop (MD only)
+python insulin_ai_cli.py discover --iterations 2
+
+# Literature-only (no MD)
+python insulin_ai_cli.py discover --no-md -n 1
+
+# Literature mining only
+python insulin_ai_cli.py mine
+
+# Evaluate PSMILES
+python insulin_ai_cli.py evaluate "[*]OCC[*]" "[*]CC[*]"
+
+# System status
+python insulin_ai_cli.py status
 ```
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| iterations | int | 1 | Number of cycles (1-5) |
-| use_md | bool | true | Use MD simulation for evaluation; if false, literature-only |
+When installed via `pip install -e .`, use the `insulin-ai` entry point:
 
-**Response:**
-```json
-{
-  "success": true,
-  "iterations": 2,
-  "summary": [
-    {"iteration": 1, "candidates": 15, "high_performers": 3},
-    {"iteration": 2, "candidates": 12, "high_performers": 4}
-  ],
-  "cycle_results_dir": "cycle_results"
-}
+```bash
+insulin-ai discover --iterations 2 --mutate
+insulin-ai mine
+insulin-ai evaluate "[*]OCC[*]" "[*]CC[*]"
+insulin-ai status
 ```
 
-**Status codes:** 200 (success), 500 (error), 503 (literature miner not initialized)
+---
+
+## MCP Tools (insulin-ai server)
+
+Exposed via `insulin_ai_mcp_server.py` when OpenCode loads this project. Single server, all tools consolidated.
+
+| Tool | Description |
+|------|-------------|
+| `mine_literature` | Literature mining + PaperQA2 synthesis when papers indexed |
+| `paper_qa`, `paper_qa_index_status`, `index_papers` | PaperQA2 deep reading over PDFs |
+| `semantic_scholar_search`, `pubmed_search`, `arxiv_search`, `web_search` | Literature search |
+| `lookup_material` | PubMed structure lookup |
+| `validate_psmiles`, `psmiles_canonicalize`, `psmiles_dimerize`, `psmiles_fingerprint`, `psmiles_similarity` | PSMILES utilities |
+| `evaluate_psmiles`, `mutate_psmiles` | MD evaluation, mutation |
+| `save_discovery_state`, `load_discovery_state`, `get_materials_status` | State management |
 
 ---
 
 ## System Status
 
-### GET /api/status
+`get_materials_status` (MCP) or `insulin_ai_cli.py status` (CLI) returns:
 
-Returns health of all components including:
-- `literature_mining`
-- `chatbot`
-- `psmiles_generator`
-- `mcp_literature_mining`
-- `md_simulation` (status: active/proxy_only, mode: OpenMM+PME or RDKit proxy, platform: CPU)
+- `MD Simulation`: insulin + polymer (implicit solvent) or unavailable (CPU)
+- `Mutation`: available (cheminformatics) or unavailable
+- `Literature Mining`: available or import error
+- `PaperQA2`: index status (e.g. "5/10 indexed" or "paper-qa not installed")
 
 ---
 
@@ -72,16 +85,6 @@ result = runner.run("[*]OCC[*]", n_steps=50000)
 ```
 
 ---
-
-## CLI
-
-```bash
-# Full feedback loop with MD
-python run_active_learning.py --iterations 2
-
-# Literature-only (no MD)
-python run_active_learning.py --no-md --iterations 1
-```
 
 ## Benchmarks
 
