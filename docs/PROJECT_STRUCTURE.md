@@ -1,47 +1,25 @@
-# Insulin AI / FridgeFreeNet Project Structure
+# Repository layout
 
-## Layout
+This project is **materials-discovery software** exposed through one MCP server. Folders exist because the problem splits into literature, simulation, and mutation—not because we like nesting.
 
-```
-insulin-ai/
-├── install                    # Main install script (OpenCode + env)
-├── run                        # Quick launcher for insulin-ai
-├── insulin_ai_cli.py          # CLI: discover, mine, evaluate, status
-├── insulin_ai_mcp_server.py   # MCP server for OpenCode tools
-├── literature_mining_system.py # Literature mining + Semantic Scholar
-├── psmiles_generator.py       # PSMILES generation
-├── ollama_client.py           # Ollama LLM client
-├── paper_qa_config.py         # PaperQA2 deep-reading config
-│
-├── .opencode/                 # OpenCode config
-│   ├── opencode.jsonc         # MCP, default agent
-│   ├── agent/                 # Agent definitions
-│   └── skills/                # Active-learning, literature-mining
-│
-├── src/python/insulin_ai/
-│   ├── cli.py                 # CLI entrypoints
-│   ├── simulation/             # MD simulation
-│   │   ├── md_simulator.py
-│   │   ├── openmm_runner.py
-│   │   ├── insulin_polymer_system.py
-│   │   ├── property_extractor.py
-│   │   └── psmiles_to_openmm.py
-│   └── mutation/              # Feedback-guided mutation
-│
-├── docs/                      # Documentation
-│   ├── archive/               # Archived plans and summaries
-│   ├── api_reference.md
-│   ├── MCP_SERVERS.md
-│   └── proposal.tex
-│
-├── papers/                    # PDFs for PaperQA2 (user-provided)
-├── scripts/                   # Shell helpers (index_papers, run_mcp_server)
-├── tests/                     # Pytest tests
-└── environment-simulation.yml # Conda env for MD simulation
-```
+## Top level
 
-## Outputs (not committed)
+| Path | Purpose |
+|------|---------|
+| `insulin_ai_mcp_server.py` | FastMCP app; calls into everything below |
+| `insulin_ai_cli.py` | Same stack, terminal entry |
+| `iterative_literature_mining.py`, `literature_mining_system.py`, `semantic_scholar_client.py`, `paper_qa_config.py`, `ollama_client.py`, `psmiles_generator.py` | Mining + LLM + PaperQA; kept at repo root for stable imports |
+| `src/python/insulin_ai/` | Packaged code: MD, mutation, scoring, autonomous loop |
+| `.opencode/` | OpenCode agents + MCP JSON |
+| `scripts/` | Shell/Python launchers |
+| `papers/` | User PDFs (not committed) |
+| `tests/`, `benchmarks/` | Quality / perf |
+| `docs/` | MCP docs, proposal, methods |
 
-- `chat_memory/`, `cycle_results/`, `iterative_results/` – runtime outputs
-- `discovery_state/` – discovery checkpoint state
-- `mining_results/*.json` – literature mining results
+## Optional external repos
+
+- **autoresearch/** (Karpathy) — not vendored; add to `.gitignore` if you clone it locally for unrelated LLM experiments.
+
+## Runtime dirs (not in git)
+
+`discovery_state/`, `cycle_results/`, `iterative_results/`

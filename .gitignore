@@ -81,6 +81,9 @@ condaenv.*.requirements.txt
 # Local clone of FRIDGEFREENET (separate repo; push via remote)
 FRIDGEFREENET/
 
+# Optional: Karpathy autoresearch (GPU LLM training boilerplate — not part of insulin-ai MCP)
+autoresearch/
+
 # Jupyter Notebooks
 .ipynb_checkpoints
 

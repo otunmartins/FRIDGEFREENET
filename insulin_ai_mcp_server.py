@@ -10,6 +10,8 @@ import os
 import sys
 import json
 import time
+import subprocess
+import traceback
 import xml.etree.ElementTree as ET
 
 try:
@@ -26,7 +28,7 @@ from mcp.server.fastmcp import FastMCP
 
 mcp = FastMCP(
     "insulin-ai-materials",
-    instructions="Materials discovery: literature mining (incl. PaperQA2 RAG), PSMILES, MD, PubMed, arXiv, Semantic Scholar, web search.",
+    instructions="Materials discovery: literature mining (incl. PaperQA2 RAG), PSMILES, MD, run_autonomous_discovery (overnight autoresearch loop), PubMed, arXiv, Semantic Scholar, web search.",
 )
 
 
@@ -271,11 +273,20 @@ def evaluate_psmiles(psmiles_list: str) -> str:
         candidates = [{"material_name": f"Candidate_{i}", "chemical_structure": p} for i, p in enumerate(parts)]
         sim = MDSimulator(n_steps=5000)
         result = sim.evaluate_candidates(candidates, max_candidates=len(candidates))
-        return json.dumps({
+        try:
+            from insulin_ai.simulation.scoring import discovery_score
+
+            _score = discovery_score(result)
+        except Exception:
+            _score = None
+        out = {
             "high_performers": result["high_performers"],
             "effective_mechanisms": result["effective_mechanisms"],
             "problematic_features": result["problematic_features"],
-        }, indent=2)
+        }
+        if _score is not None:
+            out["discovery_score"] = round(_score, 4)
+        return json.dumps(out, indent=2)
     except Exception as e:
         return f"Error: {e}"
 
@@ -304,6 +315,99 @@ def mutate_psmiles(library_size: int = 10, feedback_json: str = "") -> str:
         ], indent=2)
     except Exception as e:
         return f"Error: {e}"
+
+
+@mcp.tool()
+def run_autonomous_discovery(
+    budget_minutes: float = 60.0,
+    run_in_background: bool = True,
+    results_tsv_path: str = "discovery_state/autoresearch_results.tsv",
+    md_steps: int = 5000,
+    max_eval_per_iteration: int = 8,
+) -> str:
+    """
+    Autoresearch-style autonomous loop: literature mine → mutate → MD evaluate → score → TSV log,
+    repeated until budget_minutes elapses. Same philosophy as Karpathy autoresearch (overnight runs).
+
+    When run_in_background=True (default), spawns a subprocess so the MCP call returns immediately
+    (avoids timeouts). Check discovery_state/autoresearch_subprocess.log and results TSV for progress.
+
+    TSV columns: run_id, score, memory_gb, status (keep|discard|crash), description.
+    Foreground mode runs inline (may take hours; use only for short budgets).
+    """
+    os.makedirs(STATE_DIR, exist_ok=True)
+    tsv = results_tsv_path
+    if not os.path.isabs(tsv):
+        tsv = os.path.join(ROOT, results_tsv_path)
+    log_json = os.path.join(STATE_DIR, "autoresearch_summary.json")
+    log_out = os.path.join(STATE_DIR, "autoresearch_subprocess.log")
+    script = os.path.join(ROOT, "scripts", "run_autonomous_discovery.py")
+    env = os.environ.copy()
+    env["INSULIN_AI_ROOT"] = ROOT
+
+    if run_in_background:
+        if not os.path.isfile(script):
+            return json.dumps(
+                {"error": f"Script not found: {script}", "hint": "Run from insulin-ai repo root."}
+            )
+        cmd = [
+            sys.executable,
+            script,
+            "--budget-minutes",
+            str(budget_minutes),
+            "--results-tsv",
+            results_tsv_path,
+            "--md-steps",
+            str(md_steps),
+            "--max-eval",
+            str(max_eval_per_iteration),
+            "--log-json",
+            log_json,
+        ]
+        try:
+            log_f = open(log_out, "a", encoding="utf-8")
+            log_f.write(f"\n--- start {time.strftime('%Y-%m-%d %H:%M:%S')} budget={budget_minutes}m ---\n")
+            log_f.flush()
+            proc = subprocess.Popen(
+                cmd,
+                cwd=ROOT,
+                env=env,
+                stdout=log_f,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
+            log_f.close()
+            return json.dumps(
+                {
+                    "status": "started_background",
+                    "pid": proc.pid,
+                    "budget_minutes": budget_minutes,
+                    "results_tsv": tsv,
+                    "subprocess_log": log_out,
+                    "summary_json_when_done": log_json,
+                    "note": "Tail subprocess_log for progress; TSV appends one row per iteration.",
+                },
+                indent=2,
+            )
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    # Foreground: short runs only
+    try:
+        sys.path.insert(0, os.path.join(ROOT, "src", "python"))
+        from insulin_ai.autonomous_discovery import run_autonomous_discovery_loop
+
+        summary = run_autonomous_discovery_loop(
+            budget_minutes=budget_minutes,
+            results_tsv=results_tsv_path,
+            root=ROOT,
+            md_steps=md_steps,
+            max_eval_per_iteration=max_eval_per_iteration,
+            log_json_path=log_json,
+        )
+        return json.dumps(summary, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e), "traceback": traceback.format_exc()})
 
 
 @mcp.tool()

@@ -16,7 +16,10 @@ OpenCode uses a **single MCP server** (insulin-ai) that exposes all materials di
 | **Literature** | `semantic_scholar_search`, `pubmed_search`, `arxiv_search`, `web_search`, `lookup_material` |
 | **PSMILES** | `validate_psmiles`, `psmiles_canonicalize`, `psmiles_dimerize`, `psmiles_fingerprint`, `psmiles_similarity` |
 | **Evaluation** | `evaluate_psmiles`, `mutate_psmiles` |
+| **Autoresearch** | `run_autonomous_discovery` (time-budget loop → TSV + background subprocess) |
 | **State** | `save_discovery_state`, `load_discovery_state`, `get_materials_status` |
+
+**Autoresearch mode:** `run_autonomous_discovery(budget_minutes=480, run_in_background=true)` spawns overnight literature + mutation + MD cycles; logs to `discovery_state/autoresearch_results.tsv`. Use agent **autoresearch-materials** in OpenCode for instructions. CLI: `python scripts/run_autonomous_discovery.py --budget-minutes 480`.
 
 ## PaperQA2 (Deep Reading + RAG)
 

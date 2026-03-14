@@ -69,6 +69,12 @@ For complex materials (chitosan, hyaluronic acid, collagen), use `lookup_materia
 
 Run `index_papers` (or `./scripts/index_papers.sh`) once to build the PaperQA2 index before using `paper_qa` or deep reading in `mine_literature`.
 
+## Overnight autoresearch (no human in the loop)
+
+- MCP: **`run_autonomous_discovery`** (`budget_minutes`, `run_in_background=true`) → logs `discovery_state/autoresearch_results.tsv`
+- Agent: switch to **autoresearch-materials** for full instructions
+- CLI: `python scripts/run_autonomous_discovery.py --budget-minutes 480`
+
 ## Key Commands (bash fallback)
 
 - `python insulin_ai_cli.py discover --iterations 5 --mutate` – Batch loop (unattended)
