@@ -1,13 +1,17 @@
-"""
-CPU-only molecular dynamics simulation pipeline for polymer evaluation.
+"""Polymer evaluation: GROMACS merged EM + RDKit."""
 
-Uses OpenMM with Particle Mesh Ewald (PME) for long-range electrostatics.
-All computations run on CPU - no GPU required.
-"""
-
-from .openmm_runner import OpenMMRunner
-from .psmiles_to_openmm import PSMILestoOpenMM
-from .property_extractor import PropertyExtractor
+from .gromacs_complex import gmx_available, run_gromacs_matrix_em, run_gromacs_merged_em
 from .md_simulator import MDSimulator
+from .polymer_build import embed_mol_3d, ensure_insulin_pdb, psmiles_to_mol_3d
+from .property_extractor import PropertyExtractor
 
-__all__ = ["OpenMMRunner", "PSMILestoOpenMM", "PropertyExtractor", "MDSimulator"]
+__all__ = [
+    "MDSimulator",
+    "PropertyExtractor",
+    "embed_mol_3d",
+    "ensure_insulin_pdb",
+    "gmx_available",
+    "psmiles_to_mol_3d",
+    "run_gromacs_merged_em",
+    "run_gromacs_matrix_em",
+]

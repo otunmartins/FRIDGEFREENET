@@ -1,19 +1,21 @@
 #!/usr/bin/env bash
 # Insulin AI Materials Discovery - Install
 #
-# Installs OpenCode (upstream) and creates an insulin-ai launcher.
-# Our project = MCP config + Python backend; OpenCode loads it when run from here.
+# 1) OpenCode + insulin-ai launcher
+# 2) Python deps: conda env insulin-ai-sim (preferred) OR pip install -e ".[simulation]"
 #
-# Usage: ./install [--no-path]
+# Usage: ./install [--no-path] [--pip-only]
 
 set -euo pipefail
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
 NC='\033[0m'
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BIN_NAME="insulin-ai"
+YML="$SCRIPT_DIR/environment-simulation.yml"
 
 usage() {
   cat <<EOF
@@ -21,80 +23,126 @@ Insulin AI Materials Discovery – Install
 
 Usage: ./install [options]
 
-Installs OpenCode (upstream) and sets up the insulin-ai launcher.
+  --no-path     Don't add ~/.local/bin to PATH in shell config
+  --pip-only    Skip conda; use pip install -e ".[simulation]" (weaker OpenMM setup)
+
+Installs:
+  - OpenCode (https://opencode.ai/install)
+  - Python environment: mamba env create -f environment-simulation.yml (default)
+    OR pip editable install + simulation extras if no mamba/conda or --pip-only
+
 Run from the insulin-ai repo root.
-
-Options:
-  -h, --help     Show this help
-  --no-path      Don't add install dir to PATH in shell config
-
-Prerequisites:
-  - None (install script fetches OpenCode)
 EOF
 }
 
 no_modify_path=false
+pip_only=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;
     --no-path) no_modify_path=true; shift ;;
+    --pip-only) pip_only=true; shift ;;
     *) echo -e "${RED}Unknown option: $1${NC}"; usage; exit 1 ;;
   esac
 done
 
-# Install directory for our launcher
 INSTALL_DIR="${OPENCODE_INSTALL_DIR:-${XDG_BIN_DIR:-$HOME/.local/bin}}"
 mkdir -p "$INSTALL_DIR"
 
 echo -e "${GREEN}Insulin AI Materials Discovery – Install${NC}"
 echo ""
 
-# 1. Install OpenCode if not present
-if ! command -v opencode >/dev/null 2>&1; then
-  echo "Installing OpenCode (upstream)..."
-  curl -fsSL https://opencode.ai/install | bash
-  echo "  Done"
-  # OpenCode installs to ~/.opencode/bin; ensure it's in PATH for this script
-  export PATH="$HOME/.opencode/bin:$PATH"
+# --- OpenCode ---
+OPENCODE_BIN_DIR="${HOME}/.opencode/bin"
+export PATH="${OPENCODE_BIN_DIR}:$PATH"
+if [[ ! -x "${OPENCODE_BIN_DIR}/opencode" ]] && ! command -v opencode >/dev/null 2>&1; then
+  echo "Installing OpenCode..."
+  curl -fsSL https://opencode.ai/install | bash || true
+  export PATH="${OPENCODE_BIN_DIR}:$PATH"
+fi
+if [[ -x "${OPENCODE_BIN_DIR}/opencode" ]]; then
+  echo "OpenCode: ${OPENCODE_BIN_DIR}/opencode"
+elif command -v opencode >/dev/null 2>&1; then
+  echo "OpenCode: $(command -v opencode)"
 else
-  echo "OpenCode already installed"
+  echo -e "${RED}OpenCode not found.${NC} curl -fsSL https://opencode.ai/install | bash"
+  exit 1
 fi
 
-# 2. Create insulin-ai launcher (runs opencode from this project dir)
+# --- Python / MCP dependencies ---
+echo ""
+echo -e "${GREEN}Python dependencies (MCP server + simulation)${NC}"
+
+install_conda_env() {
+  local runner
+  if command -v mamba &>/dev/null; then
+    runner=mamba
+  elif command -v conda &>/dev/null; then
+    runner=conda
+  else
+    return 1
+  fi
+  if conda env list 2>/dev/null | awk '{print $1}' | grep -qx insulin-ai-sim; then
+    echo -e "${YELLOW}Conda env insulin-ai-sim exists — updating...${NC}"
+    "$runner" env update -f "$YML" --prune
+  else
+    echo "Creating conda env insulin-ai-sim (OpenMM, RDKit, psmiles, mcp, paper-qa)..."
+    "$runner" env create -f "$YML"
+  fi
+  echo -e "${GREEN}Activate before MCP:  mamba activate insulin-ai-sim${NC}"
+  return 0
+}
+
+install_pip() {
+  echo "pip: requirements.txt + editable (no conda)..."
+  cd "$SCRIPT_DIR"
+  python3 -m pip install -U pip setuptools wheel
+  python3 -m pip install -r requirements.txt
+  python3 -m pip install -e ".[simulation,paperqa]" 2>/dev/null || python3 -m pip install -e ".[simulation]"
+  echo -e "${YELLOW}Tip: OpenMM + RDKit are easiest via conda; pip-only may miss binary wheels on some OS.${NC}"
+}
+
+if [[ "$pip_only" == "true" ]] || ! command -v mamba &>/dev/null && ! command -v conda &>/dev/null; then
+  install_pip
+else
+  if ! install_conda_env; then
+    install_pip
+  fi
+fi
+
+# --- Launcher ---
 LAUNCHER="$INSTALL_DIR/$BIN_NAME"
 cat > "$LAUNCHER" <<LAUNCHER_SCRIPT
 #!/usr/bin/env bash
-# Insulin AI Materials Discovery – launches OpenCode with this project
 INSULIN_AI_ROOT="$SCRIPT_DIR"
 PROJECT="\${1:-\$INSULIN_AI_ROOT}"
 cd "\$INSULIN_AI_ROOT"
-exec opencode "\$PROJECT"
+export PATH="\${HOME}/.opencode/bin:\$PATH"
+if [[ -x "\${HOME}/.opencode/bin/opencode" ]]; then
+  exec "\${HOME}/.opencode/bin/opencode" "\$PROJECT"
+fi
+command -v opencode >/dev/null 2>&1 && exec opencode "\$PROJECT"
+echo "opencode not found" >&2
+exit 127
 LAUNCHER_SCRIPT
 chmod +x "$LAUNCHER"
 
 echo ""
-echo -e "${GREEN}Installed launcher to $LAUNCHER${NC}"
-echo ""
-echo "Run:"
-echo "  $BIN_NAME"
-echo "  $BIN_NAME /path/to/project"
-echo ""
-echo "Or from this directory:  opencode ."
+echo -e "${GREEN}Launcher: $LAUNCHER${NC}"
+echo "  Run:  $BIN_NAME"
+echo "  MCP:  started automatically by OpenCode (or debug: mamba activate insulin-ai-sim && bash scripts/run_mcp_server.sh)"
 echo ""
 
-# 3. Add launcher dir to PATH if requested
 if [[ "$no_modify_path" != "true" ]] && [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
-  for rc in .bashrc .zshrc .bash_profile .profile; do
+  for rc in .zshrc .bashrc .bash_profile .profile; do
     if [[ -f "$HOME/$rc" ]]; then
-      if ! grep -q "insulin-ai\|$INSTALL_DIR" "$HOME/$rc" 2>/dev/null; then
+      if ! grep -q "Insulin AI Materials Discovery" "$HOME/$rc" 2>/dev/null; then
         echo "" >> "$HOME/$rc"
         echo "# Insulin AI Materials Discovery" >> "$HOME/$rc"
         echo "export PATH=\"$INSTALL_DIR:\$PATH\"" >> "$HOME/$rc"
-        echo "  Added $INSTALL_DIR to PATH in $HOME/$rc"
+        echo "  Added $INSTALL_DIR to $HOME/$rc"
         break
       fi
     fi
   done
-  echo ""
-  echo "Restart your shell or run: export PATH=\"$INSTALL_DIR:\$PATH\""
 fi

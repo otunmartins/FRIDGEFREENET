@@ -12,6 +12,15 @@
         "PAPER_DIRECTORY": "./papers"
       },
       "enabled": true
+    },
+    "asta": {
+      "type": "remote",
+      "url": "https://asta-tools.allen.ai/mcp/v1",
+      "enabled": true,
+      "oauth": false,
+      "headers": {
+        "x-api-key": "{env:ASTA_API_KEY}"
+      }
     }
   }
 }

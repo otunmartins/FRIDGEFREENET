@@ -12,7 +12,7 @@ import importlib.util
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-# OpenCode MCP server (legacy mcp_servers/ folded into insulin_ai_mcp_server)
+# Single MCP server (insulin_ai_mcp_server.py); literature lives in insulin_ai.literature
 MCP_SERVERS = [("insulin_ai_mcp_server", "insulin_ai_mcp_server.py")]
 
 

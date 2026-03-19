@@ -1,45 +1,33 @@
 import json
 import os
 import re
-from typing import List, Dict, Optional
+from pathlib import Path
+from typing import List, Dict, Optional, Union
 from datetime import datetime
 
-from semantic_scholar_client import SemanticScholarClient
-
-# OllamaClient imported lazily in __init__ to avoid pydantic/ollama dependency at import time
-
+from insulin_ai.literature.scholar_client import SemanticScholarClient
 
 class MaterialsLiteratureMiner:
     """
-    Literature mining system for discovering materials suitable for fridge-free 
-    insulin delivery patches. Milestone 1: Basic LLM-guided literature mining.
+    Literature mining: Semantic Scholar + optional legacy LLM paths (disabled; self.ollama is None).
+    MCP and iterative flow use scholar-only + agent extraction.
     """
-    
-    def __init__(self, 
-                 semantic_scholar_api_key: Optional[str] = None,
-                 ollama_model: str = "llama3.2",
-                 ollama_host: str = "http://localhost:11434"):
-        """
-        Initialize the Materials Literature Mining system.
-        
-        Args:
-            semantic_scholar_api_key (str, optional): Semantic Scholar API key
-            ollama_model (str): OLLAMA model to use
-            ollama_host (str): OLLAMA server host URL
-        """
+
+    def __init__(
+        self,
+        semantic_scholar_api_key: Optional[str] = None,
+        ollama_model: str = "llama3.2",
+        ollama_host: str = "http://localhost:11434",
+        run_dir: Optional[Union[str, Path]] = None,
+    ):
+        del ollama_model, ollama_host  # unused; no in-server LLM
+        self.run_dir: Optional[Path] = Path(run_dir).resolve() if run_dir else None
         self.scholar = SemanticScholarClient(api_key=semantic_scholar_api_key)
         self.ollama = None
-        try:
-            from ollama_client import OllamaClient
-            self.ollama = OllamaClient(model_name=ollama_model, host=ollama_host)
-            print("Materials Literature Mining System initialized!")
-            print(f"Using OLLAMA model: {ollama_model}")
-        except ImportError as e:
-            print("Ollama unavailable (install ollama + 'ollama pull llama3.2' for LLM extraction).")
-            print("Using keyword-based extraction.")
-        except Exception as e:
-            print(f"Ollama init failed: {e}. Using keyword-based extraction.")
-        print(f"Semantic Scholar API: {'Authenticated' if semantic_scholar_api_key else 'Public (rate limited)'}")
+        print("Materials Literature Mining (Semantic Scholar; agent-led extraction).")
+        print(
+            f"Semantic Scholar API: {'Authenticated' if semantic_scholar_api_key else 'Public (rate limited)'}"
+        )
     
     def intelligent_mining(self,
                           user_request: str,
@@ -254,6 +242,10 @@ CRITICAL INSTRUCTIONS:
 
 Generate 8 natural language search queries now that will maximize material discovery:"""
 
+        if not self.ollama:
+            raise RuntimeError(
+                "Legacy LLM mining disabled. Use MCP mine_literature (Scholar + agent extraction)."
+            )
         try:
             print("🤖 Generating AGGRESSIVE search strategy...")
             response = self.ollama.client.chat(
@@ -430,6 +422,10 @@ Generate 8 natural language search queries now that will maximize material disco
         extraction_prompt = self._build_extraction_prompt()
         full_prompt = f"{extraction_prompt}\n\nPAPERS TO ANALYZE:\n{papers_context}"
         
+        if not self.ollama:
+            raise RuntimeError(
+                "Legacy LLM mining disabled. Use MCP mine_literature (Scholar + agent extraction)."
+            )
         try:
             print("🤖 Extracting material data using LLM...")
             response = self.ollama.client.chat(
@@ -777,15 +773,15 @@ Extract information ONLY if supported by the provided papers. Focus on specific 
         return min(score, 10)
     
     def _save_mining_results(self, results: Dict, prefix: str = "basic"):
-        """Save mining results to file."""
-        os.makedirs("mining_results", exist_ok=True)
-        
+        """Save mining results under session run_dir/mining/ (no run_dir = skip file)."""
+        if not self.run_dir:
+            return
+        sub = self.run_dir / "mining"
+        sub.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"mining_results/{prefix}_mining_{timestamp}.json"
-        
-        with open(filename, 'w', encoding='utf-8') as f:
+        filename = sub / f"{prefix}_mining_{timestamp}.json"
+        with open(filename, "w", encoding="utf-8") as f:
             json.dump(results, f, indent=2, ensure_ascii=False)
-        
         print(f"💾 Mining results saved to: {filename}")
     
     def get_material_details(self, material_name: str) -> Dict:
@@ -826,6 +822,8 @@ Base your analysis on the following papers:
 
 Provide a comprehensive technical summary."""
 
+        if not self.ollama:
+            raise RuntimeError("Legacy LLM mining disabled.")
         try:
             response = self.ollama.client.chat(
                 model=self.ollama.model_name,
@@ -1007,7 +1005,9 @@ Extract ALL materials now:"""
                 'temperature': 0.1,
                 'num_predict': 3000
             }
-        
+
+        if not self.ollama:
+            raise RuntimeError("Legacy LLM mining disabled.")
         try:
             response = self.ollama.client.chat(
                 model=self.ollama.model_name,
@@ -1405,7 +1405,8 @@ Be factual and objective. Do NOT assess quality, promise levels, or biocompatibi
             else:
                 return "🔄 Processing your request..."
 
-            # Generate the explanation using LLM
+            if not self.ollama:
+                return "LLM explanations disabled; use mine_literature + agent."
             response = self.ollama.client.chat(
                 model=self.ollama.model_name,
                 messages=[{

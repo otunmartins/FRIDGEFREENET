@@ -1,37 +1,26 @@
-# Conda environment for insulin-ai: MD simulation + MCP server (OpenCode)
-# Required for: insulin + polymer matrix MD (OpenMM, GAFF), MCP tools, literature mining
-#
-# IMPORTANT: Run from the insulin-ai project root (directory containing this file).
-#
-# Usage:
-#   cd /path/to/insulin-ai
-#   mamba env create -f environment-simulation.yml
-#   mamba activate insulin-ai-sim
-#
-# Troubleshooting:
-# - HTTP 000 CONNECTION FAILED: Often transient. Retry, or try a different network.
-# - PyTorch download fails: openmmforcefields can pull PyTorch (Espaloma). Retry;
-#   if it persists, try a different network or VPN.
-# - packmol: pip install (PyPI wheel); avoids conda-forge solver conflicts with ambertools/rdkit.
-# - psmiles: FermiQ/psmiles (provides PolymerSmiles); pip install from GitHub only.
-# - -e . : Editable install of insulin-ai; path is relative to this yml file.
-#
+# Conda env: GROMACS + Acpype + AmberTools + RDKit + OpenMM + MCP
 name: insulin-ai-sim
 channels:
   - conda-forge
   - defaults
 dependencies:
   - python=3.11
-  - openmm
   - rdkit
-  - openff-toolkit-base
-  - openmmforcefields
+  - gromacs
+  - ambertools
+  - openmm
+  - pdbfixer
   - pip
   - pip:
+    - openmmforcefields>=0.14.0
+    - openff-toolkit>=0.18.0
+    - acpype>=2023.4
     - packmol>=21.0
     - git+https://github.com/FermiQ/psmiles.git
     - mcp>=1.0.0
     - fastmcp>=0.1.0
+    - requests>=2.28.0
     - duckduckgo-search>=8.0.0
     - paper-qa>=2026.2
+    - pytest>=7.4.0
     - -e .

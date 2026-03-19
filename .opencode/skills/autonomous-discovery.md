@@ -32,9 +32,7 @@ Run up to 5 iterations. Stop early if the user says stop or no new high performe
 
 ## Bash Fallback (unattended)
 
-```bash
-python insulin_ai_cli.py discover --iterations 5 --mutate
-```
+Use MCP `run_autonomous_discovery` or step-by-step tools (no CLI).
 
 ## Results
 

@@ -4,7 +4,7 @@ Insulin AI: Code-as-Platform for Polymeric Insulin Patch Material Discovery.
 Active learning framework integrating:
 - Literature mining (Semantic Scholar)
 - PSMILES generation (LLM + rules)
-- MD simulation (OpenMM + PME, CPU-only)
+- Polymer screening (GROMACS merged EM + RDKit)
 - Iterative feedback loops
 """
 

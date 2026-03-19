@@ -21,7 +21,8 @@ if [[ -z "${OPENAI_API_KEY:-}" ]] && [[ -z "${PQA_EMBEDDING:-}" ]]; then
   exit 1
 fi
 
+export PYTHONPATH="$REPO_ROOT/src/python${PYTHONPATH:+:$PYTHONPATH}"
 python3 -c "
-from paper_qa_config import build_index
+from insulin_ai.paper_qa_config import build_index
 print(build_index())
 "

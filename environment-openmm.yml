@@ -1,0 +1,18 @@
+# OpenMM path: protein (AMBER14) + ligand (GAFF + RDKit Gasteiger charges)
+# No antechamber/acpype. Run: mamba env create -f environment-openmm.yml
+name: insulin-ai-openmm
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - rdkit
+  - openmm
+  - pdbfixer
+  - pip
+  - pip:
+    - openmmforcefields>=0.14.0
+    - openff-toolkit>=0.18.0
+    - psmiles @ git+https://github.com/FermiQ/psmiles.git
+    - pytest>=7.4.0
+    - -e .

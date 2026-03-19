@@ -2,8 +2,7 @@
 """
 Autoresearch-style autonomous materials discovery loop.
 
-Runs literature mining + mutation + MD evaluation until a wall-clock budget
-expires. Appends one TSV row per iteration (autoresearch-style logging).
+All outputs go under a single session directory (runs/<id>/ or INSULIN_AI_SESSION_DIR).
 """
 
 from __future__ import annotations
@@ -19,17 +18,18 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-# Project root when run as script from repo root
+from insulin_ai.run_paths import ENV_SESSION, new_session_dir
+
+
 def _ensure_paths(root: Optional[str] = None) -> str:
     r = root or os.environ.get("INSULIN_AI_ROOT", "")
     if not r:
         here = os.path.abspath(__file__)
-        # .../src/python/insulin_ai/autonomous_discovery.py -> repo root is 4 levels up
         r = os.path.dirname(here)
         for _ in range(3):
             r = os.path.dirname(r)
         if not os.path.isfile(os.path.join(r, "insulin_ai_mcp_server.py")):
-            r = os.path.dirname(r)  # fallback if layout differs
+            r = os.path.dirname(r)
     if r not in sys.path:
         sys.path.insert(0, r)
     sp = os.path.join(r, "src", "python")
@@ -60,17 +60,16 @@ def _memory_gb() -> float:
         import resource
 
         ru = resource.getrusage(resource.RUSAGE_SELF)
-        # ru_maxrss: KB on Linux, bytes on macOS
         if sys.platform == "darwin":
-            return round(ru.ru_maxrss / (1024 * 1024 * 1024), 2)  # bytes -> GB
-        return round(ru.ru_maxrss / (1024 * 1024), 2)  # KB -> GB on Linux
+            return round(ru.ru_maxrss / (1024 * 1024 * 1024), 2)
+        return round(ru.ru_maxrss / (1024 * 1024), 2)
     except Exception:
         return 0.0
 
 
 def run_autonomous_discovery_loop(
     budget_minutes: float,
-    results_tsv: str,
+    session_dir: Path,
     root: Optional[str] = None,
     md_steps: int = 5000,
     max_eval_per_iteration: int = 8,
@@ -79,32 +78,39 @@ def run_autonomous_discovery_loop(
 ) -> Dict[str, Any]:
     """
     Run discovery iterations until wall-clock budget is exhausted.
-
-    Returns summary dict: iterations_run, tsv_path, last_score, errors.
+    All artifacts written under session_dir/.
     """
     root = _ensure_paths(root)
     os.chdir(root)
+    os.environ[ENV_SESSION] = str(session_dir.resolve())
 
     from insulin_ai.simulation import MDSimulator
     from insulin_ai.simulation.scoring import discovery_score
+    from insulin_ai.literature.iterative_mining import IterativeLiteratureMiner
 
-    # iterative_literature_mining lives at repo root
-    from iterative_literature_mining import IterativeLiteratureMiner
-
-    tsv_path = Path(results_tsv)
-    if not tsv_path.is_absolute():
-        tsv_path = Path(root) / tsv_path
+    session_dir = Path(session_dir).resolve()
+    session_dir.mkdir(parents=True, exist_ok=True)
+    tsv_path = session_dir / "autoresearch_results.tsv"
+    if log_json_path:
+        log_json = Path(log_json_path)
+    else:
+        log_json = session_dir / "autoresearch_summary.json"
 
     deadline = time.monotonic() + budget_minutes * 60.0
-    miner = IterativeLiteratureMiner()
+    miner = IterativeLiteratureMiner(run_dir=session_dir)
     md_sim = MDSimulator(n_steps=md_steps)
-    mutator = None
+    if md_sim.runner is None:
+        raise RuntimeError(
+            "gmx + acpype required for autonomous discovery (conda install gromacs ambertools; pip acpype). "
+            "and ensure data/4F1C.pdb exists."
+        )
     try:
         from insulin_ai.mutation import MaterialMutator
-
-        mutator = MaterialMutator(random_seed=42)
-    except ImportError:
-        pass
+    except ImportError as e:
+        raise RuntimeError(
+            "Mutation required for autonomous discovery (psmiles): install mutation deps."
+        ) from e
+    mutator = MaterialMutator(random_seed=42)
 
     feedback_state: Dict[str, Any] = {
         "top_candidates": [],
@@ -139,32 +145,26 @@ def run_autonomous_discovery_loop(
             )
             candidates = list(mining_results.get("material_candidates", []))
 
-            if mutator:
-                try:
-                    from insulin_ai.mutation import feedback_guided_mutation
+            from insulin_ai.mutation import feedback_guided_mutation
 
-                    if iteration > 1 and feedback_state.get("high_performer_psmiles"):
-                        mutated = feedback_guided_mutation(
-                            feedback_state,
-                            library_size=mutation_size,
-                            feedback_fraction=0.7,
-                            random_seed=42 + iteration,
-                        )
-                    else:
-                        mutated = mutator.generate_library(library_size=mutation_size)
-                    candidates.extend(mutated)
-                    desc_parts.append(f"+{len(mutated)}mut")
-                except Exception as e:
-                    log_lines.append(f"mutation skip: {e}")
+            if iteration > 1 and feedback_state.get("high_performer_psmiles"):
+                mutated = feedback_guided_mutation(
+                    feedback_state,
+                    library_size=mutation_size,
+                    feedback_fraction=0.7,
+                    random_seed=42 + iteration,
+                )
+            else:
+                mutated = mutator.generate_library(library_size=mutation_size)
+            candidates.extend(mutated)
+            desc_parts.append(f"+{len(mutated)}mut")
 
-            # Only evaluate candidates that have valid PSMILES (speed)
             with_psmiles = [
                 c
                 for c in candidates
                 if "[*]" in str(c.get("chemical_structure") or c.get("psmiles") or "")
             ]
             if not with_psmiles and candidates:
-                # No PSMILES from literature — still run mutator-only eval if we had mutated
                 with_psmiles = [
                     c
                     for c in candidates
@@ -188,10 +188,7 @@ def run_autonomous_discovery_loop(
             iterations_run += 1
             last_score = score
 
-            # Persist iteration state for resume
-            state_dir = Path(root) / "discovery_state"
-            state_dir.mkdir(parents=True, exist_ok=True)
-            with open(state_dir / f"autoresearch_iteration_{iteration}.json", "w", encoding="utf-8") as sf:
+            with open(session_dir / f"autoresearch_iteration_{iteration}.json", "w", encoding="utf-8") as sf:
                 json.dump(
                     {
                         "iteration": iteration,
@@ -219,43 +216,40 @@ def run_autonomous_discovery_loop(
             break
 
     summary = {
+        "session_dir": str(session_dir),
         "iterations_run": iterations_run,
         "tsv_path": str(tsv_path),
         "last_score": last_score,
         "errors": errors,
         "log": log_lines,
     }
-    if log_json_path:
-        lp = Path(log_json_path)
-        if not lp.is_absolute():
-            lp = Path(root) / lp
-        lp.parent.mkdir(parents=True, exist_ok=True)
-        with open(lp, "w", encoding="utf-8") as jf:
-            json.dump(summary, jf, indent=2)
+    log_json.parent.mkdir(parents=True, exist_ok=True)
+    with open(log_json, "w", encoding="utf-8") as jf:
+        json.dump(summary, jf, indent=2)
     return summary
 
 
 def main() -> None:
     p = argparse.ArgumentParser(description="Autoresearch-style autonomous materials discovery")
     p.add_argument("--budget-minutes", type=float, default=60.0)
-    p.add_argument(
-        "--results-tsv",
-        default="discovery_state/autoresearch_results.tsv",
-        help="TSV log path (relative to repo root unless absolute)",
-    )
-    p.add_argument("--root", default="", help="Repo root (default: auto)")
+    p.add_argument("--run-name", type=str, default=None, help="Session name under runs/")
+    p.add_argument("--session-dir", type=str, default=None, help="Absolute session dir (default: new runs/<id>)")
+    p.add_argument("--root", default="", help="Repo root")
     p.add_argument("--md-steps", type=int, default=5000)
     p.add_argument("--max-eval", type=int, default=8)
-    p.add_argument("--log-json", default="", help="Write summary JSON here when done")
     args = p.parse_args()
     root = _ensure_paths(args.root or None)
+    repo = Path(root)
+    if args.session_dir:
+        session_dir = Path(args.session_dir).resolve()
+    else:
+        session_dir = new_session_dir(repo, name=args.run_name or f"autonomous_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
     summary = run_autonomous_discovery_loop(
         budget_minutes=args.budget_minutes,
-        results_tsv=args.results_tsv,
+        session_dir=session_dir,
         root=root,
         md_steps=args.md_steps,
         max_eval_per_iteration=args.max_eval,
-        log_json_path=args.log_json or None,
     )
     print(json.dumps(summary, indent=2))
     sys.exit(0 if not summary.get("errors") else 1)

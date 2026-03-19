@@ -24,11 +24,15 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "src", "python"))
 
+from pathlib import Path
+
 from mcp.server.fastmcp import FastMCP
+
+from insulin_ai.run_paths import ENV_SESSION, new_session_dir, session_dir_from_env
 
 mcp = FastMCP(
     "insulin-ai-materials",
-    instructions="Materials discovery: literature mining (incl. PaperQA2 RAG), PSMILES, MD, run_autonomous_discovery (overnight autoresearch loop), PubMed, arXiv, Semantic Scholar, web search.",
+    instructions="Materials discovery: literature mining, PSMILES, evaluate_psmiles (GROMACS), gmx_vmd_* (GROMACS/VMD workflows from integrated mcp_gmx_vmd), PubMed, arXiv, Scholar, web search.",
 )
 
 
@@ -42,7 +46,7 @@ def _paper_qa_available():
 
 
 def _paper_qa_settings():
-    from paper_qa_config import get_paper_qa_settings
+    from insulin_ai.paper_qa_config import get_paper_qa_settings
     return get_paper_qa_settings()
 
 
@@ -96,9 +100,8 @@ def mine_literature(
     use_paper_qa: bool = True,
 ) -> str:
     """
-    Mine scientific literature for insulin delivery materials.
-    Combines API mining (Semantic Scholar) with PaperQA2 deep reading when papers are indexed.
-    Returns material NAMES (e.g. chitosan, hydrogel, PEG). Translate to PSMILES before evaluate_psmiles.
+    Literature: **Asta MCP** when ASTA_API_KEY is set (server-side); else Semantic Scholar REST.
+    Optional PaperQA2 if indexed. You read abstracts and propose materials + PSMILES; then validate_psmiles / evaluate_psmiles.
 
     For iteration 2+, pass feedback from the previous iteration:
       top_candidates: comma-separated high performers (e.g. "chitosan,PEG")
@@ -131,27 +134,42 @@ def mine_literature(
             out.append("")
 
     try:
-        from iterative_literature_mining import IterativeLiteratureMiner
-        miner = IterativeLiteratureMiner()
+        import os
+        from insulin_ai.literature.literature_scholar_only import (
+            format_mine_literature_text,
+            run_scholar_mine,
+        )
+
+        run_dir = session_dir_from_env(Path(ROOT))
         top = [s.strip() for s in top_candidates.split(",") if s.strip()] or None
         mechs = [s.strip() for s in stability_mechanisms.split(",") if s.strip()] or None
         lims = [s.strip() for s in limitations.split(",") if s.strip()] or None
-        results = miner.mine_with_feedback(
-            iteration=iteration,
-            top_candidates=top,
-            stability_mechanisms=mechs,
-            limitations=lims,
-            num_candidates=max_candidates,
-        )
-        candidates = results.get("material_candidates", [])
-        names = [c.get("material_name") or c.get("material_composition", "") for c in candidates if c.get("material_name") or c.get("material_composition")]
-        out.append(f"Iteration {iteration}: Found {len(names)} material candidates. Translate to PSMILES before evaluation.")
-        out.append("")
-        out.append("Material names (you translate to PSMILES):")
-        for i, n in enumerate(names[:15], 1):
-            out.append(f"  {i}. {n}")
-        out.append("")
-        out.append("Example PSMILES: PEG=[*]OCC[*], polyethylene=[*]CC[*], chitosan=[*]CC([*])OC1OC(C)C(O)C(O)C1O")
+        asta_key = os.environ.get("ASTA_API_KEY")
+        if asta_key:
+            from insulin_ai.literature.literature_scholar_only import run_asta_mine
+
+            results = run_asta_mine(
+                asta_api_key=asta_key,
+                base_query=query,
+                iteration=iteration,
+                top_candidates=top,
+                stability_mechanisms=mechs,
+                limitations=lims,
+                run_dir=run_dir,
+                num_candidates=max_candidates,
+            )
+        else:
+            results = run_scholar_mine(
+                api_key=os.environ.get("SEMANTIC_SCHOLAR_API_KEY"),
+                base_query=query,
+                iteration=iteration,
+                top_candidates=top,
+                stability_mechanisms=mechs,
+                limitations=lims,
+                run_dir=run_dir,
+                num_candidates=max_candidates,
+            )
+        out.append(format_mine_literature_text(results))
         return "\n".join(out)
     except Exception as e:
         return "\n".join(out) + f"\n\nError (mining): {e}" if out else f"Error: {e}"
@@ -192,7 +210,7 @@ def index_papers() -> str:
     if not _paper_qa_available():
         return "paper-qa not installed. pip install paper-qa"
     try:
-        from paper_qa_config import build_index
+        from insulin_ai.paper_qa_config import build_index
         return build_index()
     except Exception as e:
         return f"Index error: {e}"
@@ -263,9 +281,8 @@ def validate_psmiles(psmiles: str) -> str:
 @mcp.tool()
 def evaluate_psmiles(psmiles_list: str) -> str:
     """
-    Evaluate PSMILES polymer structures (MD / OpenMM).
+    Evaluate PSMILES via GROMACS merged EM (gmx + acpype + ambertools on PATH).
     Input: comma-separated PSMILES, e.g. "[*]OCC[*], [*]CC[*]"
-    Returns high performers, mechanisms, problematic features.
     """
     try:
         from insulin_ai.simulation import MDSimulator
@@ -318,51 +335,55 @@ def mutate_psmiles(library_size: int = 10, feedback_json: str = "") -> str:
 
 
 @mcp.tool()
+def start_discovery_session(run_name: str = "") -> str:
+    """
+    Start a new discovery session. All subsequent saves and autonomous runs can use this folder.
+    Returns session_dir path; pass it to save_discovery_state(run_dir=...) or set INSULIN_AI_SESSION_DIR in shell.
+    """
+    try:
+        d = new_session_dir(Path(ROOT), name=run_name.strip() or None)
+        os.environ[ENV_SESSION] = str(d)
+        return json.dumps(
+            {"session_dir": str(d), "note": "Server process now uses this session for mine_literature saves and save_discovery_state when run_dir omitted."},
+            indent=2,
+        )
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
 def run_autonomous_discovery(
     budget_minutes: float = 60.0,
     run_in_background: bool = True,
-    results_tsv_path: str = "discovery_state/autoresearch_results.tsv",
+    run_name: str = "",
     md_steps: int = 5000,
     max_eval_per_iteration: int = 8,
 ) -> str:
     """
-    Autoresearch-style autonomous loop: literature mine → mutate → MD evaluate → score → TSV log,
-    repeated until budget_minutes elapses. Same philosophy as Karpathy autoresearch (overnight runs).
-
-    When run_in_background=True (default), spawns a subprocess so the MCP call returns immediately
-    (avoids timeouts). Check discovery_state/autoresearch_subprocess.log and results TSV for progress.
-
-    TSV columns: run_id, score, memory_gb, status (keep|discard|crash), description.
-    Foreground mode runs inline (may take hours; use only for short budgets).
+    Autonomous loop; all outputs live in one new folder runs/<session_id>/ (TSV, log, summary, iteration JSON).
+    When run_in_background=True, subprocess logs to that folder's autoresearch_subprocess.log.
     """
-    os.makedirs(STATE_DIR, exist_ok=True)
-    tsv = results_tsv_path
-    if not os.path.isabs(tsv):
-        tsv = os.path.join(ROOT, results_tsv_path)
-    log_json = os.path.join(STATE_DIR, "autoresearch_summary.json")
-    log_out = os.path.join(STATE_DIR, "autoresearch_subprocess.log")
+    session_dir = new_session_dir(Path(ROOT), name=(run_name.strip() or f"autonomous_{time.strftime('%Y%m%d_%H%M%S')}"))
+    log_out = session_dir / "autoresearch_subprocess.log"
     script = os.path.join(ROOT, "scripts", "run_autonomous_discovery.py")
     env = os.environ.copy()
     env["INSULIN_AI_ROOT"] = ROOT
+    env[ENV_SESSION] = str(session_dir)
 
     if run_in_background:
         if not os.path.isfile(script):
-            return json.dumps(
-                {"error": f"Script not found: {script}", "hint": "Run from insulin-ai repo root."}
-            )
+            return json.dumps({"error": f"Script not found: {script}"})
         cmd = [
             sys.executable,
             script,
             "--budget-minutes",
             str(budget_minutes),
-            "--results-tsv",
-            results_tsv_path,
+            "--session-dir",
+            str(session_dir),
             "--md-steps",
             str(md_steps),
             "--max-eval",
             str(max_eval_per_iteration),
-            "--log-json",
-            log_json,
         ]
         try:
             log_f = open(log_out, "a", encoding="utf-8")
@@ -381,29 +402,26 @@ def run_autonomous_discovery(
                 {
                     "status": "started_background",
                     "pid": proc.pid,
+                    "session_dir": str(session_dir),
                     "budget_minutes": budget_minutes,
-                    "results_tsv": tsv,
-                    "subprocess_log": log_out,
-                    "summary_json_when_done": log_json,
-                    "note": "Tail subprocess_log for progress; TSV appends one row per iteration.",
+                    "subprocess_log": str(log_out),
+                    "results_tsv": str(session_dir / "autoresearch_results.tsv"),
+                    "summary_json_when_done": str(session_dir / "autoresearch_summary.json"),
                 },
                 indent=2,
             )
         except Exception as e:
             return json.dumps({"error": str(e)})
 
-    # Foreground: short runs only
     try:
-        sys.path.insert(0, os.path.join(ROOT, "src", "python"))
         from insulin_ai.autonomous_discovery import run_autonomous_discovery_loop
 
         summary = run_autonomous_discovery_loop(
             budget_minutes=budget_minutes,
-            results_tsv=results_tsv_path,
+            session_dir=session_dir,
             root=ROOT,
             md_steps=md_steps,
             max_eval_per_iteration=max_eval_per_iteration,
-            log_json_path=log_json,
         )
         return json.dumps(summary, indent=2)
     except Exception as e:
@@ -425,17 +443,21 @@ def get_materials_status() -> str:
         lines.append("Mutation: available (cheminformatics)")
     except ImportError:
         lines.append("Mutation: unavailable (pip install psmiles)")
-    try:
-        from literature_mining_system import MaterialsLiteratureMiner
-        lines.append("Literature Mining: available")
-    except ImportError:
-        lines.append("Literature Mining: import error (needs Ollama)")
+    lines.append("Literature Mining: Semantic Scholar + agent extraction (no Ollama)")
     pqa = _paper_qa_index_status()
     lines.append(f"PaperQA2: {pqa.get('message', 'unavailable')}")
     return "\n".join(lines)
 
 
-STATE_DIR = os.path.join(ROOT, "discovery_state")
+def _session_dir_for_mcp(run_dir: str = "") -> Path:
+    if run_dir.strip():
+        return Path(run_dir.strip()).resolve()
+    d = session_dir_from_env(Path(ROOT))
+    if d:
+        return d
+    d = new_session_dir(Path(ROOT), name=None)
+    os.environ[ENV_SESSION] = str(d)
+    return d
 
 
 @mcp.tool()
@@ -444,20 +466,15 @@ def save_discovery_state(
     feedback_json: str,
     query_used: str = "",
     notes: str = "",
+    run_dir: str = "",
 ) -> str:
     """
-    Persist discovery state after an iteration so you can resume or review later.
-
-    Args:
-        iteration: Iteration number (1, 2, 3, ...)
-        feedback_json: JSON string with keys: high_performers, effective_mechanisms,
-                       problematic_features, high_performer_psmiles, problematic_psmiles
-        query_used: The literature query used in this iteration
-        notes: Free-text notes (user instructions, observations)
-
-    Writes to discovery_state/iteration_N.json.
+    Persist discovery state under the session folder (runs/.../iteration_N.json).
+    If run_dir omitted, uses active session (start_discovery_session) or creates a new session.
     """
-    os.makedirs(STATE_DIR, exist_ok=True)
+    session = _session_dir_for_mcp(run_dir)
+    session.mkdir(parents=True, exist_ok=True)
+    os.environ[ENV_SESSION] = str(session)
     try:
         feedback = json.loads(feedback_json) if feedback_json else {}
     except json.JSONDecodeError as e:
@@ -472,36 +489,36 @@ def save_discovery_state(
         "notes": notes,
         "feedback": feedback,
     }
-    path = os.path.join(STATE_DIR, f"iteration_{iteration}.json")
+    path = session / f"agent_iteration_{iteration}.json"
     with open(path, "w", encoding="utf-8") as f:
         json.dump(state, f, indent=2, ensure_ascii=False)
-    return f"State saved to {path}"
+    return json.dumps({"saved": str(path), "session_dir": str(session)}, indent=2)
 
 
 @mcp.tool()
-def load_discovery_state(iteration: int = 0) -> str:
+def load_discovery_state(iteration: int = 0, run_dir: str = "") -> str:
     """
-    Load discovery state from a previous iteration.
-
-    Args:
-        iteration: Iteration number to load. Pass 0 to load the latest.
-
-    Returns JSON with: iteration, timestamp, query_used, notes, feedback.
+    Load discovery state from session folder. iteration=0 loads latest agent_iteration_*.json.
+    run_dir: session path; if empty, uses active session (same server as start_discovery_session / save).
     """
-    if not os.path.isdir(STATE_DIR):
-        return "No discovery_state directory found. Run an iteration first."
+    if run_dir.strip():
+        session = Path(run_dir.strip()).resolve()
+    else:
+        session = session_dir_from_env(Path(ROOT))
+    if not session or not session.is_dir():
+        return "No session directory. Call start_discovery_session or pass run_dir= path to runs/.../"
 
     if iteration > 0:
-        path = os.path.join(STATE_DIR, f"iteration_{iteration}.json")
-        if not os.path.isfile(path):
-            return f"No state file for iteration {iteration}."
+        path = session / f"agent_iteration_{iteration}.json"
+        if not path.is_file():
+            return f"No state file for iteration {iteration} in {session}."
     else:
         files = sorted(
-            [f for f in os.listdir(STATE_DIR) if f.startswith("iteration_") and f.endswith(".json")]
+            [f for f in os.listdir(session) if f.startswith("agent_iteration_") and f.endswith(".json")]
         )
         if not files:
-            return "No iteration state files found."
-        path = os.path.join(STATE_DIR, files[-1])
+            return f"No agent_iteration_*.json in {session}."
+        path = session / files[-1]
 
     with open(path, "r", encoding="utf-8") as f:
         return f.read()
@@ -512,7 +529,7 @@ def load_discovery_state(iteration: int = 0) -> str:
 def semantic_scholar_search(query: str, max_results: int = 20) -> str:
     """Search Semantic Scholar. No API key required (rate limited). Set SEMANTIC_SCHOLAR_API_KEY for higher limits."""
     try:
-        from semantic_scholar_client import SemanticScholarClient
+        from insulin_ai.literature.scholar_client import SemanticScholarClient
         client = SemanticScholarClient(api_key=os.environ.get("SEMANTIC_SCHOLAR_API_KEY"))
         results = client.search_papers(query=query, limit=max_results)
         papers = results.get("data", [])
@@ -643,7 +660,11 @@ def psmiles_canonicalize(psmiles: str) -> str:
         return err
     try:
         from psmiles import PolymerSmiles
-        return str(PolymerSmiles(psmiles).canonicalize())
+        ps = PolymerSmiles(psmiles)
+        c = ps.canonicalize
+        if callable(c):
+            c = c()
+        return str(c)
     except Exception as e:
         return f"Error: {e}"
 
@@ -656,7 +677,10 @@ def psmiles_dimerize(psmiles: str, star_index: int = 0) -> str:
         return err
     try:
         from psmiles import PolymerSmiles
-        return str(PolymerSmiles(psmiles).dimerize(star_index=star_index))
+        ps = PolymerSmiles(psmiles)
+        if hasattr(ps, "dimer"):
+            return str(ps.dimer(star_index))
+        return str(ps.dimerize(star_index=star_index))
     except Exception as e:
         return f"Error: {e}"
 
@@ -689,6 +713,162 @@ def psmiles_similarity(psmiles1: str, psmiles2: str) -> str:
         return f"Similarity: {sim}"
     except Exception as e:
         return f"Error: {e}"
+
+
+# --- Integrated GROMACS-VMD (mcp_gmx_vmd) ---------------------------------
+_gmx_vmd_service_singleton = None
+
+
+def _gmx_vmd_service():
+    """Lazy MCPService workspace under runs/gmx_vmd_workspace."""
+    global _gmx_vmd_service_singleton
+    if _gmx_vmd_service_singleton is None:
+        from insulin_ai.mcp_gmx_vmd.service import MCPService
+
+        wd = Path(ROOT) / "runs" / "gmx_vmd_workspace"
+        wd.mkdir(parents=True, exist_ok=True)
+        sim_data = Path(ROOT) / "src" / "python" / "insulin_ai" / "simulation" / "data"
+        if sim_data.is_dir():
+            pass  # optional: service adds search path on first use
+        _gmx_vmd_service_singleton = MCPService(wd)
+        _gmx_vmd_service_singleton.add_structure_search_path(sim_data)
+    return _gmx_vmd_service_singleton
+
+
+@mcp.tool()
+def gmx_vmd_create_workflow(name: str, description: str = "", params_json: str = "") -> str:
+    """
+    Create a GROMACS/VMD workflow sandbox (integrated gmx-vmd-mcp). Returns workflow_id.
+    Optional params_json: JSON dict for CompleteSimulationParams (structure_file, force_field, etc.).
+    """
+    try:
+        svc = _gmx_vmd_service()
+        params = None
+        if params_json.strip():
+            from insulin_ai.mcp_gmx_vmd.models import CompleteSimulationParams
+
+            params = CompleteSimulationParams(**json.loads(params_json))
+        wf_id = svc.create_workflow(name, description or None, params)
+        return json.dumps({"workflow_id": wf_id, "success": True})
+    except Exception as e:
+        return json.dumps({"success": False, "error": str(e)})
+
+
+@mcp.tool()
+def gmx_vmd_list_workflows() -> str:
+    """List all GROMACS/VMD workflows (id, name, status)."""
+    try:
+        svc = _gmx_vmd_service()
+        workflows = svc.list_workflows()
+        return json.dumps([w.to_dict() for w in workflows], indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+def gmx_vmd_get_workflow(workflow_id: str) -> str:
+    """Workflow metadata and paths."""
+    try:
+        svc = _gmx_vmd_service()
+        w = svc.get_workflow(workflow_id)
+        if not w:
+            return json.dumps({"error": "workflow not found", "workflow_id": workflow_id})
+        return json.dumps(w.to_dict(), indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+def gmx_vmd_delete_workflow(workflow_id: str) -> str:
+    """Remove workflow directory."""
+    try:
+        svc = _gmx_vmd_service()
+        ok = svc.delete_workflow(workflow_id)
+        return json.dumps({"success": ok, "workflow_id": workflow_id})
+    except Exception as e:
+        return json.dumps({"success": False, "error": str(e)})
+
+
+@mcp.tool()
+def gmx_vmd_gromacs_execute(
+    workflow_id: str,
+    command: str,
+    args_json: str = "[]",
+    input_data: str = "",
+) -> str:
+    """
+    Run `gmx <command> ...` inside the workflow cwd (e.g. command=grompp, args=["-f","em.mdp","-c","s.gro","-p","topol.top","-o","out.tpr"]).
+    args_json: JSON list of strings. input_data: optional stdin for pdb2gmx.
+    """
+    try:
+        import asyncio
+        from insulin_ai.mcp_gmx_vmd.gromacs import Context, run_gromacs_command
+
+        svc = _gmx_vmd_service()
+        wdir = svc.workflow_manager.get_workflow_directory(workflow_id)
+        if not wdir:
+            return json.dumps({"success": False, "error": "workflow not found"})
+        args = json.loads(args_json) if args_json.strip() else []
+        if not isinstance(args, list):
+            args = []
+        ctx = Context(working_dir=wdir)
+        inp = input_data if input_data else None
+        result = asyncio.run(run_gromacs_command(ctx, command, args, inp))
+        return json.dumps(
+            {
+                "success": result.success,
+                "return_code": result.return_code,
+                "stdout": result.stdout[-8000:],
+                "stderr": result.stderr[-8000:],
+                "command": result.command,
+            },
+            indent=2,
+        )
+    except Exception as e:
+        return json.dumps({"success": False, "error": str(e), "traceback": traceback.format_exc()[-2000:]})
+
+
+@mcp.tool()
+def gmx_vmd_workflow_status(workflow_id: str) -> str:
+    """Current simulation status for workflow."""
+    try:
+        svc = _gmx_vmd_service()
+        st = svc.get_workflow_status(workflow_id)
+        if not st:
+            return json.dumps({"error": "no status", "workflow_id": workflow_id})
+        return json.dumps(st.dict() if hasattr(st, "dict") else st.model_dump(), indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+def gmx_vmd_workflow_logs(workflow_id: str) -> str:
+    """Tail of workflow logs."""
+    try:
+        svc = _gmx_vmd_service()
+        logs = svc.get_workflow_logs(workflow_id)
+        return json.dumps({"workflow_id": workflow_id, "logs": logs[-50:]}, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp.tool()
+def gmx_vmd_help() -> str:
+    """Help text for integrated GROMACS-VMD tools."""
+    try:
+        return _gmx_vmd_service().get_workflow_help()
+    except Exception as e:
+        return f"gmx_vmd help unavailable: {e}"
+
+
+@mcp.tool()
+def gmx_vmd_find_structures(pattern: str = "4F1C") -> str:
+    """Search simulation/data and workflow workspace for .pdb/.gro (insulin PDB etc.)."""
+    try:
+        svc = _gmx_vmd_service()
+        return json.dumps(svc.find_structure_files(pattern), indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
 
 
 if __name__ == "__main__":

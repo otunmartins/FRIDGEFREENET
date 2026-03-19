@@ -22,8 +22,13 @@ def validate_psmiles(psmiles: str) -> dict:
     # Try Ramprasad psmiles package (canonicalize)
     try:
         from psmiles import PolymerSmiles
+
         ps = PolymerSmiles(psm)
-        canonical = str(ps.canonicalize())
+        # psmiles stable API: canonicalize is a property, not a method.
+        c = ps.canonicalize
+        if callable(c):
+            c = c()
+        canonical = str(c)
         return {"valid": True, "canonical": canonical}
     except ImportError:
         pass

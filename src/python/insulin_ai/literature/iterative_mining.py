@@ -4,18 +4,10 @@
 
 import json
 import os
-import re
 from typing import List, Dict, Optional, Any
 from datetime import datetime
 
-from literature_mining_system import MaterialsLiteratureMiner
-
-# Keyword patterns when Ollama unavailable (no pydantic/ollama dependency)
-_MATERIAL_PATTERNS = [
-    r"\b(chitosan|PEG|PLGA|PVA|PMMA|hydrogel|alginate|hyaluronic acid|cellulose|collagen)\b",
-    r"\b(poly\w+-based|peg-based|polymer)\b",
-    r"\b(copolymer|block polymer|composite)\b",
-]
+from insulin_ai.literature.mining_system import MaterialsLiteratureMiner
 
 
 class IterativeLiteratureMiner(MaterialsLiteratureMiner):
@@ -26,12 +18,12 @@ class IterativeLiteratureMiner(MaterialsLiteratureMiner):
     Features for Milestone 4:
     - Dynamic prompt evolution based on MD simulation results
     - Iterative refinement of search queries
-    - Feedback integration from UMA-ASE MD simulations
+    - Feedback integration from GROMACS evaluation
     - Active learning cycle implementation
     """
     
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, *args, run_dir=None, **kwargs):
+        super().__init__(*args, run_dir=run_dir, **kwargs)
         print("🔄 Iterative Literature Mining System (Milestone 4) initialized!")
     
     def mine_with_feedback(self, 
@@ -47,7 +39,6 @@ class IterativeLiteratureMiner(MaterialsLiteratureMiner):
         
         This is the core function for Milestone 4 - integrates with:
         - UMA-ASE MD simulation results
-        - Generative model outputs
         - Dynamic prompt evolution
         
         Args:
@@ -56,7 +47,7 @@ class IterativeLiteratureMiner(MaterialsLiteratureMiner):
             stability_mechanisms (List[str]): Successful mechanisms from MD simulations
             target_properties (Dict): Properties to optimize based on simulation results
             limitations (List[str]): Failed approaches to avoid
-            md_simulation_results (Dict): Results from UMA-ASE MD simulations
+            md_simulation_results (Dict): Results from MDSimulator (GROMACS)
             num_candidates (int): Number of new candidates to generate
         
         Returns:
@@ -71,46 +62,23 @@ class IterativeLiteratureMiner(MaterialsLiteratureMiner):
             stability_mechanisms = feedback.get('working_mechanisms', stability_mechanisms)
             limitations = feedback.get('failed_approaches', limitations)
         
-        # Generate dynamic search queries
-        search_queries = self._generate_dynamic_queries(
-            iteration, top_candidates, stability_mechanisms, 
-            target_properties, limitations
+        import os
+        from insulin_ai.literature.literature_scholar_only import run_scholar_mine
+
+        results = run_scholar_mine(
+            api_key=os.environ.get("SEMANTIC_SCHOLAR_API_KEY"),
+            base_query="hydrogels insulin delivery transdermal patch polymer",
+            iteration=iteration,
+            top_candidates=top_candidates,
+            stability_mechanisms=stability_mechanisms,
+            limitations=limitations,
+            target_properties=target_properties,
+            run_dir=self.run_dir,
+            num_candidates=num_candidates,
         )
-        
-        # Search and extract with iterative prompting
-        all_papers = []
-        for query in search_queries:
-            print(f"📚 Searching: {query}")
-            papers = self.scholar.search_papers_by_topic(
-                topic=query,
-                max_results=20,
-                recent_years_only=True
-            )
-            all_papers.extend(papers)
-        
-        unique_papers = self._deduplicate_papers(all_papers)
-        
-        # Extract with dynamic prompting
-        material_candidates = self._extract_with_dynamic_prompts(
-            unique_papers, iteration, top_candidates, 
-            stability_mechanisms, target_properties, limitations, num_candidates
+        results["feedback_metadata"]["md_results_processed"] = (
+            md_simulation_results is not None
         )
-        
-        # Compile iterative results
-        results = {
-            "iteration": iteration,
-            "timestamp": datetime.now().isoformat(),
-            "search_queries": search_queries,
-            "papers_analyzed": len(unique_papers),
-            "material_candidates": material_candidates,
-            "feedback_metadata": {
-                "top_candidates": top_candidates,
-                "stability_mechanisms": stability_mechanisms,
-                "target_properties": target_properties,
-                "limitations": limitations,
-                "md_results_processed": md_simulation_results is not None
-            }
-        }
         
         self._save_iterative_results(results)
         return results
@@ -118,7 +86,7 @@ class IterativeLiteratureMiner(MaterialsLiteratureMiner):
     def _process_md_feedback(self, md_results: Dict) -> Dict:
         """
         Process MD simulation results to extract feedback for next iteration.
-        Integration point for Milestone 3 (UMA-ASE MD Pipeline).
+            Integration point for MDSimulator feedback (GROMACS).
         """
         # This will integrate with the MD simulation pipeline
         # For now, return structured feedback format
@@ -190,54 +158,10 @@ class IterativeLiteratureMiner(MaterialsLiteratureMiner):
                                      top_candidates: List[str], stability_mechanisms: List[str],
                                      target_properties: Dict, limitations: List[str],
                                      num_candidates: int) -> List[Dict]:
-        """
-        Extract material data using prompts that evolve based on feedback.
-        Falls back to keyword extraction when Ollama unavailable.
-        """
-        if self.ollama is None:
-            return self._extract_with_keywords(papers, num_candidates)
+        """Deprecated: scholar seeds only (no in-server LLM)."""
+        from insulin_ai.literature.literature_scholar_only import seed_candidates_from_papers
+        return seed_candidates_from_papers(papers, max_names=num_candidates)
 
-        extraction_prompt = self._build_dynamic_prompt(
-            iteration, top_candidates, stability_mechanisms,
-            target_properties, limitations, num_candidates
-        )
-        
-        papers_context = self._prepare_papers_context(papers[:10])
-        full_prompt = f"{extraction_prompt}\n\nPAPERS TO ANALYZE:\n{papers_context}"
-        
-        try:
-            response = self.ollama.client.chat(
-                model=self.ollama.model_name,
-                messages=[{'role': 'user', 'content': full_prompt}],
-                options={'temperature': 0.3, 'num_predict': 4000}
-            )
-            
-            return self._parse_llm_response(response['message']['content'])
-            
-        except Exception as e:
-            print(f"Error in iterative extraction: {e}")
-            return self._extract_with_keywords(papers, num_candidates)
-
-    def _extract_with_keywords(self, papers: List[Dict], num_candidates: int) -> List[Dict]:
-        """Keyword-based extraction when Ollama unavailable. Enriches with PSMILES mappings."""
-        seen = set()
-        candidates = []
-        for p in papers:
-            text = (p.get("title", "") + " " + p.get("abstract", "")).lower()
-            for pat in _MATERIAL_PATTERNS:
-                for m in re.finditer(pat, text, re.I):
-                    name = m.group(1) if m.lastindex else m.group(0)
-                    name = name.strip()
-                    if name and name not in seen and len(candidates) < num_candidates:
-                        seen.add(name)
-                        candidates.append({
-                            "material_name": name,
-                            "material_composition": name,
-                            "chemical_structure": "",
-                            "generation_method": "keyword_extraction",
-                        })
-        return candidates
-    
     def _build_dynamic_prompt(self, iteration: int, top_candidates: List[str],
                              stability_mechanisms: List[str], target_properties: Dict,
                              limitations: List[str], num_candidates: int) -> str:
@@ -323,37 +247,34 @@ Extract information ONLY if supported by the provided papers."""
         return f"{base_prompt}\n\n{requirements}\n\n{output_format}"
     
     def _save_iterative_results(self, results: Dict):
-        """Save iterative mining results."""
-        os.makedirs("iterative_results", exist_ok=True)
-        
+        """Save iterative mining results under session run_dir."""
+        if not self.run_dir:
+            return
+        self.run_dir.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"iterative_results/iteration_{results['iteration']}_{timestamp}.json"
-        
-        with open(filename, 'w', encoding='utf-8') as f:
+        filename = self.run_dir / f"literature_iteration_{results['iteration']}_{timestamp}.json"
+        with open(filename, "w", encoding="utf-8") as f:
             json.dump(results, f, indent=2, ensure_ascii=False)
-        
         print(f"💾 Iterative results saved to: {filename}")
     
     def run_active_learning_cycle(self, max_iterations: int = 5,
                                  md_simulator=None,
-                                 generative_model=None,
                                  material_mutator=None,
                                  mutation_size: int = 10) -> List[Dict]:
         """
         Run complete active learning cycle for Milestone 4.
 
         This orchestrates the full pipeline:
-        1. Literature mining
-        2. Mutation (cheminformatics) and/or generative model
-        3. MD simulation evaluation
+        1. Literature mining (Ollama)
+        2. Optional mutation (MaterialMutator; required if material_mutator is set)
+            3. MDSimulator evaluation (GROMACS)
         4. Feedback integration
         5. Next iteration
 
         Args:
             max_iterations (int): Maximum number of learning cycles
-            md_simulator: MD simulation component (from Milestone 3)
-            generative_model: Generative model component (from Milestone 2)
-            material_mutator: MaterialMutator or True for default mutator
+            md_simulator: MDSimulator (gmx on PATH)
+            material_mutator: MaterialMutator instance or True for default mutator
             mutation_size: Number of mutated candidates when material_mutator enabled
 
         Returns:
@@ -385,35 +306,30 @@ Extract information ONLY if supported by the provided papers."""
 
             candidates = list(mining_results["material_candidates"])
 
-            # Step 2a: Cheminformatics mutation
+            # Step 2: Cheminformatics mutation (required deps if enabled)
             if material_mutator:
                 try:
                     from insulin_ai.mutation import MaterialMutator, feedback_guided_mutation
-                    mutator = material_mutator if isinstance(material_mutator, MaterialMutator) else MaterialMutator()
-                    if iteration > 1 and feedback_state.get("high_performer_psmiles"):
-                        mutated = feedback_guided_mutation(
-                            feedback_state, library_size=mutation_size,
-                            feedback_fraction=0.7, random_seed=42 + iteration
-                        )
-                    else:
-                        mutated = mutator.generate_library(library_size=mutation_size)
-                    mining_results["generated_candidates"] = mutated
-                    candidates.extend(mutated)
-                    print(f"  Added {len(mutated)} mutated candidates")
                 except ImportError as e:
-                    print(f"  Mutation skipped: {e}")
-
-            # Step 2b: Legacy generative model
-            if generative_model:
-                generated_candidates = generative_model.generate_candidates(
-                    base_materials=mining_results["material_candidates"]
-                )
-                mining_results["generated_candidates"] = mining_results.get("generated_candidates", []) + generated_candidates
-                candidates.extend(generated_candidates)
+                    raise RuntimeError(
+                        "material_mutator requested but mutation deps missing (psmiles, etc.): "
+                        "install insulin-ai with mutation extras."
+                    ) from e
+                mutator = material_mutator if isinstance(material_mutator, MaterialMutator) else MaterialMutator()
+                if iteration > 1 and feedback_state.get("high_performer_psmiles"):
+                    mutated = feedback_guided_mutation(
+                        feedback_state, library_size=mutation_size,
+                        feedback_fraction=0.7, random_seed=42 + iteration
+                    )
+                else:
+                    mutated = mutator.generate_library(library_size=mutation_size)
+                mining_results["generated_candidates"] = mutated
+                candidates.extend(mutated)
+                print(f"  Added {len(mutated)} mutated candidates")
 
             mining_results["material_candidates"] = candidates
 
-            # Step 3: Evaluate with MD simulations (Milestone 3)
+            # Step 3: Evaluate with MDSimulator (GROMACS)
             if md_simulator:
                 md_results = md_simulator.evaluate_candidates(
                     candidates, max_candidates=len(candidates)
@@ -474,22 +390,19 @@ Extract information ONLY if supported by the provided papers."""
         }
     
     def _save_complete_cycle_results(self, all_results: List[Dict]):
-        """Save complete active learning cycle results."""
-        os.makedirs("cycle_results", exist_ok=True)
-        
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"cycle_results/complete_cycle_{timestamp}.json"
-        
+        """Save complete active learning cycle into session run_dir/complete_cycle.json."""
+        if not self.run_dir:
+            return
+        self.run_dir.mkdir(parents=True, exist_ok=True)
+        filename = self.run_dir / "complete_cycle.json"
         cycle_summary = {
             "total_iterations": len(all_results),
             "timestamp": datetime.now().isoformat(),
             "iterations": all_results,
-            "performance_progression": self._analyze_performance_progression(all_results)
+            "performance_progression": self._analyze_performance_progression(all_results),
         }
-        
-        with open(filename, 'w', encoding='utf-8') as f:
+        with open(filename, "w", encoding="utf-8") as f:
             json.dump(cycle_summary, f, indent=2, ensure_ascii=False)
-        
         print(f"💾 Complete cycle results saved to: {filename}")
     
     def _analyze_performance_progression(self, all_results: List[Dict]) -> Dict:
@@ -502,12 +415,12 @@ Extract information ONLY if supported by the provided papers."""
         return progression
 
 
-# Demo for Milestone 4 testing
+# Demo: requires Ollama serve + model pulled; set INSULIN_AI_DEMO=1
 if __name__ == "__main__":
-    print("🚀 MILESTONE 4: Iterative Literature Mining Demo")
-    print("This will be used when integrating with MD simulations and generative models")
-    
-    # Initialize iterative system
+    if os.environ.get("INSULIN_AI_DEMO") != "1":
+        print("Set INSULIN_AI_DEMO=1 and run Ollama to execute this demo.")
+        raise SystemExit(0)
+    print("MILESTONE 4: Iterative Literature Mining Demo (Ollama required)")
     iterative_miner = IterativeLiteratureMiner()
     
     # Example: Simulated active learning cycle

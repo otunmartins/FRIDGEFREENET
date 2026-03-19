@@ -9,12 +9,16 @@ import os
 from pathlib import Path
 
 
+def _repo_root() -> Path:
+    """insulin_ai/paper_qa_config.py -> repo root (four levels up)."""
+    return Path(__file__).resolve().parent.parent.parent.parent
+
+
 def _paper_dir() -> str:
     raw = os.environ.get("PAPER_DIRECTORY", "")
     if raw:
         return os.path.abspath(os.path.expanduser(raw))
-    root = Path(__file__).resolve().parent
-    return str(root / "papers")
+    return str(_repo_root() / "papers")
 
 
 def get_paper_qa_settings():

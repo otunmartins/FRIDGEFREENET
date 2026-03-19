@@ -1,49 +1,37 @@
-"""
-Integration tests for insulin + polymer matrix packing.
+"""Packmol import; no OpenMM."""
 
-Requires: openmm, rdkit, openmmforcefields, (packmol optional for realistic packing)
-"""
-
-import os
-import sys
 import pytest
-
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(ROOT, "src", "python"))
-
-
-def test_insulin_polymer_builder_import():
-    """Test that InsulinPolymerSystemBuilder imports."""
-    try:
-        from insulin_ai.simulation.insulin_polymer_system import InsulinPolymerSystemBuilder
-        assert InsulinPolymerSystemBuilder is not None
-    except ImportError as e:
-        pytest.skip(f"Simulation deps not installed: {e}")
-
-
-@pytest.mark.slow
-def test_insulin_polymer_build_returns_valid_system():
-    """Test InsulinPolymerSystemBuilder.build returns non-None with valid atoms."""
-    try:
-        from insulin_ai.simulation.insulin_polymer_system import InsulinPolymerSystemBuilder
-    except ImportError:
-        pytest.skip("OpenMM/RDKit not installed")
-
-    builder = InsulinPolymerSystemBuilder(n_repeats=2, n_chains=2)
-    top, pos, sys, n_insulin = builder.build("[*]OCC[*]")
-
-    if top is None or pos is None or sys is None:
-        pytest.skip("Build returned None (insulin PDB or GAFF may be unavailable)")
-
-    assert n_insulin > 0, "n_insulin_atoms should be positive"
-    assert top.getNumAtoms() > n_insulin, "Total atoms should exceed insulin atoms"
 
 
 def test_packmol_packer_import():
-    """Test packmol_packer module imports."""
+    from insulin_ai.simulation.packmol_packer import pack_insulin_polymers, _packmol_available
+
+    assert callable(pack_insulin_polymers)
+    assert isinstance(_packmol_available(), bool)
+
+
+def test_packmol_inp_contains_shell_when_requested():
+    from insulin_ai.simulation.packmol_packer import build_packmol_inp_content
+
+    s = build_packmol_inp_content(
+        "/a/ins.pdb",
+        "/b/poly.pdb",
+        3,
+        "/c/out.pdb",
+        box_size_nm=10.0,
+        tolerance_angstrom=2.0,
+        seed=1,
+        shell_only_angstrom=12.0,
+    )
+    assert "outside sphere" in s
+    assert "12.0" in s
+
+
+def test_polymer_build_ensure_pdb_or_skip():
+    from insulin_ai.simulation.polymer_build import ensure_insulin_pdb
+
     try:
-        from insulin_ai.simulation.packmol_packer import pack_insulin_polymers, _packmol_available
-        assert callable(pack_insulin_polymers)
-        assert isinstance(_packmol_available(), bool)
-    except ImportError:
-        pytest.skip("packmol_packer not importable")
+        p = ensure_insulin_pdb()
+        assert p.endswith(".pdb")
+    except FileNotFoundError:
+        pytest.skip("4F1C.pdb not present")

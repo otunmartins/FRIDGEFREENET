@@ -600,6 +600,10 @@ The planned implementation will incorporate graph neural networks trained specif
 
 The framework provides a systematic foundation for clinical translation through comprehensive material characterization and traceability to literature sources. Future development will incorporate experimental validation protocols integrating with laboratory workflows for rapid candidate screening and automated synthesis planning based on PSMILES representations.
 
+\subsection{Implementation status}
+
+The running stack requires a live \textbf{Ollama} server for literature extraction (no keyword-only substitute). MD evaluation and the autonomous discovery loop require \textbf{OpenMM} and the insulin PDB (no empty placeholder feedback). Mutation, when enabled, requires installed psmiles/mutation dependencies.
+
 \section{Conclusions}
 
 This work implemented and evaluated an active learning framework integrating LLM-based literature mining with PSMILES-based generative material design for insulin delivery applications. The system combines literature knowledge extraction with systematic generation of material candidates through iterative refinement cycles.

@@ -11,7 +11,7 @@ The discovery loop is agent-orchestrated: you drive each step through individual
 1. **Mine** – `mine_literature(query=..., iteration=N, ...)` (includes PaperQA2 when indexed)
 2. **Translate** – Convert material names to PSMILES (polymer chemistry knowledge)
 3. **Validate** – `validate_psmiles(psmiles)` for each
-4. **Evaluate** – `evaluate_psmiles(psmiles_list)` via MD (OpenMM)
+4. **Evaluate** – `evaluate_psmiles(psmiles_list)` via GROMACS
 5. **Mutate** – `mutate_psmiles(feedback_json=...)` with high performers and problematic PSMILES from evaluation
 6. **Save** – `save_discovery_state(iteration=N, feedback_json=..., query_used=..., notes=...)`
 7. **Report** – Summarize to user; wait for input before next iteration
@@ -29,9 +29,7 @@ Feed these back into `mine_literature` and `mutate_psmiles` to narrow the search
 
 ## Bash Fallback
 
-```bash
-python insulin_ai_cli.py discover --iterations 2 --mutate
-```
+Use MCP `run_autonomous_discovery` or orchestrate `mine_literature` / `evaluate_psmiles` / `mutate_psmiles`.
 
 ## Results
 

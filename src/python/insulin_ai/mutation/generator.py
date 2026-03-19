@@ -86,6 +86,9 @@ class MaterialMutator:
         try:
             from psmiles import PolymerSmiles
             ps = PolymerSmiles(base)
-            return str(ps.dimerize(star_index=self.rng.choice([0, 1])))
+            idx = self.rng.choice([0, 1])
+            if hasattr(ps, "dimer"):
+                return str(ps.dimer(idx))
+            return str(ps.dimerize(star_index=idx))
         except Exception:
             return base

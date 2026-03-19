@@ -19,4 +19,4 @@ sys.path.insert(0, os.path.join(ROOT, "src", "python"))
 if __name__ == "__main__":
     from insulin_ai.autonomous_discovery import main
 
-    main()
+    main()  # uses --session-dir (required for single-folder output)
