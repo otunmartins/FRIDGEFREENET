@@ -491,7 +491,7 @@ def run_openmm_matrix_relax_and_energy(
 ) -> Optional[Dict[str, Any]]:
     """
     Insulin encapsulated by polymer matrix (Packmol shell around insulin), then
-    OpenMM minimize and interaction energy. Mirrors GROMACS matrix workflow.
+    OpenMM minimize and interaction energy (Packmol-packed matrix).
 
     When target_density_g_cm3 is set, n_polymers and shell_only_angstrom are
     derived from density (PSP-style primary driver); explicit values are ignored.

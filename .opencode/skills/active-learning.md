@@ -4,19 +4,28 @@ description: Active learning feedback loop for materials discovery
 
 # Active Learning Cycle Skill
 
-The discovery loop is agent-orchestrated: you drive each step through individual tool calls, enabling human steering between iterations.
+The discovery loop is agent-orchestrated: you drive each step through individual tool calls. **Human steering happens between iterations, not in the middle of iteration 1.**
+
+## Complete iteration 1 in one run
+
+Unless the user asked for a subset (e.g. "only mine"):
+
+- Run **mine → validate → evaluate → mutate → save → report → archive chat** (`import_chat_transcript_file` or `save_session_transcript`) in **one continuous flow** with **no** questions between steps.
+- Pick **3–8** PSMILES yourself if many candidates exist; do not ask which to evaluate.
+- Only stop mid-flow if a tool error cannot be fixed without user input.
 
 ## Loop
 
 1. **Mine** – `mine_literature(query=..., iteration=N, ...)` (includes PaperQA2 when indexed)
 2. **Translate** – Convert material names to PSMILES (polymer chemistry knowledge)
 3. **Validate** – `validate_psmiles(psmiles)` for each
-4. **Evaluate** – `evaluate_psmiles(psmiles_list)` via GROMACS
+4. **Evaluate** – `evaluate_psmiles(psmiles_list)` via OpenMM
 5. **Mutate** – `mutate_psmiles(feedback_json=...)` with high performers and problematic PSMILES from evaluation
 6. **Save** – `save_discovery_state(iteration=N, feedback_json=..., query_used=..., notes=...)`
-7. **Report** – Summarize to user; wait for input before next iteration
-8. **Refine** – Use feedback to build a better query for the next iteration
-9. Repeat from step 1
+7. **Report** – Summarize to user; write `SUMMARY_REPORT.md` / PDF per `docs/SUMMARY_REPORT_STYLE.md`
+8. **Archive chat** – **Required:** `import_chat_transcript_file` (JSONL from `~/.cursor/.../agent-transcripts/`) or `save_session_transcript` (full recap). Every time.
+9. **Refine** – Use feedback to build a better query for the next iteration
+10. Repeat from step 1
 
 ## Feedback Flow
 
@@ -36,3 +45,9 @@ Use MCP `run_autonomous_discovery` or orchestrate `mine_literature` / `evaluate_
 - `discovery_state/` -- per-iteration state (agent loop)
 - `cycle_results/` -- batch CLI results
 - `iterative_results/` -- per-iteration mining
+
+## Summary report (human-readable)
+
+The **agent** writes `SUMMARY_REPORT.md` in the session run folder, calls **`render_psmiles_png`** for figures, then **`compile_discovery_markdown_to_pdf`** for the PDF. Optional **`write_discovery_summary_report`** only auto-builds a skeleton from JSON. **Always** archive the conversation into the same folder via **`import_chat_transcript_file`** or **`save_session_transcript`** (required by default).
+
+**Prose and citations:** follow **`docs/SUMMARY_REPORT_STYLE.md`** (research-paper structure; references with journal abbrev., volume, pages, year; avoid em dashes, colon chains, and common LLM filler patterns). See also `docs/DEPENDENCIES.md` (MCP — discovery figures & PDF reports).

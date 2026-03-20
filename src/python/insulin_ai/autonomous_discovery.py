@@ -99,11 +99,6 @@ def run_autonomous_discovery_loop(
     deadline = time.monotonic() + budget_minutes * 60.0
     miner = IterativeLiteratureMiner(run_dir=session_dir)
     md_sim = MDSimulator(n_steps=md_steps)
-    if md_sim.runner is None:
-        raise RuntimeError(
-            "gmx + acpype required for autonomous discovery (conda install gromacs ambertools; pip acpype). "
-            "and ensure data/4F1C.pdb exists."
-        )
     try:
         from insulin_ai.mutation import MaterialMutator
     except ImportError as e:

@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 def rdkit_polymer_pdb(psmiles: str, n_repeats: int, out_pdb: str, random_seed: int = 42) -> bool:
     """
-    Build capped oligomer 3D PDB via RDKit (same chain as gromacs_complex acpype path).
+    Build capped oligomer 3D PDB via RDKit (same chain as OpenMM / polymer_build path).
 
     Args:
         psmiles: Repeat unit with two [*] ports.

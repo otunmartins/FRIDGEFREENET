@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Property extraction after GROMACS EM on merged insulin + polymer.
+Property extraction after OpenMM minimize on merged insulin + polymer.
 
-Ranks by potential_energy_complex_kj_mol (lower = better MM energy).
+Uses interaction energy, optional RMSD/contacts when present, and composite score.
 """
 
 from typing import Any, Dict, List, Optional
@@ -11,7 +11,7 @@ from insulin_ai.simulation.scoring import composite_screening_score
 
 
 class PropertyExtractor:
-    """Maps GROMACS (and legacy) results to feedback + composite score."""
+    """Maps MD (OpenMM) results to feedback + composite score."""
 
     def __init__(
         self,
@@ -34,44 +34,6 @@ class PropertyExtractor:
         effective_mechanisms: List[str] = []
         problematic_features: List[str] = []
         property_analysis: Dict[str, Any] = {}
-
-        # GROMACS batch: lower E_pot kJ/mol = better
-        gmx_rows: List[tuple[float, str]] = []
-        for i, res in enumerate(md_results):
-            if res and res.get("gromacs_only") and res.get("potential_energy_complex_kj_mol") is not None:
-                name = (
-                    material_names[i]
-                    if material_names and i < len(material_names)
-                    else res.get("psmiles", f"candidate_{i}")
-                )
-                gmx_rows.append((float(res["potential_energy_complex_kj_mol"]), name))
-        if gmx_rows:
-            effective_mechanisms.append("GROMACS_EM_merged_screening")
-            gmx_rows.sort(key=lambda t: t[0])
-            median_e = gmx_rows[len(gmx_rows) // 2][0]
-            for e, name in gmx_rows:
-                if e <= median_e:
-                    high_performers.append(name)
-            for i, res in enumerate(md_results):
-                if res is None:
-                    problematic_features.append("gromacs_failed")
-                    continue
-                name = (
-                    material_names[i]
-                    if material_names and i < len(material_names)
-                    else res.get("psmiles", f"candidate_{i}")
-                )
-                property_analysis[name] = {
-                    "potential_energy_complex_kj_mol": res.get("potential_energy_complex_kj_mol"),
-                    "method": res.get("method"),
-                    "gromacs_only": True,
-                }
-            return {
-                "high_performers": high_performers[:5],
-                "effective_mechanisms": list(dict.fromkeys(effective_mechanisms))[:5],
-                "problematic_features": list(dict.fromkeys(problematic_features))[:5],
-                "property_analysis": property_analysis,
-            }
 
         for i, res in enumerate(md_results):
             if res is None:
@@ -116,13 +78,44 @@ class PropertyExtractor:
                 "potential_energy_insulin_kj_mol": res.get("potential_energy_insulin_kj_mol"),
                 "potential_energy_polymer_kj_mol": res.get("potential_energy_polymer_kj_mol"),
                 "insulin_polymer_contacts": contacts,
+                "method": res.get("method"),
             }
-        scored = [
-            (property_analysis[n].get("composite_screening_score") or -1e9, n)
-            for n in high_performers
-        ]
-        scored.sort(key=lambda x: -x[0])
-        high_performers = [n for _, n in scored[:5]] if scored else high_performers[:5]
+
+        # When only potential energy is available (no RMSD), rank by E_complex / E_int
+        if high_performers:
+            scored = [
+                (property_analysis[n].get("composite_screening_score") or -1e9, n)
+                for n in high_performers
+            ]
+            scored.sort(key=lambda x: -x[0])
+            high_performers = [n for _, n in scored[:5]] if scored else high_performers[:5]
+        else:
+            energy_rows: List[tuple[float, str]] = []
+            for i, res in enumerate(md_results):
+                if not res:
+                    continue
+                name = (
+                    material_names[i]
+                    if material_names and i < len(material_names)
+                    else res.get("psmiles", f"candidate_{i}")
+                )
+                e_int = res.get("interaction_energy_kj_mol")
+                e_c = res.get("potential_energy_complex_kj_mol")
+                key = e_int if e_int is not None else e_c
+                if key is not None:
+                    try:
+                        energy_rows.append((float(key), name))
+                    except (TypeError, ValueError):
+                        pass
+            if energy_rows:
+                effective_mechanisms.append("OpenMM_merged_screening")
+                energy_rows.sort(key=lambda t: t[0])
+                median_e = energy_rows[len(energy_rows) // 2][0]
+                for e, name in energy_rows:
+                    if e <= median_e:
+                        high_performers.append(name)
+                high_performers = list(dict.fromkeys(high_performers))[:5]
+
         return {
             "high_performers": high_performers[:5],
             "effective_mechanisms": list(dict.fromkeys(effective_mechanisms))[:5],

@@ -226,5 +226,5 @@ def suggest_n_polymer_around_insulin(
     density = 0.28
     mass_g = density * v_poly_cm3
     n = int(round(mass_g / polymer_mw_g_mol * AVOGADRO))
-    # Practical Packmol + GROMACS limits (~20 chains usually enough visually)
+    # Practical Packmol + OpenMM matrix limits (~20 chains usually enough visually)
     return max(10, min(28, n))

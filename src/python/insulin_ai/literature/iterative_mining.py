@@ -18,7 +18,7 @@ class IterativeLiteratureMiner(MaterialsLiteratureMiner):
     Features for Milestone 4:
     - Dynamic prompt evolution based on MD simulation results
     - Iterative refinement of search queries
-    - Feedback integration from GROMACS evaluation
+    - Feedback integration from OpenMM / MDSimulator evaluation
     - Active learning cycle implementation
     """
     
@@ -47,7 +47,7 @@ class IterativeLiteratureMiner(MaterialsLiteratureMiner):
             stability_mechanisms (List[str]): Successful mechanisms from MD simulations
             target_properties (Dict): Properties to optimize based on simulation results
             limitations (List[str]): Failed approaches to avoid
-            md_simulation_results (Dict): Results from MDSimulator (GROMACS)
+            md_simulation_results (Dict): Results from MDSimulator (OpenMM)
             num_candidates (int): Number of new candidates to generate
         
         Returns:
@@ -86,7 +86,7 @@ class IterativeLiteratureMiner(MaterialsLiteratureMiner):
     def _process_md_feedback(self, md_results: Dict) -> Dict:
         """
         Process MD simulation results to extract feedback for next iteration.
-            Integration point for MDSimulator feedback (GROMACS).
+            Integration point for MDSimulator feedback (OpenMM).
         """
         # This will integrate with the MD simulation pipeline
         # For now, return structured feedback format
@@ -267,13 +267,13 @@ Extract information ONLY if supported by the provided papers."""
         This orchestrates the full pipeline:
         1. Literature mining (Ollama)
         2. Optional mutation (MaterialMutator; required if material_mutator is set)
-            3. MDSimulator evaluation (GROMACS)
+            3. MDSimulator evaluation (OpenMM)
         4. Feedback integration
         5. Next iteration
 
         Args:
             max_iterations (int): Maximum number of learning cycles
-            md_simulator: MDSimulator (gmx on PATH)
+            md_simulator: MDSimulator (OpenMM stack installed)
             material_mutator: MaterialMutator instance or True for default mutator
             mutation_size: Number of mutated candidates when material_mutator enabled
 
@@ -329,7 +329,7 @@ Extract information ONLY if supported by the provided papers."""
 
             mining_results["material_candidates"] = candidates
 
-            # Step 3: Evaluate with MDSimulator (GROMACS)
+            # Step 3: Evaluate with MDSimulator (OpenMM)
             if md_simulator:
                 md_results = md_simulator.evaluate_candidates(
                     candidates, max_candidates=len(candidates)

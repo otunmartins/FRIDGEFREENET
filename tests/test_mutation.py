@@ -97,11 +97,11 @@ def test_mutation_candidates_compatible_with_mdsimulator():
     cands = mutator.generate_library(library_size=2)
     assert all("chemical_structure" in c and "material_name" in c for c in cands)
 
-    from insulin_ai.simulation.gromacs_complex import gmx_available
+    from insulin_ai.simulation.openmm_compat import openmm_available
 
-    if not gmx_available():
+    if not openmm_available():
         import pytest
-        pytest.skip("gmx required for evaluate_candidates")
+        pytest.skip("OpenMM stack required for evaluate_candidates")
     sim = MDSimulator(n_steps=500)
     result = sim.evaluate_candidates(cands, max_candidates=2)
 

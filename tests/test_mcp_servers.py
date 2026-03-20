@@ -5,6 +5,7 @@ Ensures all MCP servers load without decorator errors (e.g. @mcp.tool must be @m
 FastMCP raises TypeError if decorator is not called: "Use @tool() instead of @tool"
 """
 
+import json
 import os
 import sys
 import importlib.util
@@ -45,6 +46,29 @@ def test_all_mcp_servers_load():
         pytest.skip(f"MCP dependencies unavailable: {e}")
     for _name, path in MCP_SERVERS:
         _load_mcp_server(path)
+
+
+def test_validate_psmiles_json_shape():
+    """validate_psmiles returns JSON with valid; optional name_crosscheck when enabled."""
+    try:
+        mod = _load_mcp_server("insulin_ai_mcp_server.py")
+    except (ImportError, ModuleNotFoundError) as e:
+        import pytest
+
+        pytest.skip(f"MCP dependencies unavailable: {e}")
+    out = json.loads(mod.validate_psmiles("[*]OCC[*]", material_name="", crosscheck_web=False))
+    assert "valid" in out
+    assert out.get("valid") is True
+    assert "name_crosscheck" not in out
+    out2 = json.loads(
+        mod.validate_psmiles("[*]OCC[*]", material_name="polyethylene glycol", crosscheck_web=True)
+    )
+    assert out2.get("valid") is True
+    assert "name_crosscheck" in out2
+    nc = out2["name_crosscheck"]
+    assert nc.get("material_name") == "polyethylene glycol"
+    assert "snippets" in nc
+    assert "disclaimer" in nc
 
 
 def test_no_mcp_tool_without_parens():

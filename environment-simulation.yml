@@ -1,4 +1,4 @@
-# Conda env: GROMACS + Acpype + AmberTools + RDKit + OpenMM + MCP
+# Conda env: OpenMM + RDKit + Packmol + MCP (no GROMACS)
 name: insulin-ai-sim
 channels:
   - conda-forge
@@ -6,15 +6,12 @@ channels:
 dependencies:
   - python=3.11
   - rdkit
-  - gromacs
-  - ambertools
   - openmm
   - pdbfixer
   - pip
   - pip:
     - openmmforcefields>=0.14.0
     - openff-toolkit>=0.18.0
-    - acpype>=2023.4
     - packmol>=21.0
     - git+https://github.com/FermiQ/psmiles.git
     - mcp>=1.0.0
@@ -23,4 +20,7 @@ dependencies:
     - duckduckgo-search>=8.0.0
     - paper-qa>=2026.2
     - pytest>=7.4.0
+    - optuna>=3.0
+    - fpdf2>=2.8.0
+    - markdown>=3.5
     - -e .

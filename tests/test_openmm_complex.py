@@ -163,6 +163,11 @@ def test_openmm_npt_api_dry_run():
 
 def test_ligand_gasteiger_charges():
     """RDKit Gasteiger + OpenFF Molecule; charges assigned."""
+    from insulin_ai.simulation.openmm_compat import openmm_available
+
+    if not openmm_available():
+        pytest.skip("openmm + openmmforcefields + openff.toolkit required")
+
     from insulin_ai.simulation.openmm_complex import rdkit_mol_to_openff_with_gasteiger
 
     from rdkit import Chem
@@ -183,6 +188,11 @@ def test_ligand_gasteiger_charges():
 
 def test_openmm_complex_minimization_and_interaction():
     """Insulin + small ligand; minimize; interaction energy computed."""
+    from insulin_ai.simulation.openmm_compat import openmm_available
+
+    if not openmm_available():
+        pytest.skip("openmm + openmmforcefields + openff.toolkit required")
+
     from insulin_ai.simulation.openmm_complex import run_openmm_relax_and_energy
 
     res = run_openmm_relax_and_energy(
@@ -201,258 +211,12 @@ def test_openmm_complex_minimization_and_interaction():
 
 def test_openmm_matrix_density_driven():
     """Density-driven matrix encapsulation: Packmol + minimize + interaction energy."""
+    from insulin_ai.simulation.openmm_compat import openmm_available
     from insulin_ai.simulation.openmm_complex import run_openmm_matrix_relax_and_energy
     from insulin_ai.simulation.packmol_packer import _packmol_available
 
-    if not _packmol_available():
-        pytest.skip("packmol not found")
-
-    res = run_openmm_matrix_relax_and_energy(
-        top,
-        nonbondedMethod=app.PME,
-        nonbondedCutoff=1.0 * unit.nanometers,
-        constraints=app.HBonds,
-    )
-    box_nm = 3.0
-    box_vec = [
-        unit.Quantity([box_nm, 0, 0], unit.nanometers),
-        unit.Quantity([0, box_nm, 0], unit.nanometers),
-        unit.Quantity([0, 0, box_nm], unit.nanometers),
-    ]
-    sys.addForce(
-        openmm.MonteCarloBarostat(
-            1.0 * unit.bar,
-            300 * unit.kelvin,
-            frequency=5,
-        )
-    )
-    integ = openmm.LangevinIntegrator(
-        300 * unit.kelvin,
-        1 / unit.picosecond,
-        0.002 * unit.picoseconds,
-    )
-    platform = openmm.Platform.getPlatformByName("CPU")
-    ctx = openmm.Context(sys, integ, platform)
-    ctx.setPeriodicBoxVectors(box_vec[0], box_vec[1], box_vec[2])
-    ctx.setPositions(
-        unit.Quantity([[1.0, 1.0, 1.0], [1.5, 1.5, 1.5]], unit.nanometers)
-    )
-
-    # Run 1 step via integrator (not context)
-    integ.step(1)
-
-    # getState: use getPositions, getEnergy (no getPeriodicBoxVectors kwarg in older OpenMM)
-    state = ctx.getState(getEnergy=True, getPositions=True)
-    _ = state.getPositions(asNumpy=True)
-    box = state.getPeriodicBoxVectors()
-    assert len(box) == 3
-    assert hasattr(box[0], "x")  # Vec3
-
-
-def test_npt_api_dry_run():
-    """Dry-run: validate OpenMM NPT API (integrator.step, getState, getPeriodicBoxVectors)."""
-    import openmm
-    import openmm.app as app
-    import openmm.unit as unit
-
-    # Minimal periodic system: 2 argon-like particles
-    top = app.Topology()
-    chain = top.addChain()
-    res = top.addResidue("ARG", chain)
-    for _ in range(2):
-        top.addAtom("Ar", app.Element.getBySymbol("Ar"), res)
-    ff = app.ForceField()
-    sys = ff.createSystem(top, nonbondedMethod=app.PME, nonbondedCutoff=1.0 * unit.nanometers)
-    sys.addForce(
-        openmm.MonteCarloBarostat(1.0 * unit.bar, 300 * unit.kelvin, 5)
-    )
-    integ = openmm.LangevinIntegrator(300 * unit.kelvin, 1 / unit.picosecond, 0.002 * unit.picoseconds)
-    ctx = openmm.Context(sys, integ, openmm.Platform.getPlatformByName("CPU"))
-    box = [(3.0, 0, 0), (0, 3.0, 0), (0, 0, 3.0)]
-    ctx.setPeriodicBoxVectors(*[unit.Quantity(v, unit.nanometers) for v in box])
-    ctx.setPositions(unit.Quantity([[0, 0, 0], [1.5, 1.5, 1.5]], unit.nanometers))
-    integ.step(10)  # Context has no .step; integrator does
-    state = ctx.getState(getEnergy=True, getPositions=True)
-    _ = state.getPositions(asNumpy=True)
-    _ = state.getPeriodicBoxVectors()
-
-
-def test_openmm_npt_api_dry_run():
-    """Dry-run: validate OpenMM NPT API (integrator.step, getState, getPeriodicBoxVectors)."""
-    import openmm
-    import openmm.app as app
-    import openmm.unit as unit
-
-    # Minimal periodic system (2 atoms in a box)
-    top = app.Topology()
-    chain = top.addChain()
-    res = top.addResidue("UNK", chain)
-    top.addAtom("C", app.Element.getBySymbol("C"), res)
-    top.addAtom("C", app.Element.getBySymbol("C"), res)
-    top.addBond(list(top.atoms())[0], list(top.atoms())[1])
-    box = [unit.Quantity((2.0, 0, 0), unit.nanometers),
-           unit.Quantity((0, 2.0, 0), unit.nanometers),
-           unit.Quantity((0, 0, 2.0), unit.nanometers)]
-    top.setPeriodicBoxVectors(box)
-    sys = app.ForceField("amber14-all.xml").createSystem(
-        top, nonbondedMethod=app.PME, nonbondedCutoff=1.0 * unit.nanometers
-    )
-    sys.addForce(openmm.MonteCarloBarostat(1 * unit.bar, 300 * unit.kelvin, 5))
-    integ = openmm.LangevinIntegrator(300 * unit.kelvin, 1 / unit.picosecond, 0.002 * unit.picoseconds)
-    ctx = openmm.Context(sys, integ, openmm.Platform.getPlatformByName("CPU"))
-    ctx.setPeriodicBoxVectors(box[0], box[1], box[2])
-    ctx.setPositions(unit.Quantity([(0.5, 0.5, 0.5), (1.0, 1.0, 1.0)], unit.nanometers))
-    integ.step(10)
-    state = ctx.getState(getEnergy=True, getPositions=True)
-    _ = state.getPositions(asNumpy=True)
-    _ = state.getPeriodicBoxVectors()
-    assert state.getPotentialEnergy().value_in_unit(unit.kilojoules_per_mole) < 1e6
-
-
-def test_openmm_npt_api_dry_run():
-    """Dry-run: validate OpenMM NPT API (integrator.step, getState, getPeriodicBoxVectors).
-
-    Catches AttributeError/TypeError without needing Packmol. Run before full matrix workflow.
-    """
-    import openmm
-    import openmm.app as app
-    import openmm.unit as unit
-
-    # Minimal periodic system: 2 particles
-    top = app.Topology()
-    c = top.addChain()
-    r = top.addResidue("UNK", c)
-    a1 = top.addAtom("C", app.Element.getBySymbol("C"), r)
-    a2 = top.addAtom("C", app.Element.getBySymbol("C"), r)
-    top.addBond(a1, a2)
-    box_nm = 3.0
-    box_vec = [
-        unit.Quantity((box_nm, 0, 0), unit.nanometers),
-        unit.Quantity((0, box_nm, 0), unit.nanometers),
-        unit.Quantity((0, 0, box_nm), unit.nanometers),
-    ]
-    ff = app.ForceField("amber14-all.xml")
-    sys = ff.createSystem(
-        top,
-        nonbondedMethod=app.PME,
-        nonbondedCutoff=1.0 * unit.nanometers,
-    )
-    sys.addForce(
-        openmm.MonteCarloBarostat(
-            1.0 * unit.bar,
-            300 * unit.kelvin,
-            5,  # frequency (steps)
-        )
-    )
-    integ = openmm.LangevinIntegrator(
-        300 * unit.kelvin,
-        1 / unit.picosecond,
-        0.002 * unit.picoseconds,
-    )
-    platform = openmm.Platform.getPlatformByName("CPU")
-    ctx = openmm.Context(sys, integ, platform)
-    ctx.setPeriodicBoxVectors(*box_vec)
-    ctx.setPositions(unit.Quantity([[0, 0, 0], [0.5, 0.5, 0.5]], unit.nanometers))
-    # Use integrator.step (not ctx.step)
-    integ.step(10)
-    # getState: use getEnergy, getPositions; do NOT pass getPeriodicBoxVectors (not all OpenMM versions)
-    state = ctx.getState(getEnergy=True, getPositions=True)
-    _ = state.getPositions(asNumpy=True)
-    _ = state.getPeriodicBoxVectors()
-    assert state.getPotentialEnergy().value_in_unit(unit.kilojoules_per_mole) is not None
-
-
-def test_npt_api_dry_run():
-    """Validate OpenMM NPT API: integrator.step(), getState(getPositions, getEnergy), state.getPeriodicBoxVectors()."""
-    import openmm
-    import openmm.app as app
-    import openmm.unit as unit
-
-    # Minimal periodic box with 2 atoms
-    top = app.Topology()
-    chain = top.addChain()
-    res = top.addResidue("UNK", chain)
-    top.addAtom("A1", app.Element.getBySymbol("C"), res)
-    top.addAtom("A2", app.Element.getBySymbol("C"), res)
-    top.addBond(list(top.atoms())[0], list(top.atoms())[1])
-
-    ff = app.ForceField("amber14-all.xml")
-    sys = ff.createSystem(top, nonbondedMethod=app.PME, nonbondedCutoff=1.0 * unit.nanometers)
-    sys.addForce(openmm.MonteCarloBarostat(1.0 * unit.bar, 300 * unit.kelvin, 5))
-
-    integ = openmm.LangevinIntegrator(300 * unit.kelvin, 1 / unit.picosecond, 0.002 * unit.picoseconds)
-    platform = openmm.Platform.getPlatformByName("CPU")
-    ctx = openmm.Context(sys, integ, platform)
-    box_nm = 2.0
-    ctx.setPeriodicBoxVectors(
-        [box_nm, 0, 0] * unit.nanometers,
-        [0, box_nm, 0] * unit.nanometers,
-        [0, 0, box_nm] * unit.nanometers,
-    )
-    ctx.setPositions([[0.5, 0.5, 0.5], [1.0, 1.0, 1.0]] * unit.nanometers)
-
-    integ.step(10)  # integrator has step(), not Context
-    state = ctx.getState(getEnergy=True, getPositions=True)
-    assert state.getPotentialEnergy() is not None
-    box = state.getPeriodicBoxVectors()
-    assert len(box) == 3
-    assert box[0][0].value_in_unit(unit.nanometers) == pytest.approx(box_nm, rel=0.1)
-
-
-def test_openmm_npt_api_dry_run():
-    """Dry-run: validate OpenMM NPT API (integrator.step, getState, state.getPeriodicBoxVectors)."""
-    import openmm
-    import openmm.app as app
-    import openmm.unit as unit
-    from io import StringIO
-
-    # 1 water with tip3p - guaranteed to work
-    pdb_str = (
-        "HETATM    1  O   HOH A   1       0.000   0.000   0.000  1.00  0.00           O\n"
-        "HETATM    2  H1  HOH A   1       0.076   0.058   0.000  1.00  0.00           H\n"
-        "HETATM    3  H2  HOH A   1      -0.058  -0.076   0.000  1.00  0.00           H\n"
-        "END\n"
-    )
-    pdb = app.PDBFile(StringIO(pdb_str))
-    box_nm = 2.0
-    box_vec = [
-        unit.Quantity((box_nm, 0, 0), unit.nanometers),
-        unit.Quantity((0, box_nm, 0), unit.nanometers),
-        unit.Quantity((0, 0, box_nm), unit.nanometers),
-    ]
-    pdb.topology.setPeriodicBoxVectors(box_vec)
-    ff = app.ForceField("tip3p.xml")
-    sys = ff.createSystem(
-        pdb.topology,
-        nonbondedMethod=app.PME,
-        nonbondedCutoff=0.9 * unit.nanometers,
-    )
-    sys.addForce(
-        openmm.MonteCarloBarostat(1.0 * unit.bar, 300 * unit.kelvin, 5)
-    )
-    integ = openmm.LangevinIntegrator(
-        300 * unit.kelvin, 1 / unit.picosecond, 0.002 * unit.picoseconds
-    )
-    ctx = openmm.Context(sys, integ, openmm.Platform.getPlatformByName("CPU"))
-    box_nm = 2.0
-    ctx.setPeriodicBoxVectors(
-        unit.Quantity((box_nm, 0, 0), unit.nanometers),
-        unit.Quantity((0, box_nm, 0), unit.nanometers),
-        unit.Quantity((0, 0, box_nm), unit.nanometers),
-    )
-    ctx.setPositions(pdb.positions)
-    integ.step(10)  # integrator.step, not context.step
-    state = ctx.getState(getEnergy=True, getPositions=True)
-    _ = state.getPositions(asNumpy=True)
-    box = state.getPeriodicBoxVectors()
-    assert len(box) == 3
-
-
-def test_openmm_matrix_density_driven():
-    """Density-driven matrix encapsulation: Packmol + minimize + interaction energy."""
-    from insulin_ai.simulation.openmm_complex import run_openmm_matrix_relax_and_energy
-    from insulin_ai.simulation.packmol_packer import _packmol_available
-
+    if not openmm_available():
+        pytest.skip("openmm + openmmforcefields + openff.toolkit required")
     if not _packmol_available():
         pytest.skip("packmol not found")
 
@@ -468,3 +232,5 @@ def test_openmm_matrix_density_driven():
     assert "n_polymer_chains" in res
     assert res["n_polymer_chains"] >= 4
     assert abs(res["interaction_energy_kj_mol"]) < 1e6
+
+

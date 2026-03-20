@@ -1,19 +1,20 @@
-"""GROMACS merged EM timing (requires gmx + acpype on PATH)."""
+"""OpenMM merged minimize timing (requires OpenMM + openmmforcefields + OpenFF on PATH / env)."""
 
 import time
 
 
-def benchmark_gromacs_merged(psmiles: str) -> float:
-    from insulin_ai.simulation.gromacs_complex import gmx_available, run_gromacs_merged_em
+def benchmark_openmm_merged(psmiles: str) -> float:
+    from insulin_ai.simulation.openmm_compat import openmm_available
+    from insulin_ai.simulation.openmm_complex import run_openmm_relax_and_energy
 
-    if not gmx_available():
+    if not openmm_available():
         return -1.0
     t0 = time.perf_counter()
-    run_gromacs_merged_em(psmiles, n_repeats=2)
+    run_openmm_relax_and_energy(psmiles, n_repeats=2)
     return time.perf_counter() - t0
 
 
 if __name__ == "__main__":
-    ps = "[*]COC[*]"
-    t = benchmark_gromacs_merged(ps)
-    print(f"GROMACS merged EM [{ps}]: {t:.3f} s" if t >= 0 else "gmx not on PATH")
+    ps = "[*]CC[*]"
+    t = benchmark_openmm_merged(ps)
+    print(f"OpenMM merged minimize [{ps}]: {t:.3f} s" if t >= 0 else "OpenMM stack not available")

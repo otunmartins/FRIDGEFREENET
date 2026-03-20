@@ -87,6 +87,10 @@ FRIDGEFREENET/
 # Optional: Karpathy autoresearch (GPU LLM training boilerplate — not part of insulin-ai MCP)
 autoresearch/
 
+# External benchmark clones (see extern/benchmarks/README.md; not vendored in git)
+extern/benchmarks/polymer-generative-models/Polymer-Generative-Models-Benchmark/
+extern/benchmarks/ibm-logical-agent-polymer/logical-agent-driven-polymer-discovery/
+
 # Legacy MCP folder / setuptools
 mcp_servers/
 *.egg-info/

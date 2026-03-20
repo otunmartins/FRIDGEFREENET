@@ -10,6 +10,7 @@ import os
 import sys
 import json
 import time
+import shutil
 import subprocess
 import traceback
 import xml.etree.ElementTree as ET
@@ -32,7 +33,15 @@ from insulin_ai.run_paths import ENV_SESSION, new_session_dir, session_dir_from_
 
 mcp = FastMCP(
     "insulin-ai-materials",
-    instructions="Materials discovery: literature mining, PSMILES, evaluate_psmiles (GROMACS), gmx_vmd_* (GROMACS/VMD workflows from integrated mcp_gmx_vmd), PubMed, arXiv, Scholar, web search.",
+    instructions=(
+        "Materials discovery: literature mining, PSMILES (see repo docs/PSMILES_GUIDE.md), "
+        "validate_psmiles (optional crosscheck_web+material_name for DuckDuckGo snippets), "
+        "evaluate_psmiles (OpenMM merged minimize), render_psmiles_png (2D PNG for reports), "
+        "compile_discovery_markdown_to_pdf (agent-written MD → PDF), "
+        "write_discovery_summary_report (optional batch from saved JSON), "
+        "save_session_transcript / import_chat_transcript_file (required each run: archive chat into runs/), "
+        "PubMed, arXiv, Scholar, web search."
+    ),
 )
 
 
@@ -265,31 +274,75 @@ def lookup_material(material_name: str, max_results: int = 5) -> str:
 
 
 @mcp.tool()
-def validate_psmiles(psmiles: str) -> str:
+def validate_psmiles(
+    psmiles: str,
+    material_name: str = "",
+    crosscheck_web: bool = False,
+) -> str:
     """
     Validate and optionally canonicalize a PSMILES string.
-    Returns JSON: {valid: bool, canonical?: str, error?: str}.
-    Use before evaluate_psmiles when the agent translated material names to PSMILES.
+    Returns JSON: {valid, canonical?, error?, name_crosscheck?}.
+
+    If material_name is set and crosscheck_web is true, runs a DuckDuckGo web search for
+    "{material_name} polymer repeat unit SMILES" and returns snippets under name_crosscheck
+    so the agent can compare literature descriptions to the proposed PSMILES. This is a
+    heuristic aid only—not chemical proof that the name matches the structure.
     """
     try:
         from insulin_ai.material_mappings import validate_psmiles as _validate
-        return json.dumps(_validate(psmiles), indent=2)
+
+        out = dict(_validate(psmiles))
+        name = (material_name or "").strip()
+        if crosscheck_web and name:
+            q = f"{name} polymer repeat unit SMILES structure"
+            raw = _ddg_text_results(q, max_results=5)
+            snippets = []
+            for r in raw:
+                snippets.append(
+                    {
+                        "title": (r.get("title") or "")[:120],
+                        "snippet": (r.get("body") or r.get("snippet", ""))[:500],
+                        "url": r.get("href") or r.get("link", ""),
+                    }
+                )
+            out["name_crosscheck"] = {
+                "material_name": name,
+                "query": q,
+                "snippets": snippets,
+                "disclaimer": (
+                    "Web snippets are for human/agent review only. They do not prove the PSMILES "
+                    "matches the material name; compare chemistry carefully."
+                ),
+                "psmiles_submitted": psmiles.strip()[:200],
+            }
+        elif crosscheck_web and not name:
+            out["name_crosscheck"] = {
+                "error": "crosscheck_web requires a non-empty material_name",
+            }
+        return json.dumps(out, indent=2)
     except Exception as e:
         return json.dumps({"valid": False, "error": str(e)})
 
 
 @mcp.tool()
-def evaluate_psmiles(psmiles_list: str) -> str:
+def evaluate_psmiles(psmiles_list: str, verbose: bool = True) -> str:
     """
-    Evaluate PSMILES via GROMACS merged EM (gmx + acpype + ambertools on PATH).
-    Input: comma-separated PSMILES, e.g. "[*]OCC[*], [*]CC[*]"
+    Evaluate PSMILES via OpenMM: insulin AMBER14SB + polymer GAFF (Gasteiger), energy minimization,
+    then interaction energy (screening — not a multi-ns MD trajectory). Comma-separated PSMILES.
+
+    By default (verbose=true) the JSON includes per-candidate timing and energies (evaluation_progress)
+    and the MCP server logs progress to stderr. Pass verbose=false or set env INSULIN_AI_EVAL_QUIET=1
+    (or INSULIN_AI_EVAL_VERBOSE=0) for a smaller response and no progress lines.
     """
     try:
         from insulin_ai.simulation import MDSimulator
+
         parts = [p.strip().strip('"') for p in psmiles_list.split(",")]
         candidates = [{"material_name": f"Candidate_{i}", "chemical_structure": p} for i, p in enumerate(parts)]
         sim = MDSimulator(n_steps=5000)
-        result = sim.evaluate_candidates(candidates, max_candidates=len(candidates))
+        result = sim.evaluate_candidates(
+            candidates, max_candidates=len(candidates), verbose=verbose
+        )
         try:
             from insulin_ai.simulation.scoring import discovery_score
 
@@ -303,6 +356,10 @@ def evaluate_psmiles(psmiles_list: str) -> str:
         }
         if _score is not None:
             out["discovery_score"] = round(_score, 4)
+        if result.get("evaluation_progress") is not None:
+            out["evaluation_progress"] = result["evaluation_progress"]
+        if result.get("evaluation_note"):
+            out["evaluation_note"] = result["evaluation_note"]
         return json.dumps(out, indent=2)
     except Exception as e:
         return f"Error: {e}"
@@ -458,6 +515,93 @@ def _session_dir_for_mcp(run_dir: str = "") -> Path:
     d = new_session_dir(Path(ROOT), name=None)
     os.environ[ENV_SESSION] = str(d)
     return d
+
+
+def _allowed_transcript_source(src: Path, repo_root: Path) -> bool:
+    """Allow repo files or Cursor/OpenCode agent-transcripts under ~/.cursor."""
+    try:
+        src = src.resolve()
+    except OSError:
+        return False
+    repo_root = repo_root.resolve()
+    if src == repo_root or repo_root in src.parents:
+        return True
+    cursor_home = (Path.home() / ".cursor").resolve()
+    if not cursor_home.is_dir():
+        return False
+    try:
+        src.relative_to(cursor_home)
+    except ValueError:
+        return False
+    return "agent-transcripts" in src.parts
+
+
+@mcp.tool()
+def save_session_transcript(
+    content: str,
+    filename: str = "SESSION_TRANSCRIPT.md",
+    run_dir: str = "",
+) -> str:
+    """
+    Save **text you provide** into the active discovery session. **Default materials-discovery protocol:**
+    call this **every iteration** if ``import_chat_transcript_file`` cannot be used (unknown JSONL path
+    or copy failure), with a **complete** Markdown recap (tool calls, decisions, results). OpenCode
+    does not mirror chat into ``runs/`` automatically.
+
+    Writes UTF-8 to ``<session>/<filename>`` (default ``SESSION_TRANSCRIPT.md``). For JSONL originals
+    from disk, prefer ``import_chat_transcript_file``.
+    """
+    session = _session_dir_for_mcp(run_dir)
+    session.mkdir(parents=True, exist_ok=True)
+    fn = (filename or "SESSION_TRANSCRIPT.md").strip()
+    if not fn or ".." in fn.replace("\\", "/"):
+        return json.dumps({"error": "invalid filename"})
+    path = session / fn
+    try:
+        path.write_text(content, encoding="utf-8")
+    except OSError as e:
+        return json.dumps({"error": str(e)})
+    return json.dumps({"saved": str(path), "session_dir": str(session)}, indent=2)
+
+
+@mcp.tool()
+def import_chat_transcript_file(
+    source_path: str,
+    dest_filename: str = "",
+    run_dir: str = "",
+) -> str:
+    """
+    Copy a chat transcript **file** from disk into ``runs/<session>/``. Allowed sources only:
+
+    - Any path **under this repository** (insulin-ai), or
+    - Files under ``~/.cursor/.../agent-transcripts/`` (OpenCode parent chat JSONL).
+
+    **Materials discovery:** invoke **by default at the end of every iteration** so the session folder
+    contains the OpenCode chat snapshot. If this fails, use ``save_session_transcript`` instead.
+    See ``docs/OpenCode_PLATFORM.md``.
+    """
+    src = Path(source_path).expanduser()
+    if not src.is_file():
+        return json.dumps({"error": f"not a file: {src}"})
+    if not _allowed_transcript_source(src, Path(ROOT)):
+        return json.dumps(
+            {
+                "error": "path not allowed (use repo path or ~/.cursor/.../agent-transcripts/...)",
+                "hint": "see docs/OpenCode_PLATFORM.md",
+            },
+            indent=2,
+        )
+    session = _session_dir_for_mcp(run_dir)
+    session.mkdir(parents=True, exist_ok=True)
+    dest = (dest_filename or "").strip() or src.name
+    if ".." in dest.replace("\\", "/"):
+        return json.dumps({"error": "invalid dest_filename"})
+    out = session / dest
+    try:
+        shutil.copy2(src, out)
+    except OSError as e:
+        return json.dumps({"error": str(e)})
+    return json.dumps({"copied_to": str(out), "session_dir": str(session)}, indent=2)
 
 
 @mcp.tool()
@@ -621,16 +765,24 @@ def arxiv_search(query: str, max_results: int = 20) -> str:
         return f"Error: {e}"
 
 
+def _ddg_text_results(query: str, max_results: int = 5) -> list:
+    """Return raw DuckDuckGo text results, or empty list on failure."""
+    try:
+        from duckduckgo_search import DDGS
+
+        return list(DDGS().text(query, max_results=min(max_results, 10)))
+    except Exception:
+        return []
+
+
 @mcp.tool()
 def web_search(query: str, max_results: int = 5) -> str:
     """Search the web via DuckDuckGo. No API key. Use for material structures, PSMILES, polymer repeat units."""
     try:
-        from duckduckgo_search import DDGS
-        results = list(DDGS().text(query, max_results=min(max_results, 10)))
+        from duckduckgo_search import DDGS  # noqa: F401 — ensure package exists before _ddg_text_results
     except ImportError:
         return "Error: pip install duckduckgo-search"
-    except Exception as e:
-        return f"Search error: {e}"
+    results = _ddg_text_results(query, max_results)
     if not results:
         return f"No results for: {query}"
     lines = [f"Web search: {query}", ""]
@@ -715,160 +867,86 @@ def psmiles_similarity(psmiles1: str, psmiles2: str) -> str:
         return f"Error: {e}"
 
 
-# --- Integrated GROMACS-VMD (mcp_gmx_vmd) ---------------------------------
-_gmx_vmd_service_singleton = None
-
-
-def _gmx_vmd_service():
-    """Lazy MCPService workspace under runs/gmx_vmd_workspace."""
-    global _gmx_vmd_service_singleton
-    if _gmx_vmd_service_singleton is None:
-        from insulin_ai.mcp_gmx_vmd.service import MCPService
-
-        wd = Path(ROOT) / "runs" / "gmx_vmd_workspace"
-        wd.mkdir(parents=True, exist_ok=True)
-        sim_data = Path(ROOT) / "src" / "python" / "insulin_ai" / "simulation" / "data"
-        if sim_data.is_dir():
-            pass  # optional: service adds search path on first use
-        _gmx_vmd_service_singleton = MCPService(wd)
-        _gmx_vmd_service_singleton.add_structure_search_path(sim_data)
-    return _gmx_vmd_service_singleton
-
-
 @mcp.tool()
-def gmx_vmd_create_workflow(name: str, description: str = "", params_json: str = "") -> str:
-    """
-    Create a GROMACS/VMD workflow sandbox (integrated gmx-vmd-mcp). Returns workflow_id.
-    Optional params_json: JSON dict for CompleteSimulationParams (structure_file, force_field, etc.).
-    """
-    try:
-        svc = _gmx_vmd_service()
-        params = None
-        if params_json.strip():
-            from insulin_ai.mcp_gmx_vmd.models import CompleteSimulationParams
-
-            params = CompleteSimulationParams(**json.loads(params_json))
-        wf_id = svc.create_workflow(name, description or None, params)
-        return json.dumps({"workflow_id": wf_id, "success": True})
-    except Exception as e:
-        return json.dumps({"success": False, "error": str(e)})
-
-
-@mcp.tool()
-def gmx_vmd_list_workflows() -> str:
-    """List all GROMACS/VMD workflows (id, name, status)."""
-    try:
-        svc = _gmx_vmd_service()
-        workflows = svc.list_workflows()
-        return json.dumps([w.to_dict() for w in workflows], indent=2)
-    except Exception as e:
-        return json.dumps({"error": str(e)})
-
-
-@mcp.tool()
-def gmx_vmd_get_workflow(workflow_id: str) -> str:
-    """Workflow metadata and paths."""
-    try:
-        svc = _gmx_vmd_service()
-        w = svc.get_workflow(workflow_id)
-        if not w:
-            return json.dumps({"error": "workflow not found", "workflow_id": workflow_id})
-        return json.dumps(w.to_dict(), indent=2)
-    except Exception as e:
-        return json.dumps({"error": str(e)})
-
-
-@mcp.tool()
-def gmx_vmd_delete_workflow(workflow_id: str) -> str:
-    """Remove workflow directory."""
-    try:
-        svc = _gmx_vmd_service()
-        ok = svc.delete_workflow(workflow_id)
-        return json.dumps({"success": ok, "workflow_id": workflow_id})
-    except Exception as e:
-        return json.dumps({"success": False, "error": str(e)})
-
-
-@mcp.tool()
-def gmx_vmd_gromacs_execute(
-    workflow_id: str,
-    command: str,
-    args_json: str = "[]",
-    input_data: str = "",
+def render_psmiles_png(
+    psmiles: str,
+    output_basename: str = "",
+    run_dir: str = "",
 ) -> str:
     """
-    Run `gmx <command> ...` inside the workflow cwd (e.g. command=grompp, args=["-f","em.mdp","-c","s.gro","-p","topol.top","-o","out.tpr"]).
-    args_json: JSON list of strings. input_data: optional stdin for pdb2gmx.
+    Render a 2D depiction of the polymer repeat unit to PNG (psmiles ``PolymerSmiles.savefig``).
+
+    **Reporting workflow:** you (the agent) author ``SUMMARY_REPORT.md`` and embed figures with
+    ``![caption](structures/<file>.png)`` after saving PNGs here. Requires **psmiles** (see
+    ``docs/DEPENDENCIES.md``).
+
+    Saves under ``<session>/structures/<basename>.png``. Session is the active discovery run
+    (``start_discovery_session``) or ``run_dir`` when set. Use after ``validate_psmiles``.
     """
-    try:
-        import asyncio
-        from insulin_ai.mcp_gmx_vmd.gromacs import Context, run_gromacs_command
+    err = _psmiles_check()
+    if err:
+        return err
+    from insulin_ai.psmiles_drawing import safe_filename_basename, save_psmiles_png
 
-        svc = _gmx_vmd_service()
-        wdir = svc.workflow_manager.get_workflow_directory(workflow_id)
-        if not wdir:
-            return json.dumps({"success": False, "error": "workflow not found"})
-        args = json.loads(args_json) if args_json.strip() else []
-        if not isinstance(args, list):
-            args = []
-        ctx = Context(working_dir=wdir)
-        inp = input_data if input_data else None
-        result = asyncio.run(run_gromacs_command(ctx, command, args, inp))
-        return json.dumps(
-            {
-                "success": result.success,
-                "return_code": result.return_code,
-                "stdout": result.stdout[-8000:],
-                "stderr": result.stderr[-8000:],
-                "command": result.command,
-            },
-            indent=2,
-        )
-    except Exception as e:
-        return json.dumps({"success": False, "error": str(e), "traceback": traceback.format_exc()[-2000:]})
+    session = _session_dir_for_mcp(run_dir)
+    session.mkdir(parents=True, exist_ok=True)
+    struct = session / "structures"
+    struct.mkdir(parents=True, exist_ok=True)
+    base = (output_basename or "").strip() or safe_filename_basename(psmiles[:80])
+    out = struct / f"{base}.png"
+    r = save_psmiles_png(psmiles.strip(), out, overwrite=True)
+    payload = {**r, "session_dir": str(session), "relative": f"structures/{out.name}"}
+    return json.dumps(payload, indent=2)
 
 
 @mcp.tool()
-def gmx_vmd_workflow_status(workflow_id: str) -> str:
-    """Current simulation status for workflow."""
-    try:
-        svc = _gmx_vmd_service()
-        st = svc.get_workflow_status(workflow_id)
-        if not st:
-            return json.dumps({"error": "no status", "workflow_id": workflow_id})
-        return json.dumps(st.dict() if hasattr(st, "dict") else st.model_dump(), indent=2)
-    except Exception as e:
-        return json.dumps({"error": str(e)})
+def compile_discovery_markdown_to_pdf(
+    markdown_path: str = "SUMMARY_REPORT.md",
+    output_pdf_name: str = "SUMMARY_REPORT.pdf",
+    run_dir: str = "",
+) -> str:
+    """
+    Convert **agent-written** Markdown (default ``SUMMARY_REPORT.md``) to a PDF in the session folder.
+
+    You compose the narrative, tables, and interpretation in Markdown; follow ``docs/SUMMARY_REPORT_STYLE.md``
+    (research-paper tone, full journal-style references, avoid em-dash/colon AI prose patterns). Call
+    ``render_psmiles_png`` for 2D figures, reference them in the MD, then run this tool to produce
+    ``SUMMARY_REPORT.pdf``. Uses **markdown** + **fpdf2** (see ``docs/DEPENDENCIES.md``). Relative image
+    paths are resolved against the session directory.
+    """
+    session = _session_dir_for_mcp(run_dir)
+    from insulin_ai.discovery_report import compile_markdown_to_pdf
+
+    r = compile_markdown_to_pdf(
+        session,
+        markdown_filename=markdown_path.strip() or "SUMMARY_REPORT.md",
+        output_pdf_name=output_pdf_name.strip() or "SUMMARY_REPORT.pdf",
+    )
+    return json.dumps(r, indent=2, default=str)
 
 
 @mcp.tool()
-def gmx_vmd_workflow_logs(workflow_id: str) -> str:
-    """Tail of workflow logs."""
-    try:
-        svc = _gmx_vmd_service()
-        logs = svc.get_workflow_logs(workflow_id)
-        return json.dumps({"workflow_id": workflow_id, "logs": logs[-50:]}, indent=2)
-    except Exception as e:
-        return json.dumps({"error": str(e)})
+def write_discovery_summary_report(
+    title: str = "Discovery summary",
+    run_dir: str = "",
+    include_all_iterations: bool = True,
+) -> str:
+    """
+    **Optional batch helper** (not a substitute for an AI-written report): reads ``agent_iteration_*.json``,
+    auto-builds a minimal **SUMMARY_REPORT.md** + PNGs + PDF from saved feedback only—use when you need
+    a quick skeleton without narrative. For **normal** scientific summaries, the agent should write
+    ``SUMMARY_REPORT.md`` and call ``compile_discovery_markdown_to_pdf`` after ``render_psmiles_png``.
+    Requires **psmiles**, **fpdf2**, **markdown** (see ``docs/DEPENDENCIES.md``).
+    """
+    session = _session_dir_for_mcp(run_dir)
+    from insulin_ai.discovery_report import write_session_summary_reports
 
-
-@mcp.tool()
-def gmx_vmd_help() -> str:
-    """Help text for integrated GROMACS-VMD tools."""
-    try:
-        return _gmx_vmd_service().get_workflow_help()
-    except Exception as e:
-        return f"gmx_vmd help unavailable: {e}"
-
-
-@mcp.tool()
-def gmx_vmd_find_structures(pattern: str = "4F1C") -> str:
-    """Search simulation/data and workflow workspace for .pdb/.gro (insulin PDB etc.)."""
-    try:
-        svc = _gmx_vmd_service()
-        return json.dumps(svc.find_structure_files(pattern), indent=2)
-    except Exception as e:
-        return json.dumps({"error": str(e)})
+    r = write_session_summary_reports(
+        session,
+        title=title,
+        include_all_iterations=include_all_iterations,
+    )
+    return json.dumps(r, indent=2, default=str)
 
 
 if __name__ == "__main__":

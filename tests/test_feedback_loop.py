@@ -1,7 +1,7 @@
 """
 Integration test: Active learning feedback loop with MDSimulator.
 
-Requires gmx + acpype + 4F1C.pdb for full evaluate_candidates.
+Requires OpenMM stack + insulin PDB for full evaluate_candidates.
 """
 
 import os
@@ -16,10 +16,10 @@ def test_mdsimulator_interface():
     """MDSimulator implements evaluate_candidates(candidates) -> feedback dict."""
     import pytest
     from insulin_ai.simulation import MDSimulator
-    from insulin_ai.simulation.gromacs_complex import gmx_available
+    from insulin_ai.simulation.openmm_compat import openmm_available
 
-    if not gmx_available():
-        pytest.skip("gmx on PATH + MDSimulator required")
+    if not openmm_available():
+        pytest.skip("OpenMM stack + MDSimulator required")
     sim = MDSimulator()
     candidates = [
         {"material_name": "PEG hydrogel", "chemical_structure": "[*]OCC[*]"},
@@ -56,10 +56,10 @@ def test_mdsimulator_with_mock_candidates():
     """Full evaluate_candidates with mixed candidate formats."""
     import pytest
     from insulin_ai.simulation import MDSimulator
-    from insulin_ai.simulation.gromacs_complex import gmx_available
+    from insulin_ai.simulation.openmm_compat import openmm_available
 
-    if not gmx_available():
-        pytest.skip("gmx on PATH + MDSimulator required")
+    if not openmm_available():
+        pytest.skip("OpenMM stack + MDSimulator required")
     sim = MDSimulator()
     candidates = [
         {"material_name": "A", "psmiles": "[*]OCC[*]"},

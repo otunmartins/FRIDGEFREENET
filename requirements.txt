@@ -1,2 +1,2 @@
 # Recommended: mamba env create -f environment-simulation.yml
-# (gromacs + ambertools + rdkit + pip acpype)
+# (openmm + rdkit + openmmforcefields + openff-toolkit + packmol + pip extras)
