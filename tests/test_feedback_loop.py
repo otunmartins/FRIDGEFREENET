@@ -17,9 +17,12 @@ def test_mdsimulator_interface():
     import pytest
     from insulin_ai.simulation import MDSimulator
     from insulin_ai.simulation.openmm_compat import openmm_available
+    from insulin_ai.simulation.packmol_packer import _packmol_available
 
     if not openmm_available():
         pytest.skip("OpenMM stack + MDSimulator required")
+    if not _packmol_available():
+        pytest.skip("packmol binary required for evaluate_candidates (matrix encapsulation)")
     sim = MDSimulator()
     candidates = [
         {"material_name": "PEG hydrogel", "chemical_structure": "[*]OCC[*]"},
@@ -57,9 +60,12 @@ def test_mdsimulator_with_mock_candidates():
     import pytest
     from insulin_ai.simulation import MDSimulator
     from insulin_ai.simulation.openmm_compat import openmm_available
+    from insulin_ai.simulation.packmol_packer import _packmol_available
 
     if not openmm_available():
         pytest.skip("OpenMM stack + MDSimulator required")
+    if not _packmol_available():
+        pytest.skip("packmol binary required for evaluate_candidates (matrix encapsulation)")
     sim = MDSimulator()
     candidates = [
         {"material_name": "A", "psmiles": "[*]OCC[*]"},

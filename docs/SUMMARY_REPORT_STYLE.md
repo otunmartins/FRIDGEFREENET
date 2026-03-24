@@ -10,12 +10,31 @@ Use sections appropriate to a short paper, for example:
 2. **Abstract** — purpose, methods (literature, PSMILES, OpenMM screening), main findings, one sentence on limitations (≤250 words unless the user asks otherwise).
 3. **Introduction** — delivery context (fridge-free insulin patch), gap, objective of this discovery run.
 4. **Methods** — queries, validation, evaluation protocol (merged minimize, interaction energy), mutation strategy. Cite software and databases by version where known.
-5. **Results** — tables of candidates, energies or scores, rankings; reference figures (`structures/*.png`).
+5. **Results** — tables of candidates, energies or scores, rankings; reference figures under `structures/` (see below).
 6. **Discussion** — mechanisms, trade-offs, comparison to literature **with full citations**.
 7. **Conclusions** — concise, testable next steps.
 8. **References** — numbered list, formatted consistently (see below).
 
 Adapt section names if the journal or lab template requires it; keep the same level of rigor.
+
+## Figures (monomer + minimized complex)
+
+Embed **two** visuals per candidate when available:
+
+- **Repeat-unit 2D structure** — PNG from **psmiles** (`PolymerSmiles.savefig`), e.g. `structures/<slug>_monomer.png` (also produced by MCP `render_psmiles_png`).
+- **Insulin–polymer complex after OpenMM minimization** — (1) a quick **point cloud** preview: `structures/<slug>_complex_preview.png`; (2) a **ribbon + ball-and-stick** figure: `structures/<slug>_complex_chemviz.png` (CA ribbon for chains A+B, sticks/balls for the polymer using ``CONECT``). Regenerate the latter anytime with `python scripts/render_complex_chemviz.py <session>/structures/`.
+- **PDB** — `structures/<slug>_complex_minimized.pdb` for reproducibility.
+
+With `INSULIN_AI_SESSION_DIR` set (or MCP `evaluate_psmiles` `run_dir` / `artifacts_dir`), **`evaluate_psmiles`** writes these files under `<session>/structures/` unless disabled (`INSULIN_AI_EVAL_NO_STRUCTURE_ARTIFACTS=1`). In `SUMMARY_REPORT.md` use relative Markdown images, for example:
+
+```markdown
+![Monomer](structures/Candidate_0_monomer.png)
+![Minimized complex (OpenMM)](structures/Candidate_0_complex_preview.png)
+```
+
+Then run `compile_discovery_markdown_to_pdf` so the PDF embeds the same files.
+
+**Batch tool `write_discovery_summary_report`:** regenerates a minimal report from `agent_iteration_*.json` and also scans `structures/` for the same PNG naming patterns above, so monomer and complex figures from evaluation appear in `SUMMARY_REPORT.md` / PDF even when you did not hand-edit the Markdown.
 
 ## References and citations
 
@@ -59,5 +78,7 @@ Editorial commentary on LLM-generated text often flags **overuse of the em dash 
 
 1. `render_psmiles_png` for 2D structures; embed in Markdown as `![Short caption](structures/...)`.
 2. `compile_discovery_markdown_to_pdf` to produce `SUMMARY_REPORT.pdf`.
+
+You do **not** need duplicate “raster” copies of figures (e.g. `*_raster.png`): the PDF step re-encodes local images for fpdf2 automatically.
 
 The tools do not rewrite prose; they only render figures and PDF.

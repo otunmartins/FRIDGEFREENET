@@ -73,9 +73,12 @@ def test_run_optuna_benchmark_mocked_completes_study():
 def test_run_optuna_benchmark_one_trial_openmm():
     """Optional integration: one trial with real MDSimulator."""
     from insulin_ai.simulation.openmm_compat import openmm_available
+    from insulin_ai.simulation.packmol_packer import _packmol_available
 
     if not openmm_available():
         pytest.skip("OpenMM stack required")
+    if not _packmol_available():
+        pytest.skip("packmol binary required for MDSimulator.evaluate_candidates")
 
     out = run_optuna_benchmark(
         "[*]OCC[*]",

@@ -265,9 +265,13 @@ def run_openmm_relax_and_energy(
     random_seed: int = 42,
     ligand_offset_nm: Tuple[float, float, float] = (2.0, 0.0, 0.0),
     max_minimize_steps: int = 5000,
+    save_complex_pdb: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """
     Insulin (AMBER14SB, SSBOND) + oligomer (GAFF, RDKit Gasteiger) → minimize → interaction energy.
+
+    If ``save_complex_pdb`` is set, writes minimized insulin+oligomer coordinates with
+    ``PDBFile.writeFile`` (Angstrom) and returns ``complex_pdb_path`` in the result dict.
     """
     from .polymer_build import ensure_insulin_pdb
 
@@ -351,7 +355,7 @@ def run_openmm_relax_and_energy(
         combined_sys, protein_sys, lig_sys, pos_min, n_protein
     )
     n_lig = lig_top.getNumAtoms()
-    return {
+    out: Dict[str, Any] = {
         "psmiles": psmiles,
         "method": "OpenMM_minimize_AMBER14SB_GAFF_Gasteiger",
         "potential_energy_complex_kj_mol": float(e_complex),
@@ -360,6 +364,13 @@ def run_openmm_relax_and_energy(
         "n_polymer_atoms": n_lig,
         "gromacs_only": False,
     }
+    if save_complex_pdb:
+        outp = Path(save_complex_pdb).expanduser().resolve()
+        outp.parent.mkdir(parents=True, exist_ok=True)
+        with open(outp, "w", encoding="utf-8") as fh:
+            app.PDBFile.writeFile(combined_top, state.getPositions(), fh)
+        out["complex_pdb_path"] = str(outp)
+    return out
 
 
 def _merge_topology_protein_n_ligands(
@@ -471,7 +482,7 @@ def run_openmm_matrix_relax_and_energy(
     psmiles: str,
     n_repeats: int = 4,
     n_polymers: int = 8,
-    box_size_nm: float = 9.0,
+    box_size_nm: Optional[float] = 7.5,
     shell_only_angstrom: float = 14.0,
     insulin_pdb_path: Optional[str] = None,
     random_seed: int = 42,
@@ -480,7 +491,8 @@ def run_openmm_matrix_relax_and_energy(
     save_minimized_pdb: Optional[str] = None,
     verbose: bool = False,
     target_density_g_cm3: Optional[float] = None,
-    restrain_shell: bool = True,
+    packing_mode: str = "bulk",
+    restrain_shell: Optional[bool] = None,
     run_npt: bool = True,
     barostat_interval_fs: float = 10.0,
     npt_duration_ps: float = 1.0,
@@ -488,20 +500,52 @@ def run_openmm_matrix_relax_and_energy(
     report_interval_steps: int = 250,
     temperature_k: float = 300.0,
     pressure_bar: float = 1.0,
+    progressive_pack: bool = False,
+    progressive_per_attempt_timeout_s: float = 120.0,
+    progressive_max_total_s: Optional[float] = None,
+    progressive_n_max: Optional[int] = None,
+    density_polymer_n_min: int = 4,
+    density_polymer_n_max: int = 100,
 ) -> Optional[Dict[str, Any]]:
     """
-    Insulin encapsulated by polymer matrix (Packmol shell around insulin), then
-    OpenMM minimize and interaction energy (Packmol-packed matrix).
+    Insulin + polymer matrix from Packmol, then OpenMM minimize and interaction energy.
 
-    When target_density_g_cm3 is set, n_polymers and shell_only_angstrom are
-    derived from density (PSP-style primary driver); explicit values are ignored.
+    **packing_mode** ``bulk`` (default): polymers throughout the periodic cell (no ``outside sphere``).
+    **packing_mode** ``shell``: annulus around insulin (``outside sphere`` in Packmol).
+
+    When target_density_g_cm3 is set, n_polymers (and shell radius in **shell** mode) are
+    derived from density; explicit n_polymers / shell_only_angstrom are ignored.
+
+    **box_size_nm:** cubic edge in nm. ``None`` (fixed chain count, no density target) lets
+    Packmol auto-size the cell from insulin + polymer extent (see ``packmol_packer``).
+    If ``target_density_g_cm3`` is set and ``box_size_nm`` is ``None``, volume for chain
+    count uses **7.5** nm.
+
+    **density_polymer_n_max:** Upper clamp for density-derived *n_polymers* (default **100**).
+    Lower values with a large box yield sparse visuals; Packmol/OpenMM cost grows with *n*.
+
+    **progressive_pack:** If True, after choosing the initial *n_polymers* (density or fixed),
+    repeatedly try *n*+1 chains until Packmol fails/times out or **progressive_*** effort
+    limits apply (per-attempt timeout, optional total wall budget, optional *n* cap).
+
+    If ``restrain_shell`` is None, it defaults to True only for **shell** mode (bulk uses
+    no spherical shell restraint during minimization unless explicitly enabled with a radius).
     """
-    from .packmol_packer import pack_insulin_polymers, _packmol_available
+    from .packmol_packer import (
+        pack_insulin_polymers,
+        pack_insulin_polymers_progressive,
+        _packmol_available,
+    )
     from .polymer_build import ensure_insulin_pdb, mol_to_pdb_block
 
     def _log(msg: str) -> None:
         if verbose:
             print(msg, flush=True)
+
+    if packing_mode not in ("shell", "bulk"):
+        packing_mode = "bulk"
+    if restrain_shell is None:
+        restrain_shell = packing_mode == "shell"
 
     if not _packmol_available():
         logger.warning("packmol not found; cannot run matrix encapsulation")
@@ -523,6 +567,8 @@ def run_openmm_matrix_relax_and_energy(
         ins_packmol = work / "insulin_packmol.pdb"
         app.PDBFile.writeFile(modeller.topology, modeller.positions, open(ins_packmol, "w"))
 
+        volume_box_nm = float(box_size_nm) if box_size_nm is not None else 7.5
+
         if target_density_g_cm3 is not None:
             from .matrix_density import suggest_n_polymers_from_density
 
@@ -530,11 +576,22 @@ def run_openmm_matrix_relax_and_energy(
                 target_density_g_cm3,
                 psmiles,
                 n_repeats,
-                box_size_nm,
+                volume_box_nm,
                 shell_inner_angstrom=None,
                 insulin_pdb_path=str(ins_packmol),
+                packing_mode=packing_mode,
+                n_min=density_polymer_n_min,
+                n_max=density_polymer_n_max,
             )
-            _log(f"[matrix] density-driven: n_polymers={n_polymers}, shell={shell_only_angstrom:.1f} Å")
+            if shell_only_angstrom is not None:
+                _log(
+                    f"[matrix] density-driven: n_polymers={n_polymers}, shell={shell_only_angstrom:.1f} Å"
+                )
+            else:
+                _log(f"[matrix] density-driven bulk: n_polymers={n_polymers}")
+
+        if packing_mode == "bulk":
+            shell_only_angstrom = None
 
         capped = build_polymer_oligomer_smiles(psmiles, n_repeats)
         if not capped:
@@ -550,20 +607,59 @@ def run_openmm_matrix_relax_and_energy(
         Path(poly_pdb).write_text(mol_to_pdb_block(lig_mol))
 
         packed_pdb = work / "packed.pdb"
-        _log(f"[matrix] Packmol: insulin + {n_polymers} chains, shell R={shell_only_angstrom} Å")
-        if not pack_insulin_polymers(
-            str(ins_packmol),
-            str(poly_pdb),
-            n_polymers,
-            str(packed_pdb),
-            box_size_nm=box_size_nm,
+        pack_box_nm: Optional[float] = (
+            volume_box_nm if target_density_g_cm3 is not None else box_size_nm
+        )
+        if shell_only_angstrom is not None:
+            _log(f"[matrix] Packmol: insulin + {n_polymers} chains, shell R={shell_only_angstrom} Å")
+        else:
+            _log(f"[matrix] Packmol: insulin + {n_polymers} chains, bulk (full cell)")
+        pack_common_kw = dict(
+            box_size_nm=pack_box_nm,
             tolerance_angstrom=2.0,
             seed=random_seed,
             shell_only_angstrom=shell_only_angstrom,
-            timeout_s=300,
-        ):
+            packing_mode=packing_mode,
+        )
+        if progressive_pack:
+            _log(
+                f"[matrix] Progressive pack: start={n_polymers}, "
+                f"per-attempt timeout={progressive_per_attempt_timeout_s}s, "
+                f"max_total_s={progressive_max_total_s}, n_max={progressive_n_max}"
+            )
+            pack_result = pack_insulin_polymers_progressive(
+                str(ins_packmol),
+                str(poly_pdb),
+                n_polymers,
+                str(packed_pdb),
+                n_polymers_cap=progressive_n_max,
+                per_attempt_timeout_s=progressive_per_attempt_timeout_s,
+                max_total_seconds=progressive_max_total_s,
+                seed=random_seed,
+                **pack_common_kw,
+            )
+        else:
+            pack_result = pack_insulin_polymers(
+                str(ins_packmol),
+                str(poly_pdb),
+                n_polymers,
+                str(packed_pdb),
+                timeout_s=300,
+                **pack_common_kw,
+            )
+        if not pack_result.get("success"):
             logger.warning("Packmol failed")
             return None
+        if progressive_pack:
+            n_polymers = int(pack_result["n_polymers"])
+            if verbose:
+                _log(
+                    f"[matrix] Progressive pack done: n={n_polymers}, "
+                    f"reason={pack_result.get('stopped_reason')}, "
+                    f"attempts={pack_result.get('attempts')}, "
+                    f"pack_wall_s={pack_result.get('total_pack_seconds', 0):.2f}"
+                )
+        effective_box_nm = float(pack_result["box_edge_nm"])
 
         if save_packed_pdb:
             import shutil
@@ -575,21 +671,16 @@ def run_openmm_matrix_relax_and_energy(
         prot_pos_nm, lig_pos_nm = _read_packed_pdb_positions_nm(
             str(packed_pdb), n_protein, n_lig, n_polymers
         )
-        # Packmol uses box [-L/2, L/2]; shift to [0, L) for PBC
-        half_nm = box_size_nm / 2.0
-        shift = [half_nm, half_nm, half_nm]
+        # Packmol output: coordinates in [0, L] nm (insulin centered at L/2); OpenMM PBC matches
         combined_pos = unit.Quantity(
-            [
-                [p[0] + shift[0], p[1] + shift[1], p[2] + shift[2]]
-                for p in prot_pos_nm + lig_pos_nm
-            ],
+            [[p[0], p[1], p[2]] for p in prot_pos_nm + lig_pos_nm],
             unit.nanometers,
         )
 
         box_vectors = (
-            [box_size_nm, 0, 0],
-            [0, box_size_nm, 0],
-            [0, 0, box_size_nm],
+            [effective_box_nm, 0, 0],
+            [0, effective_box_nm, 0],
+            [0, 0, effective_box_nm],
         )
         box_vec_omm = [unit.Quantity(v, unit.nanometers) for v in box_vectors]
 
@@ -609,19 +700,23 @@ def run_openmm_matrix_relax_and_energy(
         )
 
         # Optional: flat-bottom spherical shell restraint on polymer atoms during minimization
-        if restrain_shell:
+        applied_shell_restraint = False
+        if restrain_shell and shell_only_angstrom is not None:
             _add_shell_restraint_force(
                 combined_sys,
                 n_protein,
                 combined_pos,
                 shell_only_angstrom,
-                box_size_nm,
+                effective_box_nm,
                 k_kj_mol_nm2=1000.0,
             )
+            applied_shell_restraint = True
             _log(
                 f"[matrix] Shell restraint: R_in={shell_only_angstrom/10:.2f} nm, "
-                f"R_out={(box_size_nm/2)*0.92:.2f} nm"
+                f"R_out={(effective_box_nm/2)*0.92:.2f} nm"
             )
+        elif restrain_shell and shell_only_angstrom is None:
+            _log("[matrix] Shell restraint skipped (bulk packing or no shell radius)")
 
         protein_top.setPeriodicBoxVectors(box_vec_omm)
         protein_sys = protein_ff.createSystem(
@@ -655,7 +750,7 @@ def run_openmm_matrix_relax_and_energy(
         e_complex_total = state.getPotentialEnergy().value_in_unit(unit.kilojoules_per_mole)
         pos_min = state.getPositions(asNumpy=True)
         # Exclude shell restraint from complex energy for interaction-energy decomposition
-        if restrain_shell:
+        if applied_shell_restraint:
             e_restraint = ctx.getState(getEnergy=True, groups={31}).getPotentialEnergy().value_in_unit(
                 unit.kilojoules_per_mole
             )
@@ -666,9 +761,9 @@ def run_openmm_matrix_relax_and_energy(
         if save_minimized_pdb:
             Path(save_minimized_pdb).parent.mkdir(parents=True, exist_ok=True)
             # Wrap to minimum-image around protein COM so polymers appear encapsulated (not "in vacuum")
-            pos_to_write = _wrap_positions_minimum_image(pos_min, n_protein, box_size_nm)
+            pos_to_write = _wrap_positions_minimum_image(pos_min, n_protein, effective_box_nm)
             # Use plain-float Vec3 for CRYST1 (Quantity causes TypeError in writeHeader)
-            L_nm = float(box_size_nm)
+            L_nm = float(effective_box_nm)
             combined_top.setUnitCellDimensions(openmm.Vec3(L_nm, L_nm, L_nm))
             with open(save_minimized_pdb, "w") as f:
                 app.PDBFile.writeFile(combined_top, pos_to_write, f)
@@ -754,18 +849,35 @@ def run_openmm_matrix_relax_and_energy(
             e_ligs = _e(ligands_sys, pos_ligs)
             e_int = float(e_complex) - float(e_prot) - float(e_ligs)
 
+        method_name = (
+            "OpenMM_matrix_bulk_AMBER14SB_GAFF_Gasteiger"
+            if packing_mode == "bulk"
+            else "OpenMM_matrix_encapsulated_AMBER14SB_GAFF_Gasteiger"
+        )
         out: Dict[str, Any] = {
             "psmiles": psmiles,
-            "method": "OpenMM_matrix_encapsulated_AMBER14SB_GAFF_Gasteiger",
+            "method": method_name,
+            "packing_mode": packing_mode,
             "potential_energy_complex_kj_mol": float(e_complex),
             "interaction_energy_kj_mol": float(e_int),
             "n_insulin_atoms": n_protein,
             "n_polymer_chains": n_polymers,
             "n_polymer_atoms_per_chain": n_lig,
             "shell_angstrom": shell_only_angstrom,
-            "box_nm": box_size_nm,
+            "box_nm": effective_box_nm,
             "gromacs_only": False,
         }
+        if progressive_pack:
+            out["packmol_progressive"] = {
+                "enabled": True,
+                "n_polymers_start": pack_result.get("n_polymers_start"),
+                "stopped_reason": pack_result.get("stopped_reason"),
+                "attempts": pack_result.get("attempts"),
+                "total_pack_seconds": pack_result.get("total_pack_seconds"),
+                "per_attempt_timeout_s": progressive_per_attempt_timeout_s,
+                "max_total_s": progressive_max_total_s,
+                "n_max": progressive_n_max,
+            }
         if save_minimized_pdb:
             out["minimized_pdb"] = save_minimized_pdb
         if e_int_std is not None:

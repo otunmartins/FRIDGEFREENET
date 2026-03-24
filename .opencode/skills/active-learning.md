@@ -19,11 +19,11 @@ Unless the user asked for a subset (e.g. "only mine"):
 1. **Mine** – `mine_literature(query=..., iteration=N, ...)` (includes PaperQA2 when indexed)
 2. **Translate** – Convert material names to PSMILES (polymer chemistry knowledge)
 3. **Validate** – `validate_psmiles(psmiles)` for each
-4. **Evaluate** – `evaluate_psmiles(psmiles_list)` via OpenMM
+4. **Evaluate** – `evaluate_psmiles(psmiles_list)` — use a **comma-separated string** or **JSON array of strings** for `psmiles_list`. OpenMM Packmol matrix (requires **packmol** on PATH)
 5. **Mutate** – `mutate_psmiles(feedback_json=...)` with high performers and problematic PSMILES from evaluation
 6. **Save** – `save_discovery_state(iteration=N, feedback_json=..., query_used=..., notes=...)`
 7. **Report** – Summarize to user; write `SUMMARY_REPORT.md` / PDF per `docs/SUMMARY_REPORT_STYLE.md`
-8. **Archive chat** – **Required:** `import_chat_transcript_file` (JSONL from `~/.cursor/.../agent-transcripts/`) or `save_session_transcript` (full recap). Every time.
+8. **Archive chat** – **Required:** `import_chat_transcript_file` (read JSONL source path — often under `~/.cursor/.../agent-transcripts/` — and **copy into** `runs/<session>/`) or `save_session_transcript` (full recap **into** `runs/<session>/` **only**). **Never** treat `.cursor/` as the destination for the session archive. Every time.
 9. **Refine** – Use feedback to build a better query for the next iteration
 10. Repeat from step 1
 
@@ -48,6 +48,6 @@ Use MCP `run_autonomous_discovery` or orchestrate `mine_literature` / `evaluate_
 
 ## Summary report (human-readable)
 
-The **agent** writes `SUMMARY_REPORT.md` in the session run folder, calls **`render_psmiles_png`** for figures, then **`compile_discovery_markdown_to_pdf`** for the PDF. Optional **`write_discovery_summary_report`** only auto-builds a skeleton from JSON. **Always** archive the conversation into the same folder via **`import_chat_transcript_file`** or **`save_session_transcript`** (required by default).
+The **agent** writes `SUMMARY_REPORT.md` in the session run folder, embedding **`structures/`** monomer and complex PNGs from evaluation (`*_monomer.png`, `*_complex_preview.png`, `*_complex_chemviz.png`; see **`docs/SUMMARY_REPORT_STYLE.md`**), using **`render_psmiles_png`** only when needed for extra 2D figures, then **`compile_discovery_markdown_to_pdf`** for the PDF. Optional **`write_discovery_summary_report`** auto-builds a skeleton from JSON and embeds those evaluate-style PNGs if present. **Always** archive the conversation into the **session run folder** (same as SUMMARY_REPORT / iteration outputs) via **`import_chat_transcript_file`** or **`save_session_transcript`** — **not** under `.cursor/` (required by default).
 
 **Prose and citations:** follow **`docs/SUMMARY_REPORT_STYLE.md`** (research-paper structure; references with journal abbrev., volume, pages, year; avoid em dashes, colon chains, and common LLM filler patterns). See also `docs/DEPENDENCIES.md` (MCP — discovery figures & PDF reports).

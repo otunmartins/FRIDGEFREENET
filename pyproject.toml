@@ -20,6 +20,7 @@ dependencies = [
     "psmiles @ git+https://github.com/FermiQ/psmiles.git",
     "fpdf2>=2.8.0",
     "markdown>=3.5",
+    "Pillow>=10.0",
 ]
 # Full pip list (conda + pip): see requirements.txt and environment-simulation.yml
 classifiers = [
@@ -41,6 +42,7 @@ openmm = [
     "openff-toolkit>=0.18.0",
     "pdbfixer",
     "rdkit",
+    "matplotlib>=3.7",
 ]
 simulation = [
     "rdkit",
@@ -48,6 +50,7 @@ simulation = [
     "openmmforcefields>=0.14.0",
     "openff-toolkit>=0.18.0",
     "pdbfixer",
+    "matplotlib>=3.7",
 ]
 paperqa = [
     "paper-qa>=2026.2",

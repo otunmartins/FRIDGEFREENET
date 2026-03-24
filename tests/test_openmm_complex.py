@@ -209,6 +209,29 @@ def test_openmm_complex_minimization_and_interaction():
     assert abs(res["interaction_energy_kj_mol"]) < 1e6
 
 
+def test_openmm_complex_writes_minimized_pdb(tmp_path):
+    """Optional save_complex_pdb writes a PDB with ATOM records."""
+    from insulin_ai.simulation.openmm_compat import openmm_available
+
+    if not openmm_available():
+        pytest.skip("openmm + openmmforcefields + openff.toolkit required")
+
+    from insulin_ai.simulation.openmm_complex import run_openmm_relax_and_energy
+
+    out_pdb = tmp_path / "complex_min.pdb"
+    res = run_openmm_relax_and_energy(
+        "[*]CC[*]",
+        n_repeats=1,
+        ligand_offset_nm=(2.0, 0.0, 0.0),
+        max_minimize_steps=300,
+        save_complex_pdb=str(out_pdb),
+    )
+    assert res is not None
+    assert res.get("complex_pdb_path") == str(out_pdb.resolve())
+    text = out_pdb.read_text(encoding="utf-8")
+    assert "ATOM" in text or "HETATM" in text
+
+
 def test_openmm_matrix_density_driven():
     """Density-driven matrix encapsulation: Packmol + minimize + interaction energy."""
     from insulin_ai.simulation.openmm_compat import openmm_available
@@ -230,6 +253,7 @@ def test_openmm_matrix_density_driven():
     assert res is not None
     assert "interaction_energy_kj_mol" in res
     assert "n_polymer_chains" in res
+    assert res.get("packing_mode") == "bulk"
     assert res["n_polymer_chains"] >= 4
     assert abs(res["interaction_energy_kj_mol"]) < 1e6
 

@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Literal, Optional, Tuple
+
+PackingMode = Literal["shell", "bulk"]
 
 AVOGADRO = 6.02214076e23
 
@@ -66,35 +68,56 @@ def suggest_n_polymers_from_density(
     shell_inner_angstrom: Optional[float] = None,
     insulin_pdb_path: Optional[str] = None,
     n_min: int = 4,
-    n_max: int = 32,
-) -> Tuple[int, float]:
+    n_max: int = 100,
+    packing_mode: PackingMode = "bulk",
+    volume_fraction_polymer: float = 0.92,
+) -> Tuple[int, Optional[float]]:
     """
-    PSP-style: derive n_polymers from target density and shell volume.
+    Derive n_polymers from target polymer density.
 
-    Primary driver for density-driven encapsulation. n = density × V_shell × N_A / MW.
+    **shell** mode: n = density × V_shell × N_A / MW where V_shell is the box minus
+    the inner sphere (encapsulation).
+
+    **bulk** mode: n = density × (V_box × volume_fraction_polymer) × N_A / MW —
+    polymer mass per **total cell** (approximate; insulin mass is secondary).
 
     Args:
         target_density_g_cm3: Target polymer density in g/cm³.
         psmiles: Repeat unit SMILES with [*].
         n_repeats: Repeat units per chain.
         box_size_nm: Cubic box edge in nm.
-        shell_inner_angstrom: Inner sphere radius (Å). If None, computed from PDB.
+        shell_inner_angstrom: Inner sphere radius (Å), **shell** mode only.
         insulin_pdb_path: PDB path for radius; used when shell_inner_angstrom is None.
-        n_min, n_max: Clamp n_polymers for Packmol tractability.
+        n_min, n_max: Clamp n_polymers for Packmol tractability (default *n_max* **100**;
+        a low cap with a large box makes the cell look sparse vs target density).
+        packing_mode: ``bulk`` (default) or ``shell``.
+        volume_fraction_polymer: Effective polymer volume fraction of the cell (**bulk**).
 
     Returns:
-        (n_polymers, shell_inner_angstrom).
+        (n_polymers, shell_inner_angstrom). Second value is ``None`` in **bulk** mode.
     """
+    mw = estimate_chain_mw_g_mol(psmiles, n_repeats)
+    if mw <= 0:
+        if packing_mode == "bulk":
+            return max(n_min, min(n_max, 12)), None
+        if shell_inner_angstrom is None and insulin_pdb_path:
+            shell_inner_angstrom = compute_shell_inner_from_pdb(insulin_pdb_path)
+        if shell_inner_angstrom is None:
+            shell_inner_angstrom = 15.0
+        return max(n_min, min(n_max, 12)), shell_inner_angstrom
+
+    if packing_mode == "bulk":
+        v = box_volume_cm3(box_size_nm) * volume_fraction_polymer
+        n_mol = target_density_g_cm3 * v / mw
+        n = int(round(n_mol * AVOGADRO))
+        return max(n_min, min(n_max, n)), None
+
     if shell_inner_angstrom is None and insulin_pdb_path:
         shell_inner_angstrom = compute_shell_inner_from_pdb(insulin_pdb_path)
     if shell_inner_angstrom is None:
         shell_inner_angstrom = 15.0
 
     v_shell = shell_volume_cm3(box_size_nm, shell_inner_angstrom)
-    mw = estimate_chain_mw_g_mol(psmiles, n_repeats)
-    if mw <= 0:
-        return max(n_min, min(n_max, 12)), shell_inner_angstrom
-
     n_mol = target_density_g_cm3 * v_shell / mw
     n = int(round(n_mol * AVOGADRO))
     return max(n_min, min(n_max, n)), shell_inner_angstrom

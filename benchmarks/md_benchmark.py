@@ -1,4 +1,8 @@
-"""OpenMM merged minimize timing (requires OpenMM + openmmforcefields + OpenFF on PATH / env)."""
+"""OpenMM merged minimize timing (requires OpenMM + openmmforcefields + OpenFF).
+
+This benchmarks ``run_openmm_relax_and_energy`` (single oligomer), not MCP ``evaluate_psmiles``
+(matrix / Packmol). For matrix timing, use ``scripts/run_openmm_matrix.py``.
+"""
 
 import time
 

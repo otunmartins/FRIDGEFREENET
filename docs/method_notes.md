@@ -1,13 +1,13 @@
 # Method notes
 
-- **Screening:** OpenMM **local energy minimization** on merged **insulin (AMBER14SB)** + **polymer (GAFF via openmmforcefields, Gasteiger charges)**. Feedback uses **interaction energy** (kJ/mol) when available and median-split ranking on energy for batch comparison. Rankings differ from legacy GROMACS (AMBER99SB-ILDN + Acpype) runs.
+- **Screening:** OpenMM **Packmol matrix** — default **`INSULIN_AI_OPENMM_MATRIX_PACKING_MODE=bulk`** (space-filling cell) or **`shell`** (annulus / encapsulation). Default **density-driven** chain count unless `INSULIN_AI_OPENMM_MATRIX_FIXED_MODE=1` (**shell** volume vs **full-cell** volume for **bulk**; see `matrix_density.py`). **Local energy minimization**, optional short NPT, then **interaction energy** (kJ/mol). Requires **packmol** on PATH. Protein: **AMBER14SB**; polymers: **GAFF** via openmmforcefields, **Gasteiger** charges. Each run adds **`packing_metrics`** (polymer–protein proximity on the minimized PDB). Feedback uses interaction energy and median-split ranking for batch comparison. Rankings differ from legacy GROMACS (AMBER99SB-ILDN + Acpype) runs.
 - **Literature:** Semantic Scholar / Asta + PSMILES proposals.
 
 ## Discovery reports (MCP; AI-authored)
 
-Preferred flow: the **agent** writes `SUMMARY_REPORT.md` in the session run folder, calls **`render_psmiles_png`** ([psmiles](https://github.com/FermiQ/psmiles) 2D PNGs), then **`compile_discovery_markdown_to_pdf`** (`markdown` + `fpdf2`). Optional batch tool **`write_discovery_summary_report`** only rebuilds a minimal report from `agent_iteration_*.json` without narrative.
+Preferred flow: the **agent** writes `SUMMARY_REPORT.md` in the session run folder, calls **`render_psmiles_png`** ([psmiles](https://github.com/FermiQ/psmiles) 2D PNGs), then **`compile_discovery_markdown_to_pdf`** (`markdown` + `fpdf2` + **Pillow** for image normalization; no manual `*_raster.png` files). Optional batch tool **`write_discovery_summary_report`** only rebuilds a minimal report from `agent_iteration_*.json` without narrative.
 
-Style and citations: [SUMMARY_REPORT_STYLE.md](SUMMARY_REPORT_STYLE.md). **Chat archive:** each run must call `import_chat_transcript_file` or `save_session_transcript` into the same `runs/` folder ([OpenCode_PLATFORM.md](OpenCode_PLATFORM.md)). Dependencies: [DEPENDENCIES.md](DEPENDENCIES.md) (MCP — discovery figures & PDF reports).
+Style and citations: [SUMMARY_REPORT_STYLE.md](SUMMARY_REPORT_STYLE.md). **Chat archive:** each run must call `import_chat_transcript_file` or `save_session_transcript` so the transcript file lives **only** in the same `runs/<session>/` folder as the iteration outputs — **not** under `.cursor/` ([OpenCode_PLATFORM.md](OpenCode_PLATFORM.md)). Dependencies: [DEPENDENCIES.md](DEPENDENCIES.md) (MCP — discovery figures & PDF reports).
 
 ## Optuna PSMILES benchmark (agent-free)
 

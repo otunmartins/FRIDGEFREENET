@@ -12,6 +12,7 @@ structures, then ``compile_markdown_to_pdf`` to produce a PDF. No LLM runs insid
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from datetime import datetime
@@ -111,6 +112,51 @@ def _ascii_safe(text: str) -> str:
     return text.encode("ascii", "replace").decode("ascii")
 
 
+# PNGs written by evaluate_psmiles / render scripts under session ``structures/``.
+_STRUCTURE_VIZ_SUFFIXES: Tuple[Tuple[str, str, str], ...] = (
+    ("_monomer.png", "monomer", "Repeat unit (2D)"),
+    ("_complex_preview.png", "preview", "Complex preview (minimized)"),
+    ("_complex_chemviz.png", "chemviz", "Complex ribbon + polymer sticks"),
+    ("_complex_minimized_pymol.png", "pymol", "Complex (PyMOL)"),
+)
+
+
+def gather_structure_visualizations(structures_dir: Path) -> Dict[str, Dict[str, str]]:
+    """
+    Collect evaluate_psmiles-style PNG paths grouped by basename (e.g. ``Candidate_0``).
+
+    Returns mapping ``base_name -> {kind: "structures/<file>.png"}`` for files present on disk.
+    """
+    out: Dict[str, Dict[str, str]] = {}
+    if not structures_dir.is_dir():
+        return out
+    for path in sorted(structures_dir.iterdir()):
+        if not path.is_file() or path.suffix.lower() != ".png":
+            continue
+        name = path.name
+        for suffix, kind, _cap in _STRUCTURE_VIZ_SUFFIXES:
+            if name.endswith(suffix):
+                base = name[: -len(suffix)]
+                rel = f"structures/{name}"
+                out.setdefault(base, {})[kind] = rel
+                break
+    return out
+
+
+def _markdown_images_for_viz_group(base: str, kinds: Dict[str, str]) -> List[str]:
+    """Markdown lines for one candidate's visualization set (fixed order)."""
+    lines: List[str] = []
+    label_base = _ascii_safe(base.replace("_", " "))
+    for _suffix, kind, caption in _STRUCTURE_VIZ_SUFFIXES:
+        rel = kinds.get(kind)
+        if not rel:
+            continue
+        cap = _ascii_safe(f"{label_base} - {caption}")
+        lines.append(f"![{cap}]({rel})")
+        lines.append("")
+    return lines
+
+
 def write_markdown_summary(
     session_dir: Path,
     entries: List[Tuple[str, str]],
@@ -121,6 +167,10 @@ def write_markdown_summary(
 ) -> Path:
     """Write SUMMARY_REPORT.md (Markdown with relative image links)."""
     md_path = session_dir / "SUMMARY_REPORT.md"
+    structures = session_dir / "structures"
+    viz_all = gather_structure_visualizations(structures)
+    viz_shown_slugs: set[str] = set()
+
     lines: List[str] = [
         f"# {_ascii_safe(title)}",
         "",
@@ -142,16 +192,35 @@ def write_markdown_summary(
                 "",
                 img_line,
                 "",
-                "---",
-                "",
             ]
         )
+        if slug in viz_all:
+            lines.extend(_markdown_images_for_viz_group(slug, viz_all[slug]))
+            viz_shown_slugs.add(slug)
+        lines.extend(["---", ""])
+
+    extra_viz_bases = sorted(b for b in viz_all if b not in viz_shown_slugs)
+    if extra_viz_bases:
+        lines.append("## Molecular visualizations (session structures)")
+        lines.append("")
+        lines.append(
+            "PNGs from OpenMM evaluation or render scripts under `structures/` "
+            "(monomer 2D, complex preview, ribbon/chemviz, optional PyMOL).",
+        )
+        lines.append("")
+        for base in extra_viz_bases:
+            lines.append(f"### {_ascii_safe(base.replace('_', ' '))}")
+            lines.append("")
+            lines.extend(_markdown_images_for_viz_group(base, viz_all[base]))
+            lines.append("---")
+            lines.append("")
+
     if iteration_meta:
         lines.append("## Iteration metadata")
         lines.append("")
         for m in iteration_meta:
             notes = m.get("notes") or ""
-            lines.append(f"- `{m.get('file')}` — iteration {m.get('iteration')}, notes: {str(notes)[:200]}")
+            lines.append(f"- `{m.get('file')}` - iteration {m.get('iteration')}, notes: {str(notes)[:200]}")
         lines.append("")
     md_path.write_text("\n".join(lines), encoding="utf-8")
     return md_path
@@ -245,6 +314,76 @@ def _html_resolve_image_src(html: str, base: Path) -> str:
     return html
 
 
+_IMG_EXT = frozenset(
+    {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tif", ".tiff"}
+)
+
+
+def _normalize_image_for_fpdf(src: Path, cache_dir: Path) -> Path:
+    """
+    Re-encode a raster image to an 8-bit RGB PNG on white (no alpha) for reliable fpdf2 embedding.
+
+    Matplotlib, psmiles, and some tools emit palette or RGBA PNGs that ``FPDF.write_html`` may reject;
+    this avoids manual ``_raster`` renames in Markdown.
+    """
+    from PIL import Image
+
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        st = src.stat()
+        key = f"{src.resolve()}|{st.st_mtime_ns}|{st.st_size}"
+    except OSError:
+        key = str(src.resolve())
+    h = hashlib.sha256(key.encode()).hexdigest()[:28]
+    out = cache_dir / f"fpdf_img_{h}.png"
+    if out.is_file():
+        return out
+
+    im = Image.open(src)
+    im.load()
+    if im.mode == "P":
+        im = im.convert("RGBA") if "transparency" in im.info else im.convert("RGB")
+    if im.mode in ("RGBA", "LA"):
+        if im.mode == "LA":
+            im = im.convert("RGBA")
+        bg = Image.new("RGB", im.size, (255, 255, 255))
+        bg.paste(im, mask=im.split()[3])
+        im = bg
+    elif im.mode != "RGB":
+        im = im.convert("RGB")
+
+    im.save(out, format="PNG", optimize=True)
+    return out
+
+
+def _html_normalize_local_images_for_fpdf(html: str, cache_dir: Path) -> str:
+    """Rewrite ``img`` src for local files to normalized PNG paths (see ``_normalize_image_for_fpdf``)."""
+
+    def _maybe_norm(raw: str) -> str:
+        s = raw.strip()
+        if s.startswith(("http://", "https://", "data:")):
+            return s
+        p = Path(s)
+        if not p.is_file():
+            return s
+        if p.suffix.lower() not in _IMG_EXT:
+            return s
+        try:
+            return _normalize_image_for_fpdf(p, cache_dir).as_posix()
+        except Exception:
+            return s
+
+    def sub_double(m) -> str:
+        return f'src="{_maybe_norm(m.group(1))}"'
+
+    def sub_single(m) -> str:
+        return f"src='{_maybe_norm(m.group(1))}'"
+
+    html = re.sub(r'src="([^"]+)"', sub_double, html)
+    html = re.sub(r"src='([^']+)'", sub_single, html)
+    return html
+
+
 def compile_markdown_to_pdf(
     session_dir: Path,
     *,
@@ -285,6 +424,8 @@ def compile_markdown_to_pdf(
     )
     html = f"<div>{html}</div>"
     html = _html_resolve_image_src(html, session_dir)
+    cache_dir = session_dir / ".discovery_pdf_cache"
+    html = _html_normalize_local_images_for_fpdf(html, cache_dir)
 
     try:
         from fpdf import FPDF

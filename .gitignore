@@ -54,6 +54,7 @@ Thumbs.db
 
 # Project specific
 mining_results/*.json
+.discovery_pdf_cache/
 
 # Chat / caches (chatbot_system used chat_memory/)
 chat_memory/

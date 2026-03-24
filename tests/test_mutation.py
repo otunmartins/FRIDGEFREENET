@@ -98,10 +98,14 @@ def test_mutation_candidates_compatible_with_mdsimulator():
     assert all("chemical_structure" in c and "material_name" in c for c in cands)
 
     from insulin_ai.simulation.openmm_compat import openmm_available
+    from insulin_ai.simulation.packmol_packer import _packmol_available
 
     if not openmm_available():
         import pytest
         pytest.skip("OpenMM stack required for evaluate_candidates")
+    if not _packmol_available():
+        import pytest
+        pytest.skip("packmol binary required for evaluate_candidates (matrix encapsulation)")
     sim = MDSimulator(n_steps=500)
     result = sim.evaluate_candidates(cands, max_candidates=2)
 

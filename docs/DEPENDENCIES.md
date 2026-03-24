@@ -2,13 +2,16 @@
 
 | File | Role |
 |------|------|
-| **`environment-simulation.yml`** | **conda env `insulin-ai-sim`:** Python, **rdkit**, **openmm**, **pdbfixer**, pip (openmmforcefields, openff-toolkit, packmol, psmiles, **optuna**, **fpdf2**, **markdown**, mcp, paper-qa, `-e .`) |
+| **`environment-simulation.yml`** | **conda env `insulin-ai-sim`:** Python, **rdkit**, **openmm**, **pdbfixer**, pip (openmmforcefields, openff-toolkit, packmol, psmiles, **matplotlib**, **optuna**, **fpdf2**, **markdown**, mcp, paper-qa, `-e .`) |
 | **`requirements.txt`** | Pointer to conda env |
 
 ## Simulation / evaluate
 
-- **OpenMM**, **openmmforcefields**, **OpenFF Toolkit**, **RDKit**, **pdbfixer**: merged insulin + polymer minimize and interaction energy (see `docs/OPENMM_SCREENING.md`).
-- **`INSULIN_AI_OPENMM_N_REPEATS`** (alias `INSULIN_AI_GMX_N_REPEATS`), **`INSULIN_AI_OPENMM_OFFSET_NM`** (alias `INSULIN_AI_GMX_OFFSET_NM`), **`INSULIN_AI_OPENMM_MAX_MINIMIZE_STEPS`** optional.
+- **OpenMM**, **openmmforcefields**, **OpenFF Toolkit**, **RDKit**, **pdbfixer**, **matplotlib** (structure preview PNGs for reports).
+- **Optional — PyMOL** (open-source: `conda install -c conda-forge pymol` or `pip install pymol-open-source`): `INSULIN_AI_COMPLEX_VIZ=auto` (default) uses the `pymol` binary on PATH for **complex_chemviz** images (insulin cartoon + DSS secondary structure, polymer ball-and-stick); falls back to matplotlib if PyMOL is missing. Set `INSULIN_AI_COMPLEX_VIZ=pymol` to require PyMOL, or `matplotlib` to skip PyMOL.
+- **Re-render session PDBs with PyMOL** (same logic as MCP): `mamba run -n insulin-ai-sim python scripts/render_complex_pymol.py runs/<session>/structures` — writes `Candidate_*_complex_minimized_pymol.png` next to each minimized PDB (no RDKit import required). On **macOS ARM**, `pip install pymol-open-source` may need conda-forge **`glew`** and **`libnetcdf`** in the same env if the wheel fails to load `libGLEW` / `libnetcdf` (see PyMOL install notes for your platform).
+- **packmol** (binary on PATH): **required** for MCP **`evaluate_psmiles`** / **`MDSimulator.evaluate_candidates`**, which run **Packmol matrix encapsulation** (`run_openmm_matrix_relax_and_energy`). Without Packmol, evaluation raises at startup. See `docs/OPENMM_SCREENING.md` for matrix env vars (`INSULIN_AI_OPENMM_MATRIX_*`, etc.).
+- For a **fast merged** single-oligomer diagnostic (no Packmol), use **`scripts/diagnose_openmm_complex.py`** only; it is not the MCP screening path.
 
 ```bash
 pytest tests/test_simulation.py tests/test_openmm_complex.py tests/test_material_mappings.py -v
@@ -41,9 +44,10 @@ These power **insulin-ai** MCP tools; they are **not** used by the Optuna benchm
 | **[psmiles](https://github.com/FermiQ/psmiles)** (git in `pyproject.toml`) | `PolymerSmiles.savefig` — 2D PNG of repeat units; `render_psmiles_png` | Tool returns install hint; use `insulin-ai-sim` |
 | **fpdf2** | PDF output (`compile_discovery_markdown_to_pdf`, batch `write_discovery_summary_report`) | PDF step fails; error JSON lists `pip install fpdf2` |
 | **markdown** | MD → HTML before PDF (`compile_discovery_markdown_to_pdf`) | Tool error; `pip install markdown` |
+| **Pillow** | Re-encode local ``img`` files (RGBA, palette, etc.) to RGB PNG before fpdf2 embeds them—no manual ``*_raster.png`` workarounds | `pip install Pillow` |
 | **duckduckgo-search** | `validate_psmiles(..., crosscheck_web=true)` snippets | Cross-check disabled or error per tool |
 
-**AI-driven reporting (preferred):** the agent writes `SUMMARY_REPORT.md`, calls `render_psmiles_png` for figures, then `compile_discovery_markdown_to_pdf`. No extra packages beyond the table above for that path.
+**AI-driven reporting (preferred):** the agent writes `SUMMARY_REPORT.md`, calls `render_psmiles_png` for figures (or relies on `evaluate_psmiles` session artifacts for monomer + complex preview), then `compile_discovery_markdown_to_pdf`. **Matplotlib** is required for automatic complex preview PNGs from `evaluate_psmiles` when structure artifacts are enabled.
 
 **Optional:** `write_discovery_summary_report` rebuilds a minimal MD+PDF from `agent_iteration_*.json` only (quick skeleton, no narrative)—same dependencies.
 

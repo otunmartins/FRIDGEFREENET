@@ -48,6 +48,34 @@ def test_all_mcp_servers_load():
         _load_mcp_server(path)
 
 
+def test_normalize_psmiles_list_for_eval():
+    try:
+        mod = _load_mcp_server("insulin_ai_mcp_server.py")
+    except (ImportError, ModuleNotFoundError) as e:
+        import pytest
+
+        pytest.skip(f"MCP dependencies unavailable: {e}")
+    n = mod._normalize_psmiles_list_for_eval
+    assert n("[*]A[*],[*]B[*]") == ["[*]A[*]", "[*]B[*]"]
+    assert n(["[*]A[*]", "[*]B[*]"]) == ["[*]A[*]", "[*]B[*]"]
+    assert n('["[*]A[*]", "[*]B[*]"]') == ["[*]A[*]", "[*]B[*]"]
+    assert n("[*]A[*]") == ["[*]A[*]"]
+    assert n("") == []
+    assert n(None) == []
+
+
+def test_evaluate_psmiles_empty_returns_json_error():
+    try:
+        mod = _load_mcp_server("insulin_ai_mcp_server.py")
+    except (ImportError, ModuleNotFoundError) as e:
+        import pytest
+
+        pytest.skip(f"MCP dependencies unavailable: {e}")
+    out = json.loads(mod.evaluate_psmiles("", verbose=False))
+    assert out.get("error")
+    assert "empty" in out["error"].lower() or "parsed" in out["error"].lower()
+
+
 def test_validate_psmiles_json_shape():
     """validate_psmiles returns JSON with valid; optional name_crosscheck when enabled."""
     try:

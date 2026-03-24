@@ -26,10 +26,66 @@ sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "src", "python"))
 
 from pathlib import Path
+from typing import Any, List, Union
 
 from mcp.server.fastmcp import FastMCP
 
 from insulin_ai.run_paths import ENV_SESSION, new_session_dir, session_dir_from_env
+
+
+def _normalize_psmiles_list_for_eval(psmiles_list: Union[str, List[Any], None]) -> List[str]:
+    """
+    Build a list of PSMILES strings from MCP arguments.
+
+    Some clients send a comma-separated string (schema-native); others send a JSON array of
+    strings. A few send a single string that is itself a JSON array. All are accepted so tool
+    validation does not abort before the handler runs.
+    """
+    if psmiles_list is None:
+        return []
+    if isinstance(psmiles_list, list):
+        out: List[str] = []
+        for p in psmiles_list:
+            if p is None:
+                continue
+            s = str(p).strip().strip('"').strip("'")
+            if s:
+                out.append(s)
+        return out
+
+    s = str(psmiles_list).strip()
+    if not s:
+        return []
+    if s.startswith("["):
+        try:
+            parsed = json.loads(s)
+            if isinstance(parsed, list):
+                return [
+                    str(x).strip().strip('"').strip("'")
+                    for x in parsed
+                    if str(x).strip()
+                ]
+        except json.JSONDecodeError:
+            pass
+    return [p.strip().strip('"').strip("'") for p in s.split(",") if p.strip()]
+
+
+def _coerce_bool_flag(value: Any, default: bool = True) -> bool:
+    """Accept bool or common string/int shapes from MCP clients."""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return value != 0
+    if isinstance(value, str):
+        v = value.strip().lower()
+        if v in ("0", "false", "no", "off", ""):
+            return False
+        if v in ("1", "true", "yes", "on"):
+            return True
+    return default
+
 
 mcp = FastMCP(
     "insulin-ai-materials",
@@ -39,7 +95,7 @@ mcp = FastMCP(
         "evaluate_psmiles (OpenMM merged minimize), render_psmiles_png (2D PNG for reports), "
         "compile_discovery_markdown_to_pdf (agent-written MD → PDF), "
         "write_discovery_summary_report (optional batch from saved JSON), "
-        "save_session_transcript / import_chat_transcript_file (required each run: archive chat into runs/), "
+        "save_session_transcript / import_chat_transcript_file (required each run: copy chat archive into runs/<session>/ only, never under .cursor/), "
         "PubMed, arXiv, Scholar, web search."
     ),
 )
@@ -325,23 +381,60 @@ def validate_psmiles(
 
 
 @mcp.tool()
-def evaluate_psmiles(psmiles_list: str, verbose: bool = True) -> str:
+def evaluate_psmiles(
+    psmiles_list: Union[str, List[Any]],
+    verbose: Union[bool, str, int] = True,
+    run_dir: str = "",
+    artifacts_dir: str = "",
+) -> str:
     """
-    Evaluate PSMILES via OpenMM: insulin AMBER14SB + polymer GAFF (Gasteiger), energy minimization,
-    then interaction energy (screening — not a multi-ns MD trajectory). Comma-separated PSMILES.
+    Evaluate PSMILES via OpenMM **Packmol matrix**: insulin AMBER14SB + multiple polymer
+    chains (GAFF, Gasteiger) packed **bulk-in-cell** by default (or annulus **shell** via env), energy minimization, optional short NPT,
+    then interaction energy (screening — not a multi-ns production MD).
+
+    **psmiles_list:** comma-separated string (preferred in docs) **or** a JSON array of strings,
+    e.g. ``"[*]CC[*],[*]O[*]"`` or ``["[*]CC[*]", "[*]O[*]"]``. OpenCode and other hosts vary;
+    both shapes are accepted.
+
+    **Requires the ``packmol`` binary on PATH** (conda-forge or ``pip install packmol``). If Packmol is
+    missing, the tool fails immediately. See ``docs/OPENMM_SCREENING.md`` for matrix parameters
+    (``INSULIN_AI_OPENMM_MATRIX_*``, etc.). For a fast **single-oligomer** vacuum test without Packmol,
+    use ``scripts/diagnose_openmm_complex.py`` — that path is **not** used here.
 
     By default (verbose=true) the JSON includes per-candidate timing and energies (evaluation_progress)
     and the MCP server logs progress to stderr. Pass verbose=false or set env INSULIN_AI_EVAL_QUIET=1
     (or INSULIN_AI_EVAL_VERBOSE=0) for a smaller response and no progress lines.
+
+    **Structure artifacts for SUMMARY_REPORT:** When ``run_dir`` is set (or ``INSULIN_AI_SESSION_DIR``
+    points at the session folder), minimized matrix complex PDB plus monomer 2D PNG (psmiles ``savefig``),
+    preview PNG, and ribbon/chemviz PNG are written under ``<session>/structures/`` unless
+    disabled with ``INSULIN_AI_EVAL_NO_STRUCTURE_ARTIFACTS=1``. Override the directory with
+    non-empty ``artifacts_dir`` or env ``INSULIN_AI_EVAL_ARTIFACTS_DIR``.
     """
     try:
+        parts = _normalize_psmiles_list_for_eval(psmiles_list)
+        if not parts:
+            return json.dumps(
+                {
+                    "error": "psmiles_list is empty or could not be parsed",
+                    "hint": "Pass a comma-separated string or a JSON array of PSMILES strings (each with two [*]).",
+                    "received_type": type(psmiles_list).__name__,
+                },
+                indent=2,
+            )
         from insulin_ai.simulation import MDSimulator
 
-        parts = [p.strip().strip('"') for p in psmiles_list.split(",")]
         candidates = [{"material_name": f"Candidate_{i}", "chemical_structure": p} for i, p in enumerate(parts)]
         sim = MDSimulator(n_steps=5000)
+        ad = (artifacts_dir or "").strip()
+        if not ad and (run_dir or "").strip():
+            ad = str(_session_dir_for_mcp(run_dir) / "structures")
+        vb = _coerce_bool_flag(verbose, default=True)
         result = sim.evaluate_candidates(
-            candidates, max_candidates=len(candidates), verbose=verbose
+            candidates,
+            max_candidates=len(candidates),
+            verbose=vb,
+            artifacts_dir=ad or None,
         )
         try:
             from insulin_ai.simulation.scoring import discovery_score
@@ -360,6 +453,25 @@ def evaluate_psmiles(psmiles_list: str, verbose: bool = True) -> str:
             out["evaluation_progress"] = result["evaluation_progress"]
         if result.get("evaluation_note"):
             out["evaluation_note"] = result["evaluation_note"]
+        if result.get("structure_artifacts_dir"):
+            out["structure_artifacts_dir"] = result["structure_artifacts_dir"]
+        raw = result.get("md_results_raw") or []
+        paths = []
+        for r in raw:
+            if not isinstance(r, dict):
+                continue
+            paths.append(
+                {
+                    "psmiles": r.get("psmiles"),
+                    "complex_pdb_path": r.get("complex_pdb_path"),
+                    "monomer_png_path": r.get("monomer_png_path"),
+                    "complex_preview_png_path": r.get("complex_preview_png_path"),
+                    "complex_chemviz_png_path": r.get("complex_chemviz_png_path"),
+                    "packing_metrics": r.get("packing_metrics"),
+                }
+            )
+        if paths:
+            out["structure_artifact_paths"] = paths
         return json.dumps(out, indent=2)
     except Exception as e:
         return f"Error: {e}"
@@ -548,8 +660,9 @@ def save_session_transcript(
     or copy failure), with a **complete** Markdown recap (tool calls, decisions, results). OpenCode
     does not mirror chat into ``runs/`` automatically.
 
-    Writes UTF-8 to ``<session>/<filename>`` (default ``SESSION_TRANSCRIPT.md``). For JSONL originals
-    from disk, prefer ``import_chat_transcript_file``.
+    Writes UTF-8 to ``<session>/<filename>`` (default ``SESSION_TRANSCRIPT.md``) under the iteration
+    output folder only — **not** under ``.cursor/``. For JSONL originals from disk, prefer
+    ``import_chat_transcript_file``.
     """
     session = _session_dir_for_mcp(run_dir)
     session.mkdir(parents=True, exist_ok=True)
@@ -571,7 +684,9 @@ def import_chat_transcript_file(
     run_dir: str = "",
 ) -> str:
     """
-    Copy a chat transcript **file** from disk into ``runs/<session>/``. Allowed sources only:
+    Copy a chat transcript **file** from disk **into** ``runs/<session>/`` (same folder as SUMMARY_REPORT
+    and other iteration outputs). **Do not** use ``.cursor/`` as the **destination**; it may be the
+    **source** path only. Allowed sources only:
 
     - Any path **under this repository** (insulin-ai), or
     - Files under ``~/.cursor/.../agent-transcripts/`` (OpenCode parent chat JSONL).
@@ -911,8 +1026,9 @@ def compile_discovery_markdown_to_pdf(
     You compose the narrative, tables, and interpretation in Markdown; follow ``docs/SUMMARY_REPORT_STYLE.md``
     (research-paper tone, full journal-style references, avoid em-dash/colon AI prose patterns). Call
     ``render_psmiles_png`` for 2D figures, reference them in the MD, then run this tool to produce
-    ``SUMMARY_REPORT.pdf``. Uses **markdown** + **fpdf2** (see ``docs/DEPENDENCIES.md``). Relative image
-    paths are resolved against the session directory.
+    ``SUMMARY_REPORT.pdf``. Uses **markdown** + **fpdf2** + **Pillow** (see ``docs/DEPENDENCIES.md``).
+    Local images (e.g. under ``structures/``) are re-encoded to RGB PNG for fpdf2; you do not need
+    separate ``*_raster.png`` copies. Relative image paths are resolved against the session directory.
     """
     session = _session_dir_for_mcp(run_dir)
     from insulin_ai.discovery_report import compile_markdown_to_pdf
@@ -934,8 +1050,12 @@ def write_discovery_summary_report(
     """
     **Optional batch helper** (not a substitute for an AI-written report): reads ``agent_iteration_*.json``,
     auto-builds a minimal **SUMMARY_REPORT.md** + PNGs + PDF from saved feedback only—use when you need
-    a quick skeleton without narrative. For **normal** scientific summaries, the agent should write
-    ``SUMMARY_REPORT.md`` and call ``compile_discovery_markdown_to_pdf`` after ``render_psmiles_png``.
+    a quick skeleton without narrative. Any evaluate_psmiles-style files already in ``structures/``
+    (``*_monomer.png``, ``*_complex_preview.png``, ``*_complex_chemviz.png``, optional ``*_complex_minimized_pymol.png``)
+    are embedded in the Markdown (and PDF) under each matching candidate slug, or in a **Molecular visualizations**
+    section for filenames that do not match feedback labels (e.g. ``Candidate_0_*``). For **normal** scientific
+    summaries, the agent should write ``SUMMARY_REPORT.md`` and call ``compile_discovery_markdown_to_pdf`` after
+    ``render_psmiles_png`` (same image paths; see ``docs/SUMMARY_REPORT_STYLE.md``).
     Requires **psmiles**, **fpdf2**, **markdown** (see ``docs/DEPENDENCIES.md``).
     """
     session = _session_dir_for_mcp(run_dir)

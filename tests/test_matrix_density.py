@@ -32,8 +32,9 @@ def test_suggest_n_polymers_from_density():
         n_repeats=4,
         box_size_nm=9.0,
         shell_inner_angstrom=14.0,
+        packing_mode="shell",
     )
-    assert 4 <= n1 <= 32
+    assert 4 <= n1 <= 100
     assert shell1 == 14.0
 
     n2, _ = suggest_n_polymers_from_density(
@@ -42,8 +43,36 @@ def test_suggest_n_polymers_from_density():
         n_repeats=4,
         box_size_nm=9.0,
         shell_inner_angstrom=14.0,
+        packing_mode="shell",
     )
     assert n2 >= n1
+
+
+def test_suggest_n_polymers_from_density_bulk():
+    """Bulk uses full-box volume; shell_inner is None; n scales above shell for same rho."""
+    from insulin_ai.simulation.matrix_density import suggest_n_polymers_from_density
+
+    n_bulk, inner_bulk = suggest_n_polymers_from_density(
+        target_density_g_cm3=0.5,
+        psmiles="[*]CC[*]",
+        n_repeats=4,
+        box_size_nm=9.0,
+        packing_mode="bulk",
+        volume_fraction_polymer=0.92,
+    )
+    assert inner_bulk is None
+    assert 4 <= n_bulk <= 100
+
+    n_shell, inner_shell = suggest_n_polymers_from_density(
+        target_density_g_cm3=0.5,
+        psmiles="[*]CC[*]",
+        n_repeats=4,
+        box_size_nm=9.0,
+        shell_inner_angstrom=14.0,
+        packing_mode="shell",
+    )
+    assert inner_shell == 14.0
+    assert n_bulk >= n_shell
 
 
 def test_compute_shell_inner_from_pdb():
