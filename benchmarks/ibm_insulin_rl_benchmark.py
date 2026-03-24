@@ -35,14 +35,8 @@ Usage
 -----
 .. code-block:: bash
 
-    # Quick mock run (no OpenMM required)
+    # Defaults match 20 agentic iterations × 10 evals (see module constants).
     python benchmarks/ibm_insulin_rl_benchmark.py \\
-        --mode train --algorithm dqn --n-timesteps 500 \\
-        --mock --output results/ibm_dqn_mock.json
-
-    # Real training with pre-computed cache
-    python benchmarks/ibm_insulin_rl_benchmark.py \\
-        --mode train --algorithm dqn --n-timesteps 50000 \\
         --cache-path data/ibm_psmiles_cache.json \\
         --output results/ibm_dqn.json
 
@@ -75,6 +69,17 @@ if str(_ROOT / "src" / "python") not in sys.path:
     sys.path.insert(0, str(_ROOT / "src" / "python"))
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
+
+# Parity with agentic discovery: ``run_autonomous_discovery_loop`` uses up to
+# ``max_eval_per_iteration`` (often 8–10) evaluations per iteration. Defaults
+# below match **20 iterations × 10 evals** → 200 training env steps, 20 test
+# episodes, ≤10 steps per episode, 10 proposals per RL step.
+_AGENTIC_ITERATIONS_EQUIVALENT = 20
+_AGENTIC_EVALS_PER_ITERATION = 10
+DEFAULT_N_TIMESTEPS = _AGENTIC_ITERATIONS_EQUIVALENT * _AGENTIC_EVALS_PER_ITERATION
+DEFAULT_MAX_STEPS_ENV = _AGENTIC_EVALS_PER_ITERATION
+DEFAULT_N_PROPOSALS = _AGENTIC_EVALS_PER_ITERATION
+DEFAULT_N_EPISODES = _AGENTIC_ITERATIONS_EQUIVALENT
 
 
 # ---------------------------------------------------------------------------
@@ -115,47 +120,6 @@ def append_comparison_tsv(tsv_path: str, row: Dict[str, Any]) -> None:
         if write_header:
             writer.writeheader()
         writer.writerow(row)
-
-
-# ---------------------------------------------------------------------------
-# Mock evaluator (no OpenMM needed)
-# ---------------------------------------------------------------------------
-def _make_mock_evaluator(
-    target_energy_kj: float = -5.0,
-    random_seed: int = 42,
-) -> Callable[[List[Dict[str, Any]], int], Dict[str, Any]]:
-    """Return a deterministic mock evaluate_candidates_fn for testing."""
-    import hashlib
-
-    from insulin_ai.simulation.property_extractor import PropertyExtractor
-
-    extractor = PropertyExtractor()
-
-    def fn(candidates: List[Dict[str, Any]], max_candidates: int) -> Dict[str, Any]:
-        md_results = []
-        for c in candidates[:max_candidates]:
-            ps = c.get("chemical_structure") or c.get("psmiles") or ""
-            digest = int(hashlib.md5(ps.encode()).hexdigest()[:8], 16)
-            # Deterministic fake energy: 30% chance of being a "target"
-            fraction = (digest % 100) / 100.0
-            e_int = target_energy_kj * 3 * fraction - 2.0  # range: [-17, -2]
-            rmsd = 0.05 + 0.2 * fraction
-            md_results.append({
-                "psmiles": ps,
-                "interaction_energy_kj_mol": e_int,
-                "insulin_rmsd_to_initial_nm": rmsd,
-                "potential_energy_complex_kj_mol": -1000.0 + e_int,
-                "potential_energy_insulin_kj_mol": -800.0,
-                "potential_energy_polymer_kj_mol": -200.0 + e_int * 0.1,
-                "insulin_polymer_contacts": 8 if e_int < target_energy_kj else 2,
-                "method": "mock",
-            })
-        names = [c.get("material_name", f"C_{i}") for i, c in enumerate(candidates[:max_candidates])]
-        feedback = extractor.extract_feedback(md_results, names)
-        feedback["md_results_raw"] = md_results
-        return feedback
-
-    return fn
 
 
 # ---------------------------------------------------------------------------
@@ -370,17 +334,19 @@ def run_ibm_insulin_benchmark(
     mode: str = "train",
     algorithm: str = "dqn",
     seed_psmiles: str = "[*]OCC[*]",
-    n_proposals: int = 20,
-    max_steps: int = 100,
+    n_proposals: int = DEFAULT_N_PROPOSALS,
+    max_steps: int = DEFAULT_MAX_STEPS_ENV,
     n_targets: int = 5,
     target_energy_kj: float = -5.0,
     md_steps: int = 5000,
-    n_timesteps: int = 50_000,
-    n_episodes: int = 20,
+    n_timesteps: int = DEFAULT_N_TIMESTEPS,
+    n_episodes: int = DEFAULT_N_EPISODES,
     random_seed: int = 42,
     model_path: Optional[str] = None,
     cache_path: Optional[str] = None,
-    mock: bool = False,
+    evaluate_candidates_fn: Optional[
+        Callable[[List[Dict[str, Any]], int], Dict[str, Any]]
+    ] = None,
     comparison_tsv: Optional[str] = None,
     verbose: int = 0,
 ) -> Dict[str, Any]:
@@ -395,22 +361,19 @@ def run_ibm_insulin_benchmark(
         n_targets: Early-stop targets per episode.
         target_energy_kj: Reward "target" threshold (kJ/mol).
         md_steps: OpenMM minimisation steps (per candidate).
-        n_timesteps: RL training steps.
-        n_episodes: Test episodes.
+        n_timesteps: RL training steps (default: 200 = 20 agentic iterations × 10 evals).
+        n_episodes: Test episodes (default: 20 = one rollout per iteration).
         random_seed: Global RNG seed.
         model_path: Save / load model here.
         cache_path: Pre-computed evaluation cache (JSON).
-        mock: Use mock evaluator instead of OpenMM (for CI / testing).
+        evaluate_candidates_fn: Optional replacement for ``MDSimulator.evaluate_candidates``
+            (tests only; default is live OpenMM).
         comparison_tsv: If set, append a comparison row to this TSV file.
         verbose: SB3 verbosity (0=silent).
 
     Returns:
         JSON-serialisable result dict.
     """
-    eval_fn = None
-    if mock:
-        eval_fn = _make_mock_evaluator(target_energy_kj=target_energy_kj, random_seed=random_seed)
-
     env_kwargs: Dict[str, Any] = dict(
         seed_psmiles=seed_psmiles,
         n_proposals=n_proposals,
@@ -419,7 +382,7 @@ def run_ibm_insulin_benchmark(
         target_energy_kj=target_energy_kj,
         md_steps=md_steps,
         random_seed=random_seed,
-        evaluate_candidates_fn=eval_fn,
+        evaluate_candidates_fn=evaluate_candidates_fn,
         cache_path=cache_path,
     )
 
@@ -432,7 +395,7 @@ def run_ibm_insulin_benchmark(
         "target_energy_kj": target_energy_kj,
         "n_timesteps": n_timesteps,
         "n_episodes": n_episodes,
-        "mock": mock,
+        "evaluation": "injected" if evaluate_candidates_fn else "live_openmm",
         "cache_path": cache_path,
     }
 
@@ -491,7 +454,11 @@ def run_ibm_insulin_benchmark(
             seed_psmiles=seed_psmiles,
             n_proposals=n_proposals,
             target_energy_kj=target_energy_kj,
-            notes="mock" if mock else ("cache" if cache_path else "live_openmm"),
+            notes=(
+                "injected_evaluator"
+                if evaluate_candidates_fn
+                else ("cache" if cache_path else "live_openmm")
+            ),
         )
         append_comparison_tsv(comparison_tsv, row)
         logger.info("Comparison row appended to %s", comparison_tsv)
@@ -534,14 +501,20 @@ def main() -> None:
     p.add_argument(
         "--n-proposals",
         type=int,
-        default=20,
-        help="Candidate pool size per step (action space, default: 20).",
+        default=DEFAULT_N_PROPOSALS,
+        help=(
+            "Candidate pool size per step (default: %d, same as agentic max evals/iteration)."
+            % DEFAULT_N_PROPOSALS
+        ),
     )
     p.add_argument(
         "--max-steps",
         type=int,
-        default=100,
-        help="Maximum steps per episode (default: 100).",
+        default=DEFAULT_MAX_STEPS_ENV,
+        help=(
+            "Maximum steps per episode (default: %d, same cap as evals per agentic iteration)."
+            % DEFAULT_MAX_STEPS_ENV
+        ),
     )
     p.add_argument(
         "--n-targets",
@@ -565,14 +538,24 @@ def main() -> None:
     p.add_argument(
         "--n-timesteps",
         type=int,
-        default=50_000,
-        help="RL training timesteps (default: 50000).",
+        default=DEFAULT_N_TIMESTEPS,
+        help=(
+            "RL training timesteps (default: %d = %d agentic iterations × %d evals)."
+            % (
+                DEFAULT_N_TIMESTEPS,
+                _AGENTIC_ITERATIONS_EQUIVALENT,
+                _AGENTIC_EVALS_PER_ITERATION,
+            )
+        ),
     )
     p.add_argument(
         "--n-episodes",
         type=int,
-        default=20,
-        help="Test episodes (default: 20).",
+        default=DEFAULT_N_EPISODES,
+        help=(
+            "Test episodes (default: %d = one rollout per agentic iteration)."
+            % DEFAULT_N_EPISODES
+        ),
     )
     p.add_argument(
         "--random-seed",
@@ -591,11 +574,6 @@ def main() -> None:
         type=str,
         default=None,
         help="Pre-computed PSMILES cache JSON (from precompute_psmiles_cache.py).",
-    )
-    p.add_argument(
-        "--mock",
-        action="store_true",
-        help="Use mock evaluator (no OpenMM; for CI / quick tests).",
     )
     p.add_argument(
         "--output",
@@ -631,7 +609,6 @@ def main() -> None:
         random_seed=args.random_seed,
         model_path=args.model_path,
         cache_path=args.cache_path,
-        mock=args.mock,
         comparison_tsv=args.comparison_tsv,
         verbose=args.verbose,
     )

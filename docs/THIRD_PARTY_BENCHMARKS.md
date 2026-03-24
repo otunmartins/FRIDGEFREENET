@@ -66,31 +66,28 @@ pip install stable-baselines3 GPy gymnasium
 
 **Step 2 — pre-compute evaluation cache** (optional but recommended; requires OpenMM + Packmol)
 
+Default **`--n-candidates 200`** matches **20 agentic iterations × up to 10 evaluations** (same total evaluation budget as running the autonomous loop with `max_eval_per_iteration=10` for 20 iterations). The cache is a lookup table for PSMILES that may appear during RL; size can be lowered if you accept more cache misses.
+
 ```bash
 python benchmarks/precompute_psmiles_cache.py \
     --n-candidates 200 \
     --output data/ibm_psmiles_cache.json
 ```
 
-**Step 3 — train and test (mock, no OpenMM)**
+**Step 3 — train and test (live OpenMM; optional cache from Step 2)**
 
-```bash
-python benchmarks/ibm_insulin_rl_benchmark.py \
-    --mode train_and_test --algorithm dqn --n-timesteps 500 \
-    --mock --output results/ibm_dqn_mock.json
-```
-
-**Step 4 — train and test (real OpenMM, with cache)**
+CLI defaults are aligned with that same **20×10** scheme: **`--n-timesteps 200`** (training env steps), **`--max-steps 10`**, **`--n-proposals 10`**, **`--n-episodes 20`**. Override flags if you need a different budget.
 
 ```bash
 python benchmarks/ibm_insulin_rl_benchmark.py \
     --mode train_and_test --algorithm dqn \
     --cache-path data/ibm_psmiles_cache.json \
-    --n-timesteps 50000 --n-episodes 20 \
     --model-path models/ibm_dqn_insulin.zip \
     --output results/ibm_dqn.json \
     --comparison-tsv benchmarks/comparison_results.tsv
 ```
+
+Omit `--cache-path` to evaluate only uncached PSMILES via OpenMM (slower). SB3 pipeline tests in `tests/test_ibm_insulin_env.py` inject a stub evaluator so CI does not require OpenMM.
 
 ### Reward structure
 

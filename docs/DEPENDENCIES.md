@@ -1,5 +1,9 @@
 # Dependencies
 
+This document lists the scientific and reporting dependencies for insulin-ai (OpenMM, RDKit, Packmol, psmiles, etc.). For install and MCP setup, start with [MCP Getting Started](MCP_GETTING_STARTED.md).
+
+---
+
 | File | Role |
 |------|------|
 | **`environment-simulation.yml`** | **conda env `insulin-ai-sim`:** Python, **rdkit**, **openmm**, **pdbfixer**, pip (openmmforcefields, openff-toolkit, packmol, psmiles, **matplotlib**, **optuna**, **fpdf2**, **markdown**, mcp, paper-qa, `-e .`) |

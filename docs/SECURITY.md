@@ -1,5 +1,9 @@
 # Security
 
+This page covers API keys, secrets, and safe configuration for insulin-ai. For first-time setup, see [MCP Getting Started](MCP_GETTING_STARTED.md).
+
+---
+
 ## API keys and MCP
 
 - **Never commit** real API keys, GitHub PATs, or Asta keys into the repo.

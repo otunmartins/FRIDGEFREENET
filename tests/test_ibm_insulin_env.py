@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Callable, Dict, List
 from unittest.mock import patch
 
 import numpy as np
@@ -445,13 +445,49 @@ class TestLogicalInsulinPSMILESEnv:
 
 
 # ---------------------------------------------------------------------------
-# Benchmark script (mock mode)
+# Benchmark script (injected evaluator — no OpenMM)
 # ---------------------------------------------------------------------------
 
+def _stub_evaluate_candidates_for_benchmark(
+    target_energy_kj: float = -5.0,
+) -> Callable[[List[Dict[str, Any]], int], Dict[str, Any]]:
+    """Deterministic fake MD for SB3 pipeline tests (not live OpenMM)."""
+    import hashlib
+
+    from insulin_ai.simulation.property_extractor import PropertyExtractor
+
+    extractor = PropertyExtractor()
+
+    def fn(candidates: List[Dict[str, Any]], max_candidates: int) -> Dict[str, Any]:
+        md_results = []
+        for c in candidates[:max_candidates]:
+            ps = c.get("chemical_structure") or c.get("psmiles") or ""
+            digest = int(hashlib.md5(ps.encode()).hexdigest()[:8], 16)
+            fraction = (digest % 100) / 100.0
+            e_int = target_energy_kj * 3 * fraction - 2.0
+            rmsd = 0.05 + 0.2 * fraction
+            md_results.append({
+                "psmiles": ps,
+                "interaction_energy_kj_mol": e_int,
+                "insulin_rmsd_to_initial_nm": rmsd,
+                "potential_energy_complex_kj_mol": -1000.0 + e_int,
+                "potential_energy_insulin_kj_mol": -800.0,
+                "potential_energy_polymer_kj_mol": -200.0 + e_int * 0.1,
+                "insulin_polymer_contacts": 8 if e_int < target_energy_kj else 2,
+                "method": "stub",
+            })
+        names = [c.get("material_name", f"C_{i}") for i, c in enumerate(candidates[:max_candidates])]
+        feedback = extractor.extract_feedback(md_results, names)
+        feedback["md_results_raw"] = md_results
+        return feedback
+
+    return fn
+
+
 @pytestmark_gym
-class TestIBMBenchmarkMockMode:
-    def test_train_and_test_mock_returns_scores(self):
-        sb3 = pytest.importorskip("stable_baselines3")
+class TestIBMBenchmarkStubEvalMode:
+    def test_train_and_test_stub_returns_scores(self):
+        pytest.importorskip("stable_baselines3")
         from benchmarks.ibm_insulin_rl_benchmark import run_ibm_insulin_benchmark
 
         result = run_ibm_insulin_benchmark(
@@ -464,14 +500,15 @@ class TestIBMBenchmarkMockMode:
             n_timesteps=100,
             n_episodes=2,
             random_seed=42,
-            mock=True,
+            evaluate_candidates_fn=_stub_evaluate_candidates_for_benchmark(),
         )
         assert result["train_completed"] is True
+        assert result.get("evaluation") == "injected"
         assert "best_discovery_score" in result
         assert "n_evaluations" in result
         assert "avg_episode_reward" in result
 
-    def test_train_mock_dqn(self):
+    def test_train_stub_dqn(self):
         pytest.importorskip("stable_baselines3")
         from benchmarks.ibm_insulin_rl_benchmark import run_ibm_insulin_benchmark
 
@@ -482,11 +519,11 @@ class TestIBMBenchmarkMockMode:
             max_steps=5,
             n_timesteps=50,
             n_episodes=1,
-            mock=True,
+            evaluate_candidates_fn=_stub_evaluate_candidates_for_benchmark(),
         )
         assert result["train_completed"] is True
 
-    def test_train_mock_ppo(self):
+    def test_train_stub_ppo(self):
         pytest.importorskip("stable_baselines3")
         from benchmarks.ibm_insulin_rl_benchmark import run_ibm_insulin_benchmark
 
@@ -497,7 +534,7 @@ class TestIBMBenchmarkMockMode:
             max_steps=5,
             n_timesteps=50,
             n_episodes=1,
-            mock=True,
+            evaluate_candidates_fn=_stub_evaluate_candidates_for_benchmark(),
         )
         assert result["train_completed"] is True
 
@@ -513,7 +550,7 @@ class TestIBMBenchmarkMockMode:
             max_steps=5,
             n_timesteps=50,
             n_episodes=1,
-            mock=True,
+            evaluate_candidates_fn=_stub_evaluate_candidates_for_benchmark(),
             comparison_tsv=tsv_path,
         )
         assert Path(tsv_path).is_file()

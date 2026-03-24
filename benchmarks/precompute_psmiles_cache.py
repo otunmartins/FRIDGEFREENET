@@ -278,7 +278,10 @@ def main() -> None:
         "--n-candidates",
         type=int,
         default=200,
-        help="Number of PSMILES to evaluate (default: 200).",
+        help=(
+            "Number of PSMILES to evaluate (default: 200 = 20 agentic iterations "
+            "× 10 evals, matching IBM RL default budget)."
+        ),
     )
     p.add_argument(
         "--md-steps",
