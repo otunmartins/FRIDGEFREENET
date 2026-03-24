@@ -15,9 +15,9 @@ These benchmarks are **independent of the MCP server** ([`insulin_ai_mcp_server.
 
 **Wrapper:** `python benchmarks/polymer_generative_models_benchmark.py` — verifies clone and MOSES layout.
 
-**Objective:** Metrics are **as defined in the paper**, not insulin-ai’s `discovery_score` (PSMILES + OpenMM) unless you add a custom adapter later.
+**Objective:** Metrics are **as defined in the paper**, not insulin-ai's `discovery_score` (PSMILES + OpenMM) unless you add a custom adapter later.
 
-## 2. IBM logical-agent-driven polymer discovery
+## 2. IBM logical-agent-driven polymer discovery (upstream smoke check)
 
 | | |
 |--|--|
@@ -29,13 +29,97 @@ These benchmarks are **independent of the MCP server** ([`insulin_ai_mcp_server.
 
 **Setup:** `pip install -e md-envs`, unzip `data/polymerDiscovery.zip`, `python scripts/update_pickled_function.py` (see upstream README).
 
-**Wrapper:** `python benchmarks/ibm_polymer_rl_benchmark.py` — runs `python scripts/main.py test -h` as a CLI smoke check when the clone exists.
+**Smoke wrapper:** `python benchmarks/ibm_polymer_rl_benchmark.py` — runs `python scripts/main.py test -h` as a CLI check when the clone is present.
 
 **License:** Follow upstream `LICENSE` for redistribution.
 
+## 3. IBM RL adapted to insulin-ai evaluation (insulin-ai adapter)
+
+This is the primary benchmarking target: the IBM neuro-symbolic RL **optimization loop** (which PSMILES to try next) is retained intact, but the **evaluation** and **scoring** are replaced with insulin-ai's OpenMM pipeline — identical to the agentic MCP `evaluate_psmiles` tool.
+
+| Component | Source |
+|-----------|--------|
+| Optimization loop (which polymer next) | IBM DQN / PPO with logical action-aware features |
+| PSMILES proposal | `insulin_ai.mutation.feedback_guided_mutation` |
+| Evaluation | `MDSimulator.evaluate_candidates` (OpenMM Packmol matrix) |
+| Scoring | `scoring.composite_screening_score` + `scoring.discovery_score` |
+| Feedback | `PropertyExtractor.extract_feedback` |
+
+All scoring functions are **identical** to the agentic MCP loop and the Optuna benchmark, enabling direct comparison.
+
+### New files
+
+| File | Purpose |
+|------|---------|
+| [`benchmarks/ibm_insulin_env.py`](../benchmarks/ibm_insulin_env.py) | `InsulinPSMILESEnv` (base Gym env) and `LogicalInsulinPSMILESEnv` (logical-feature wrapper) |
+| [`benchmarks/ibm_insulin_rl_benchmark.py`](../benchmarks/ibm_insulin_rl_benchmark.py) | Train/test entry script (mirrors `optuna_psmiles_discovery.py`); outputs JSON + TSV |
+| [`benchmarks/precompute_psmiles_cache.py`](../benchmarks/precompute_psmiles_cache.py) | Pre-evaluate a batch of PSMILES offline for reproducible training |
+| [`tests/test_ibm_insulin_env.py`](../tests/test_ibm_insulin_env.py) | Unit tests (skip when Gym not installed) |
+
+### Quick start
+
+**Step 1 — install RL dependencies**
+
+```bash
+pip install stable-baselines3 GPy gymnasium
+```
+
+**Step 2 — pre-compute evaluation cache** (optional but recommended; requires OpenMM + Packmol)
+
+```bash
+python benchmarks/precompute_psmiles_cache.py \
+    --n-candidates 200 \
+    --output data/ibm_psmiles_cache.json
+```
+
+**Step 3 — train and test (mock, no OpenMM)**
+
+```bash
+python benchmarks/ibm_insulin_rl_benchmark.py \
+    --mode train_and_test --algorithm dqn --n-timesteps 500 \
+    --mock --output results/ibm_dqn_mock.json
+```
+
+**Step 4 — train and test (real OpenMM, with cache)**
+
+```bash
+python benchmarks/ibm_insulin_rl_benchmark.py \
+    --mode train_and_test --algorithm dqn \
+    --cache-path data/ibm_psmiles_cache.json \
+    --n-timesteps 50000 --n-episodes 20 \
+    --model-path models/ibm_dqn_insulin.zip \
+    --output results/ibm_dqn.json \
+    --comparison-tsv benchmarks/comparison_results.tsv
+```
+
+### Reward structure
+
+IBM's 4-tier reward is mapped from insulin-ai's interaction energy:
+
+| Tier | IBM reward | insulin-ai condition |
+|------|-----------|----------------------|
+| `target` | +1.0 | `interaction_energy_kj_mol < -5.0 kJ/mol` |
+| `valid` | -0.01 | evaluated, energy above threshold |
+| `revisit` | -0.5 | PSMILES already tried in this episode |
+| `no-go` | -1.0 | fails `validate_psmiles` or `prescreen_psmiles_for_md` |
+
+### Comparison harness
+
+All benchmark methods write a shared TSV (`benchmarks/comparison_results.tsv`) with fixed columns:
+
+```
+method | n_evaluations | best_discovery_score | best_interaction_energy_kj_mol
+n_high_performers_found | n_unique_psmiles_evaluated | wall_time_s | ...
+```
+
+This enables fixed-budget comparison (e.g. "50 OpenMM calls") across:
+- `agentic` (LLM + MCP tools)
+- `optuna` (`benchmarks/optuna_psmiles_discovery.py`)
+- `ibm_rl_dqn` and `ibm_rl_ppo` (this adapter)
+
 ## Dependencies
 
-Heavy stacks (**PyTorch**, etc.) come from **upstream** `requirements` / conda envs — not pinned in insulin-ai’s base [`pyproject.toml`](../pyproject.toml). Install inside a dedicated venv or conda env if you run full training. See also [`docs/DEPENDENCIES.md`](DEPENDENCIES.md).
+Heavy stacks (**PyTorch**, **stable-baselines3**, **GPy**, **gymnasium**) are not pinned in insulin-ai's base [`pyproject.toml`](../pyproject.toml). Install inside a dedicated venv or conda env if you run full training. See also [`docs/DEPENDENCIES.md`](DEPENDENCIES.md).
 
 ## Optional: GLAS (genetic algorithm)
 
