@@ -370,15 +370,18 @@ Extract information ONLY if supported by the provided papers."""
             if psm:
                 high_psmiles.append(psm)
 
-        # Problematic: often prefixed like "high_energy_drift_X"; try to resolve
         problematic_psmiles = []
         for item in limitations:
-            if isinstance(item, str) and "[*]" in item:
+            if not isinstance(item, str):
+                continue
+            if "[*]" in item:
                 problematic_psmiles.append(item)
-            else:
-                psm = name_to_psmiles.get(str(item))
-                if psm:
-                    problematic_psmiles.append(psm)
+                continue
+            # Format: "category:candidate_name" (e.g. "high_interaction_energy:Candidate_0")
+            candidate_name = item.split(":", 1)[1] if ":" in item else item
+            psm = name_to_psmiles.get(candidate_name)
+            if psm:
+                problematic_psmiles.append(psm)
 
         return {
             "top_candidates": top,

@@ -124,6 +124,13 @@ def rdkit_mol_to_openff_with_gasteiger(rdkit_mol: Chem.Mol):
         rdkit_mol.GetAtomWithIdx(i).GetDoubleProp("_GasteigerCharge")
         for i in range(rdkit_mol.GetNumAtoms())
     ]
+    n_nan = sum(1 for c in charges if math.isnan(c))
+    if n_nan > 0:
+        logger.warning(
+            "Gasteiger produced %d NaN charge(s) out of %d atoms; zeroing them. "
+            "Electrostatics for this candidate may be unreliable.",
+            n_nan, len(charges),
+        )
     charges = [0.0 if math.isnan(c) else c for c in charges]
     mol_off = Molecule.from_rdkit(rdkit_mol, allow_undefined_stereo=True)
     mol_off.partial_charges = off_unit.Quantity(charges, off_unit.elementary_charge)
@@ -291,14 +298,15 @@ def run_openmm_relax_and_energy(
     protein_pos = modeller.positions
     n_protein = protein_top.getNumAtoms()
 
-    capped = build_polymer_oligomer_smiles(psmiles, n_repeats)
+    capped, _actual = build_polymer_oligomer_smiles(psmiles, n_repeats)
     if not capped:
         return None
     lig_mol = Chem.MolFromSmiles(capped)
     if lig_mol is None:
         return None
     lig_mol = Chem.AddHs(lig_mol)
-    if not embed_mol_3d(lig_mol, random_seed):
+    ok, _err = embed_mol_3d(lig_mol, random_seed)
+    if not ok:
         return None
 
     lig_top, lig_sys = create_ligand_system(lig_mol, box_vectors=None)
@@ -547,9 +555,11 @@ def run_openmm_matrix_relax_and_energy(
     if restrain_shell is None:
         restrain_shell = packing_mode == "shell"
 
+    def _fail(error: str, stage: str) -> Dict[str, Any]:
+        return {"ok": False, "error": error, "stage": stage, "psmiles": psmiles}
+
     if not _packmol_available():
-        logger.warning("packmol not found; cannot run matrix encapsulation")
-        return None
+        return _fail("packmol not found on PATH", "packmol")
 
     pdb_path = insulin_pdb_path or ensure_insulin_pdb()
 
@@ -593,15 +603,16 @@ def run_openmm_matrix_relax_and_energy(
         if packing_mode == "bulk":
             shell_only_angstrom = None
 
-        capped = build_polymer_oligomer_smiles(psmiles, n_repeats)
+        capped, actual_repeats = build_polymer_oligomer_smiles(psmiles, n_repeats)
         if not capped:
-            return None
+            return _fail("build_polymer_oligomer_smiles returned empty (bad PSMILES or n_repeats)", "oligomer_build")
         lig_mol = Chem.MolFromSmiles(capped)
         if lig_mol is None:
-            return None
+            return _fail(f"RDKit MolFromSmiles failed for capped SMILES: {capped[:120]}", "oligomer_build")
         lig_mol = Chem.AddHs(lig_mol)
-        if not embed_mol_3d(lig_mol, random_seed):
-            return None
+        embed_ok, embed_err = embed_mol_3d(lig_mol, random_seed)
+        if not embed_ok:
+            return _fail(f"3D embedding failed: {embed_err}", "embed")
 
         poly_pdb = work / "polymer.pdb"
         Path(poly_pdb).write_text(mol_to_pdb_block(lig_mol))
@@ -648,8 +659,8 @@ def run_openmm_matrix_relax_and_energy(
                 **pack_common_kw,
             )
         if not pack_result.get("success"):
-            logger.warning("Packmol failed")
-            return None
+            pack_err = pack_result.get("stderr", "unknown reason")
+            return _fail(f"Packmol packing failed: {str(pack_err)[:300]}", "packmol")
         if progressive_pack:
             n_polymers = int(pack_result["n_polymers"])
             if verbose:

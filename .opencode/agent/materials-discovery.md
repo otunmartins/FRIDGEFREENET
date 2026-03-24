@@ -43,8 +43,8 @@ You specialize in **insulin patch polymer discovery** for fridge-free insulin de
 ### Iteration 1 (broad exploration)
 
 1. **Mine literature** – `mine_literature(query="...", iteration=1)` → Asta (if key) or Scholar + optional PaperQA2. Optionally call **asta** `search_papers_by_relevance` / `snippet_search` first for richer snippets. **Read abstracts**; list candidate polymers yourself.
-2. **PSMILES** – From abstracts/names, write PSMILES with `[*]`. Use `lookup_material` / `web_search` if needed.
-3. **Validate** – For each candidate, `validate_psmiles(psmiles, material_name="<name from your table>", crosscheck_web=true)` when you have a name; then `validate_psmiles(psmiles)` is enough if anonymous. Fix any failures and retry.
+2. **PSMILES** – From abstracts/names, generate PSMILES. **Prefer `generate_psmiles_from_name(material_name)`** which checks a curated ~60-polymer table first, then falls back to PubChem monomer lookup + automated polymerisation-site detection (vinyl, ester, amide). Only hand-write PSMILES with `[*]` when the tool returns `ok: false`.
+3. **Validate** – For each candidate, `validate_psmiles(psmiles, material_name="<name from your table>")` (always pass the name when you have one). The tool returns **`functional_groups`** (SMARTS counts), **`name_consistency`** (keyword rules check), and **`pubchem_lookup`** (monomer Tanimoto). **If `name_consistency.consistent` is false, fix the PSMILES before evaluating** (use `pubchem_lookup.pubchem_smiles` as a reference for the monomer structure; derive the repeat unit from it). Add `crosscheck_web=true` for extra DuckDuckGo snippets if still uncertain. See **`docs/PSMILES_GUIDE.md`** for details.
 4. **Evaluate** – `evaluate_psmiles(psmiles_list)`. Pass **`psmiles_list` as a comma-separated string** (e.g. `"[*]CC[*],[*]O[*]"`) **or** as a **JSON array of strings**; OpenCode hosts differ, and the server accepts both. OpenMM **Packmol matrix** (insulin + polymer shell), minimize, optional NPT, interaction energy. `property_analysis` includes energies where applicable.
 5. **Mutate** – `mutate_psmiles(feedback_json=...)` passing `{"high_performer_psmiles": [...], "problematic_psmiles": [...]}` from the evaluation. Evaluate the mutated candidates too.
 6. **Save state** – Call `start_discovery_session(run_name=...)` once, then `save_discovery_state(iteration=1, feedback_json=..., run_dir=<session_dir>)` (or omit run_dir after session started). All files live under `runs/<session_id>/`.
@@ -87,7 +87,7 @@ For complex materials (chitosan, hyaluronic acid, collagen), use `lookup_materia
 
 **asta (remote) — corpus:** `search_papers_by_relevance`, `snippet_search`, `search_paper_by_title`, `get_paper`, `get_citations`, author tools — use for search/snippet context; **insulin-ai** for PSMILES and OpenMM screening.
 
-**PSMILES:** `validate_psmiles` (optional **`material_name`** + **`crosscheck_web`**), `psmiles_canonicalize`, `psmiles_dimerize`, `psmiles_fingerprint`, `psmiles_similarity` — see **`docs/PSMILES_GUIDE.md`**
+**PSMILES:** `validate_psmiles` (**always pass `material_name`**; returns `functional_groups`, `name_consistency`, `pubchem_lookup`; optional `crosscheck_web`), `psmiles_canonicalize`, `psmiles_dimerize`, `psmiles_fingerprint`, `psmiles_similarity` — see **`docs/PSMILES_GUIDE.md`**. **Never** use mechanistic language in reports (e.g. "acid-mediated") unless `name_consistency.consistent` was true for that PSMILES; describe the **actual** functional groups instead.
 
 **Reporting (figures + PDF):** `render_psmiles_png`, **`compile_discovery_markdown_to_pdf`** (you write Markdown; the tool builds the PDF). Optional: `write_discovery_summary_report` (auto skeleton from JSON only). **Style:** **`docs/SUMMARY_REPORT_STYLE.md`** (research-paper tone, full citations, anti–AI-prose patterns). Dependencies: **`docs/DEPENDENCIES.md`** (psmiles, fpdf2, markdown).
 

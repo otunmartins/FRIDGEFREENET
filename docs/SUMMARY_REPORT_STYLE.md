@@ -22,7 +22,7 @@ Adapt section names if the journal or lab template requires it; keep the same le
 Embed **two** visuals per candidate when available:
 
 - **Repeat-unit 2D structure** — PNG from **psmiles** (`PolymerSmiles.savefig`), e.g. `structures/<slug>_monomer.png` (also produced by MCP `render_psmiles_png`).
-- **Insulin–polymer complex after OpenMM minimization** — (1) a quick **point cloud** preview: `structures/<slug>_complex_preview.png`; (2) a **ribbon + ball-and-stick** figure: `structures/<slug>_complex_chemviz.png` (CA ribbon for chains A+B, sticks/balls for the polymer using ``CONECT``). Regenerate the latter anytime with `python scripts/render_complex_chemviz.py <session>/structures/`.
+- **Insulin–polymer complex after OpenMM minimization** — (1) a quick **point cloud** preview: `structures/<slug>_complex_preview.png`; (2) a **PyMOL** cartoon + polymer ball-and-stick figure: `structures/<slug>_complex_chemviz.png` (requires `pymol` on PATH). Regenerate the latter with `python scripts/render_complex_chemviz.py <session>/structures/`.
 - **PDB** — `structures/<slug>_complex_minimized.pdb` for reproducibility.
 
 With `INSULIN_AI_SESSION_DIR` set (or MCP `evaluate_psmiles` `run_dir` / `artifacts_dir`), **`evaluate_psmiles`** writes these files under `<session>/structures/` unless disabled (`INSULIN_AI_EVAL_NO_STRUCTURE_ARTIFACTS=1`). In `SUMMARY_REPORT.md` use relative Markdown images, for example:

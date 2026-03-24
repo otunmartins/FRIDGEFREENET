@@ -68,19 +68,6 @@ def _matrix_progressive_n_max() -> Optional[int]:
     return int(raw)
 
 
-def _complex_viz_mode() -> str:
-    """
-    INSULIN_AI_COMPLEX_VIZ: ``pymol`` | ``matplotlib`` | ``auto`` (default).
-
-    ``auto`` tries open-source PyMOL on PATH first (ribbon + DSS for insulin, sticks for
-    polymer), then falls back to matplotlib chemviz.
-    """
-    raw = os.environ.get("INSULIN_AI_COMPLEX_VIZ", "auto").strip().lower()
-    if raw in ("pymol", "matplotlib", "auto"):
-        return raw
-    return "auto"
-
-
 def _effective_matrix_target_density_g_cm3() -> Optional[float]:
     """
     Explicit ``INSULIN_AI_OPENMM_MATRIX_TARGET_DENSITY_G_CM3`` wins.
@@ -196,6 +183,7 @@ class MDSimulator:
         verbose: bool = True,
         artifacts_dir: Optional[str] = None,
     ) -> Dict[str, Any]:
+        from insulin_ai.material_mappings import prescreen_psmiles_for_md
         from insulin_ai.psmiles_drawing import safe_filename_basename, save_psmiles_png
 
         from .openmm_complex import run_openmm_matrix_relax_and_energy
@@ -228,7 +216,6 @@ class MDSimulator:
         npt_ps = _env_float("INSULIN_AI_OPENMM_MATRIX_NPT_PS", "", "0.5")
         wall_s = _env_float("INSULIN_AI_OPENMM_MATRIX_WALL_CLOCK_S", "", "180.0")
         progressive_pack = _matrix_progressive_pack()
-        complex_viz_mode = _complex_viz_mode()
         _rs = os.environ.get("INSULIN_AI_OPENMM_MATRIX_RESTRAIN_SHELL")
         if _rs is None or not str(_rs).strip():
             restrain_shell: Optional[bool] = None
@@ -249,22 +236,40 @@ class MDSimulator:
 
         for i, cand in enumerate(to_eval):
             psmiles = self._get_psmiles(cand)
+            name = cand.get("material_name", psmiles or f"candidate_{i}")
+            material_names.append(name)
+
             if not psmiles or "[*]" not in str(psmiles):
                 md_results.append(None)
-                material_names.append(cand.get("material_name", f"candidate_{i}"))
                 if verbose:
                     entry = {
                         "index": i,
                         "total": n_total,
                         "status": "skipped",
                         "reason": "no valid PSMILES with [*]",
-                        "material_name": cand.get("material_name", f"candidate_{i}"),
+                        "material_name": name,
                     }
                     progress.append(entry)
                     _progress_log(f"[insulin-ai] {i + 1}/{n_total} skipped (no valid PSMILES)")
                 continue
-            name = cand.get("material_name", psmiles)
-            material_names.append(name)
+
+            pre = prescreen_psmiles_for_md(psmiles)
+            if not pre.get("ok"):
+                md_results.append(None)
+                reason = pre.get("error", "prescreen rejected")
+                if verbose:
+                    entry = {
+                        "index": i,
+                        "total": n_total,
+                        "status": "rejected",
+                        "reason": reason,
+                        "material_name": name,
+                        "stage": "prescreen",
+                    }
+                    progress.append(entry)
+                    _progress_log(f"[insulin-ai] {i + 1}/{n_total} rejected: {reason}")
+                continue
+
             preview = str(psmiles)[:60] + ("…" if len(str(psmiles)) > 60 else "")
             t0 = time.perf_counter()
             if verbose:
@@ -304,12 +309,34 @@ class MDSimulator:
                 matrix_kw["box_size_nm"] = box_nm
                 if packing_mode != "bulk":
                     matrix_kw["shell_only_angstrom"] = shell_a
-            res = run_openmm_matrix_relax_and_energy(psmiles, **matrix_kw)
+
+            try:
+                res = run_openmm_matrix_relax_and_energy(psmiles, **matrix_kw)
+            except Exception as exc:
+                res = {"ok": False, "error": str(exc), "stage": "openmm", "psmiles": psmiles}
+
             elapsed = time.perf_counter() - t0
-            if res is None:
-                raise RuntimeError(
-                    f"OpenMM matrix evaluate failed for {name[:40]} (Packmol or setup error; see logs)."
-                )
+
+            if res is None or (isinstance(res, dict) and res.get("ok") is False):
+                err_msg = (res or {}).get("error", "unknown failure")
+                stage = (res or {}).get("stage", "unknown")
+                md_results.append(None)
+                if verbose:
+                    entry = {
+                        "index": i,
+                        "total": n_total,
+                        "status": "failed",
+                        "reason": err_msg,
+                        "stage": stage,
+                        "material_name": name,
+                        "seconds": round(elapsed, 3),
+                    }
+                    progress.append(entry)
+                    _progress_log(
+                        f"[insulin-ai] {i + 1}/{n_total} FAILED ({stage}): {err_msg[:200]}"
+                    )
+                continue
+
             if pdb_out:
                 res["complex_pdb_path"] = pdb_out
             elif res.get("minimized_pdb"):
@@ -346,7 +373,6 @@ class MDSimulator:
                     r_cv, cv_backend = write_complex_viz_png_auto(
                         res["complex_pdb_path"],
                         str(chemviz_png),
-                        mode=complex_viz_mode,
                         n_protein_atoms=res.get("n_insulin_atoms"),
                     )
                     res["complex_chemviz_png_path"] = r_cv.get("path") if r_cv.get("ok") else None

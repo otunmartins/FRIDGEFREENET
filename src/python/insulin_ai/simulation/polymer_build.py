@@ -29,42 +29,53 @@ def ensure_insulin_pdb() -> str:
     raise FileNotFoundError(f"Place 4F1C.pdb in {DATA_DIR}")
 
 
-def embed_mol_3d(mol: Chem.Mol, random_seed: int = 42) -> bool:
+def embed_mol_3d(mol: Chem.Mol, random_seed: int = 42) -> Tuple[bool, str]:
+    """Embed and MMFF-optimize a molecule. Returns ``(success, error_or_empty)``."""
     try:
         r = AllChem.EmbedMolecule(mol, randomSeed=random_seed)
         if r != 0:
-            AllChem.EmbedMolecule(mol, randomSeed=random_seed, useRandomCoords=True)
+            r2 = AllChem.EmbedMolecule(mol, randomSeed=random_seed, useRandomCoords=True)
+            if r2 != 0:
+                return False, f"EmbedMolecule failed (code={r}, random-coords code={r2})"
         AllChem.MMFFOptimizeMolecule(mol)
-        return True
-    except Exception:
-        return False
+        return True, ""
+    except Exception as exc:
+        return False, f"embed/MMFF error: {exc}"
 
 
-def build_polymer_oligomer_smiles(psmiles: str, n_repeats: int) -> Optional[str]:
+def build_polymer_oligomer_smiles(
+    psmiles: str, n_repeats: int
+) -> Tuple[Optional[str], int]:
+    """Build H-capped oligomer. Returns ``(smiles_or_None, actual_repeats)``."""
     if "[*]" not in psmiles or n_repeats < 1:
-        return None
+        return None, 0
     if n_repeats == 1:
-        return psmiles.replace("[*]", "[H]")
+        return psmiles.replace("[*]", "[H]"), 1
     try:
         from psmiles import PolymerSmiles
         chain = psmiles
-        for _ in range(n_repeats - 1):
+        for rep in range(n_repeats - 1):
             ps = PolymerSmiles(chain)
             chain = str(ps.dimer(0)) if hasattr(ps, "dimer") else str(ps.dimerize(star_index=0))
-        return chain.replace("[*]", "[H]")
-    except Exception:
-        return psmiles.replace("[*]", "[H]")
+        return chain.replace("[*]", "[H]"), n_repeats
+    except Exception as exc:
+        warnings.warn(
+            f"psmiles dimer failed after {rep if 'rep' in dir() else 0} repeats ({exc}); "
+            f"falling back to single-repeat H-capped SMILES"
+        )
+        return psmiles.replace("[*]", "[H]"), 1
 
 
 def psmiles_to_mol_3d(psmiles: str, n_repeats: int, random_seed: int = 42) -> Optional[Chem.Mol]:
-    capped = build_polymer_oligomer_smiles(psmiles, n_repeats)
+    capped, _actual = build_polymer_oligomer_smiles(psmiles, n_repeats)
     if not capped:
         return None
     mol = Chem.MolFromSmiles(capped)
     if mol is None:
         return None
     mol = Chem.AddHs(mol)
-    if not embed_mol_3d(mol, random_seed):
+    ok, _err = embed_mol_3d(mol, random_seed)
+    if not ok:
         return None
     return mol
 

@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """
-Render ribbon (CA) + polymer ball-and-stick PNGs from OpenMM complex PDBs.
+Render insulin cartoon + polymer ball-and-stick PNGs from OpenMM complex PDBs (PyMOL only).
+
+Requires ``pymol`` on PATH (open-source: conda-forge or ``pip install pymol-open-source``).
 
   python scripts/render_complex_chemviz.py runs/.../structures/Candidate_0_complex_minimized.pdb
   python scripts/render_complex_chemviz.py runs/.../structures/   # all *_complex_minimized.pdb
@@ -37,7 +39,7 @@ def main() -> int:
     p = Path(args.path).expanduser().resolve()
     chains = tuple(c.strip() for c in args.protein_chains.split(",") if c.strip())
 
-    from insulin_ai.simulation.chemviz_complex import write_complex_chemviz_png
+    from insulin_ai.simulation.pymol_complex_viz import write_complex_pymol_png
 
     pdbs: list[Path] = []
     if p.is_file() and p.suffix.lower() == ".pdb":
@@ -63,7 +65,7 @@ def main() -> int:
             outp = pdb.with_name(pdb.stem.replace("_complex_minimized", "") + "_complex_chemviz.png")
             if "_complex_minimized" not in pdb.stem:
                 outp = pdb.with_suffix("").with_name(pdb.stem + "_chemviz.png").with_suffix(".png")
-        r = write_complex_chemviz_png(str(pdb), str(outp), protein_chains=chains)
+        r = write_complex_pymol_png(str(pdb), str(outp), protein_chains=chains)
         if not r.get("ok"):
             print(f"{pdb.name}: {r.get('error')}", file=sys.stderr)
             rc = 1

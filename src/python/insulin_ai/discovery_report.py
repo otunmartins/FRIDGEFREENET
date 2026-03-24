@@ -116,7 +116,7 @@ def _ascii_safe(text: str) -> str:
 _STRUCTURE_VIZ_SUFFIXES: Tuple[Tuple[str, str, str], ...] = (
     ("_monomer.png", "monomer", "Repeat unit (2D)"),
     ("_complex_preview.png", "preview", "Complex preview (minimized)"),
-    ("_complex_chemviz.png", "chemviz", "Complex ribbon + polymer sticks"),
+    ("_complex_chemviz.png", "chemviz", "Complex (PyMOL cartoon + polymer sticks)"),
     ("_complex_minimized_pymol.png", "pymol", "Complex (PyMOL)"),
 )
 
@@ -205,7 +205,7 @@ def write_markdown_summary(
         lines.append("")
         lines.append(
             "PNGs from OpenMM evaluation or render scripts under `structures/` "
-            "(monomer 2D, complex preview, ribbon/chemviz, optional PyMOL).",
+            "(monomer 2D, complex preview, PyMOL chemviz; optional `*_complex_minimized_pymol.png`).",
         )
         lines.append("")
         for base in extra_viz_bases:

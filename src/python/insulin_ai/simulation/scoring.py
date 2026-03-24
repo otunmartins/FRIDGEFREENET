@@ -56,11 +56,10 @@ def discovery_score(
     composite_scale: float = 3.0,
 ) -> float:
     """
-    Autoresearch score (higher = better).
+    Autoresearch score (higher = better), **normalized by batch size**.
 
-    If use_composite and property_analysis rows include both E_int and
-    insulin_rmsd_to_initial_nm, adds composite_screening_score * composite_scale
-    per candidate. Otherwise falls back to interaction-only bonus.
+    The per-candidate energy/composite bonus is averaged over all candidates with
+    valid data, so the score is comparable across batches of different sizes.
     """
     hp = _len_safe(feedback.get("high_performers"))
     mech = _len_safe(feedback.get("effective_mechanisms"))
@@ -70,7 +69,8 @@ def discovery_score(
         + mech * mechanism_weight
         - bad * problematic_weight
     )
-    bonus = 0.0
+    bonus_sum = 0.0
+    n_scored = 0
     pa = feedback.get("property_analysis") or {}
     if isinstance(pa, dict):
         for _name, row in pa.items():
@@ -85,10 +85,13 @@ def discovery_score(
                 and isinstance(e_int, (int, float))
                 and isinstance(rmsd, (int, float))
             ):
-                bonus += composite_screening_score(e_int, rmsd) * composite_scale
+                bonus_sum += composite_screening_score(e_int, rmsd) * composite_scale
+                n_scored += 1
             elif e_int is not None and isinstance(e_int, (int, float)):
-                bonus += (-float(e_int)) * interaction_scale
-    return base + bonus
+                bonus_sum += (-float(e_int)) * interaction_scale
+                n_scored += 1
+    avg_bonus = bonus_sum / n_scored if n_scored > 0 else 0.0
+    return base + avg_bonus
 
 
 def _len_safe(value: Any) -> int:

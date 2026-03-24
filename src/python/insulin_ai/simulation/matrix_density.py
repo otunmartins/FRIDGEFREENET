@@ -199,7 +199,7 @@ def estimate_chain_mw_g_mol(psmiles: str, n_repeats: int) -> float:
 
             from insulin_ai.simulation.polymer_build import build_polymer_oligomer_smiles
 
-            capped = build_polymer_oligomer_smiles(psmiles, n_repeats)
+            capped, _actual = build_polymer_oligomer_smiles(psmiles, n_repeats)
             if capped:
                 m = Chem.MolFromSmiles(capped)
                 if m is not None:

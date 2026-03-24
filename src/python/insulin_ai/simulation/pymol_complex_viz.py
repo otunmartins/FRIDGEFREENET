@@ -189,39 +189,21 @@ def write_complex_viz_png_auto(
     pdb_path: str,
     output_path: str,
     *,
-    mode: str = "auto",
     n_protein_atoms: Optional[int] = None,
     protein_chains: Sequence[str] = ("A", "B"),
 ) -> Tuple[Dict[str, Any], str]:
     """
-    ``mode``: ``pymol`` | ``matplotlib`` | ``auto`` (try PyMOL first if on PATH).
+    Render ``*_complex_chemviz.png`` using **only** open-source PyMOL (``pymol -c``).
 
-    Returns ``(result_dict, backend_used)``.
+    There is no matplotlib fallback: install ``pymol`` on PATH or the call returns
+    ``ok: false`` with an error message.
+
+    Returns ``(result_dict, "pymol")``.
     """
-    mode_l = (mode or "auto").strip().lower()
-    if mode_l not in ("pymol", "matplotlib", "auto"):
-        mode_l = "auto"
-
-    if mode_l in ("pymol", "auto"):
-        r = write_complex_pymol_png(
-            pdb_path,
-            output_path,
-            n_protein_atoms=n_protein_atoms,
-            protein_chains=protein_chains,
-        )
-        if r.get("ok"):
-            return r, "pymol"
-        if mode_l == "pymol":
-            return r, "pymol"
-
-    from .chemviz_complex import write_complex_chemviz_png
-
-    r2 = write_complex_chemviz_png(
+    r = write_complex_pymol_png(
         pdb_path,
         output_path,
+        n_protein_atoms=n_protein_atoms,
         protein_chains=protein_chains,
     )
-    if r2.get("ok"):
-        r2["backend"] = "matplotlib"
-        return r2, "matplotlib"
-    return r2, "matplotlib"
+    return r, "pymol"

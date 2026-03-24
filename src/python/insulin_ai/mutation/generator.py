@@ -80,15 +80,29 @@ class MaterialMutator:
 
     def _combine_blocks(self, base: str, functional: str) -> str:
         """
-        Combine base and functional blocks into a single PSMILES.
-        Dimerizes base block for extended chain; falls back to base if fails.
+        Combine base and functional blocks into a single PSMILES copolymer unit.
+
+        Tries to dimerize base with functional via the ``psmiles`` package.  If
+        that fails, falls back to a base self-dimer; if that also fails, returns
+        the raw base block.
         """
         try:
             from psmiles import PolymerSmiles
+            ps_base = PolymerSmiles(base)
+            ps_func = PolymerSmiles(functional)
+            if hasattr(ps_base, "dimer"):
+                combined = str(ps_base.dimer(0, other=ps_func))
+            else:
+                combined = str(ps_base.dimerize(star_index=0, other=ps_func))
+            if "[*]" in combined:
+                return combined
+        except Exception:
+            pass
+        try:
+            from psmiles import PolymerSmiles
             ps = PolymerSmiles(base)
-            idx = self.rng.choice([0, 1])
             if hasattr(ps, "dimer"):
-                return str(ps.dimer(idx))
-            return str(ps.dimerize(star_index=idx))
+                return str(ps.dimer(self.rng.choice([0, 1])))
+            return str(ps.dimerize(star_index=self.rng.choice([0, 1])))
         except Exception:
             return base

@@ -90,12 +90,15 @@ def _update_feedback_from_md(
 
     problematic_psmiles: List[str] = []
     for item in limitations:
-        if isinstance(item, str) and "[*]" in item:
+        if not isinstance(item, str):
+            continue
+        if "[*]" in item:
             problematic_psmiles.append(item)
-        else:
-            psm = name_to_psmiles.get(str(item))
-            if psm:
-                problematic_psmiles.append(psm)
+            continue
+        candidate_name = item.split(":", 1)[1] if ":" in item else item
+        psm = name_to_psmiles.get(candidate_name)
+        if psm:
+            problematic_psmiles.append(psm)
 
     return {
         "top_candidates": top,

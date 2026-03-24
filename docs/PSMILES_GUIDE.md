@@ -14,8 +14,21 @@ This file is the **canonical in-repo reference** for what PSMILES are, how `[*]`
 
 ## Names vs structures (critical)
 
-- **No automatic name→structure mapping** exists in this project. The **LLM** proposes PSMILES from names using chemistry knowledge; errors are possible.
-- **Best practice:** for each candidate, keep a **table**: `material_name | PSMILES | source (paper / guess)` and use **`validate_psmiles`** with optional **`crosscheck_web`** (see MCP docs) to pull **web snippets** that may mention repeat units or SMILES—then **you** judge if they align.
+- **Automated name→PSMILES** is now available via **`generate_psmiles_from_name(material_name)`**. This tool resolves names in three tiers:
+  1. **Known-polymer table** (~60 common polymers/abbreviations: PEG, PLA, PLGA, PCL, PS, PMMA, PVDF, PDMS, chitosan, …). High confidence, no network call.
+  2. **PubChem lookup + auto-conversion**: strips "poly" prefix, fetches monomer SMILES from PubChem, then detects the polymerisation mechanism (vinyl C=C opening, hydroxy-acid ester condensation, amino-acid amide condensation) and places `[*]` at the backbone connection points. Medium confidence.
+  3. If neither tier succeeds the tool returns `ok: false` with the raw PubChem monomer SMILES so the caller can attempt manual conversion.
+
+  Always **validate the generated PSMILES** with `validate_psmiles` before evaluation, especially for PubChem auto results (medium confidence).
+
+- If you already have a PSMILES and want to cross-check it against its name, call **`validate_psmiles(psmiles, material_name="...")`**. The tool returns three automated checks:
+
+  1. **`functional_groups`** — RDKit SMARTS counts of carboxylic acid, ester, ether, amine, amide, hydroxyl, aldehyde, ketone, aromatic, etc. in the capped repeat unit.
+  2. **`name_consistency`** — keyword rules check whether the name's implied chemistry (e.g. "acid" expects carboxylic_acid or ester) is present. If `consistent` is `false`, fix the PSMILES before evaluating.
+  3. **`pubchem_lookup`** — strips "poly" prefix, queries PubChem PUG REST for the monomer's canonical SMILES (responses are **cached in-process** by monomer name so repeated checks stay fast), and computes Tanimoto similarity against the H-capped repeat unit. Low similarity (<0.4) is flagged.
+
+- If `name_consistency.consistent` is false, **do not evaluate**; fix the PSMILES first (check PubChem monomer structure, literature, or the functional-group profile for guidance).
+- **Never** write mechanistic claims in reports (e.g. "carboxylate-mediated stabilization") unless `name_consistency` passed for the specific PSMILES in the results table.
 
 ## Common examples (repeat units, illustrative)
 
@@ -31,6 +44,7 @@ Copolymers and block sequences usually need a **single repeat** that encodes you
 ## What simulation uses
 
 - **`evaluate_psmiles`** builds an **oligomer** from your PSMILES, places it near insulin, and runs **OpenMM** minimization + interaction energy. The physics sees **only the PSMILES graph**, not the English name.
+- Report discussion sections must therefore tie mechanistic claims to the **actual functional groups** (from `functional_groups`), not the material name. If the name says "acid" but the structure is a ketone, say "ketone" in the report.
 
 ## Persistence in OpenCode
 

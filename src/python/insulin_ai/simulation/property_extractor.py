@@ -36,14 +36,14 @@ class PropertyExtractor:
         property_analysis: Dict[str, Any] = {}
 
         for i, res in enumerate(md_results):
-            if res is None:
-                problematic_features.append("evaluation_failed")
-                continue
             name = (
                 material_names[i]
                 if material_names and i < len(material_names)
-                else res.get("psmiles", f"candidate_{i}")
+                else (res or {}).get("psmiles", f"candidate_{i}")
             )
+            if res is None:
+                problematic_features.append(f"evaluation_failed:{name}")
+                continue
             e_int = res.get("interaction_energy_kj_mol")
             contacts = res.get("insulin_polymer_contacts")
             e_complex = res.get("potential_energy_complex_kj_mol")
@@ -59,17 +59,17 @@ class PropertyExtractor:
                     high_performers.append(name)
                     effective_mechanisms.append("favorable_interaction_energy")
                 if e_int >= self.interaction_unfavorable_min_kj:
-                    problematic_features.append(f"high_interaction_energy_{name[:20]}")
+                    problematic_features.append(f"high_interaction_energy:{name}")
             if rmsd is not None and rmsd == rmsd:
                 if rmsd <= 0.15:
                     effective_mechanisms.append("insulin_structure_preserved")
                 if rmsd >= self.insulin_rmsd_problematic_nm:
-                    problematic_features.append(f"high_insulin_distortion_{name[:20]}")
+                    problematic_features.append(f"high_insulin_distortion:{name}")
             if contacts is not None:
                 if contacts >= self.min_insulin_polymer_contacts:
                     effective_mechanisms.append("insulin_polymer_contacts")
                 elif contacts < 2:
-                    problematic_features.append(f"low_insulin_contacts_{name[:20]}")
+                    problematic_features.append(f"low_insulin_contacts:{name}")
             property_analysis[name] = {
                 "interaction_energy_kj_mol": e_int,
                 "insulin_rmsd_to_initial_nm": rmsd,
@@ -79,9 +79,9 @@ class PropertyExtractor:
                 "potential_energy_polymer_kj_mol": res.get("potential_energy_polymer_kj_mol"),
                 "insulin_polymer_contacts": contacts,
                 "method": res.get("method"),
+                "psmiles": res.get("psmiles"),
             }
 
-        # When only potential energy is available (no RMSD), rank by E_complex / E_int
         if high_performers:
             scored = [
                 (property_analysis[n].get("composite_screening_score") or -1e9, n)
@@ -110,11 +110,14 @@ class PropertyExtractor:
             if energy_rows:
                 effective_mechanisms.append("OpenMM_merged_screening")
                 energy_rows.sort(key=lambda t: t[0])
-                median_e = energy_rows[len(energy_rows) // 2][0]
-                for e, name in energy_rows:
-                    if e <= median_e:
-                        high_performers.append(name)
-                high_performers = list(dict.fromkeys(high_performers))[:5]
+                # Only promote below-median candidates if the best energy is actually
+                # thermodynamically meaningful (negative interaction energy).
+                if energy_rows[0][0] < 0:
+                    median_e = energy_rows[len(energy_rows) // 2][0]
+                    for e, name in energy_rows:
+                        if e <= median_e:
+                            high_performers.append(name)
+                    high_performers = list(dict.fromkeys(high_performers))[:5]
 
         return {
             "high_performers": high_performers[:5],

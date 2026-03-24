@@ -18,7 +18,7 @@ Unless the user asked for a subset (e.g. "only mine"):
 
 1. **Mine** – `mine_literature(query=..., iteration=N, ...)` (includes PaperQA2 when indexed)
 2. **Translate** – Convert material names to PSMILES (polymer chemistry knowledge)
-3. **Validate** – `validate_psmiles(psmiles)` for each
+3. **Validate** – `validate_psmiles(psmiles, material_name="...")` for each (always pass the name; check `name_consistency.consistent`; fix PSMILES if false — see `docs/PSMILES_GUIDE.md`)
 4. **Evaluate** – `evaluate_psmiles(psmiles_list)` — use a **comma-separated string** or **JSON array of strings** for `psmiles_list`. OpenMM Packmol matrix (requires **packmol** on PATH)
 5. **Mutate** – `mutate_psmiles(feedback_json=...)` with high performers and problematic PSMILES from evaluation
 6. **Save** – `save_discovery_state(iteration=N, feedback_json=..., query_used=..., notes=...)`

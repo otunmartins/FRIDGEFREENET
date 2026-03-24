@@ -37,7 +37,6 @@ MCP **`evaluate_psmiles`** and [`MDSimulator.evaluate_candidates`](../src/python
 | `INSULIN_AI_OPENMM_MATRIX_PACK_PER_ATTEMPT_TIMEOUT_S` | `120` | Per Packmol subprocess timeout (seconds) during progressive packing. |
 | `INSULIN_AI_OPENMM_MATRIX_PACK_MAX_TOTAL_S` | *(unset)* | Optional **cumulative** wall-clock budget for all progressive Packmol attempts (unset = no total cap). |
 | `INSULIN_AI_OPENMM_MATRIX_PROGRESSIVE_N_MAX` | *(unset)* | Optional **maximum** chain count (cap progressive growth). |
-| `INSULIN_AI_COMPLEX_VIZ` | `auto` | Complex figure `*_complex_chemviz.png`: `auto` = try **PyMOL** on PATH (ribbon + DSS for insulin, ball-and-stick for polymer), else matplotlib; `pymol` = require PyMOL; `matplotlib` = matplotlib-only (no PyMOL). |
 | **Verbose / quiet:** `INSULIN_AI_EVAL_QUIET=1` or `INSULIN_AI_EVAL_VERBOSE=0` | | Smaller JSON / no stderr progress |
 
 **Note:** NPT is **off** by default so MCP runs finish in minutes; turn on for sampling-averaged interaction energy at the cost of runtime.
@@ -66,9 +65,9 @@ When **`INSULIN_AI_SESSION_DIR`** points at the active run folder (or you pass M
 | `<slug>_monomer.png` | 2D repeat unit (psmiles `savefig`) |
 | `<slug>_complex_minimized.pdb` | Minimized **matrix** complex (insulin + many chains, periodic image) |
 | `<slug>_complex_preview.png` | Matplotlib 3D scatter preview of that PDB |
-| `<slug>_complex_chemviz.png` | Ribbon (CA A+B) + ball-and-stick for other chains; see `chemviz_complex` / `scripts/render_complex_chemviz.py` |
+| `<slug>_complex_chemviz.png` | PyMOL ray-traced insulin cartoon + polymer sticks (`pymol_complex_viz`); see `scripts/render_complex_chemviz.py` |
 
-Disable with **`INSULIN_AI_EVAL_NO_STRUCTURE_ARTIFACTS=1`**. Override directory with **`INSULIN_AI_EVAL_ARTIFACTS_DIR`**. Requires **matplotlib** for preview/chemviz PNGs.
+Disable with **`INSULIN_AI_EVAL_NO_STRUCTURE_ARTIFACTS=1`**. Override directory with **`INSULIN_AI_EVAL_ARTIFACTS_DIR`**. Requires **matplotlib** for monomer + `*_complex_preview.png`; **PyMOL on PATH** for `*_complex_chemviz.png`.
 
 The MCP response includes **`structure_artifacts_dir`** and **`structure_artifact_paths`** when artifacts are written. See **`docs/SUMMARY_REPORT_STYLE.md`** for embedding in `SUMMARY_REPORT.md`.
 

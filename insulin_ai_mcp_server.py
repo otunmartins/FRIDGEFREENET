@@ -87,11 +87,36 @@ def _coerce_bool_flag(value: Any, default: bool = True) -> bool:
     return default
 
 
+def _coerce_single_psmiles_string(value: Union[str, List[Any], None]) -> str:
+    """
+    Normalize MCP ``psmiles`` for ``validate_psmiles`` (one repeat unit).
+
+    Hosts sometimes send a JSON array with one element or mangle quoting; this
+    avoids schema/type failures and empty tool results.
+    """
+    if value is None:
+        return ""
+    if isinstance(value, list):
+        if not value:
+            return ""
+        return str(value[0]).strip().strip('"').strip("'")
+    s = str(value).strip()
+    if s.startswith("[") and "[*]" in s:
+        try:
+            parsed = json.loads(s)
+            if isinstance(parsed, list) and len(parsed) == 1:
+                return str(parsed[0]).strip()
+        except json.JSONDecodeError:
+            pass
+    return s
+
+
 mcp = FastMCP(
     "insulin-ai-materials",
     instructions=(
         "Materials discovery: literature mining, PSMILES (see repo docs/PSMILES_GUIDE.md), "
-        "validate_psmiles (optional crosscheck_web+material_name for DuckDuckGo snippets), "
+        "validate_psmiles (functional_groups + name_consistency + cached PubChem monomer lookup; "
+        "optional crosscheck_web+material_name for DuckDuckGo snippets), "
         "evaluate_psmiles (OpenMM merged minimize), render_psmiles_png (2D PNG for reports), "
         "compile_discovery_markdown_to_pdf (agent-written MD → PDF), "
         "write_discovery_summary_report (optional batch from saved JSON), "
@@ -331,24 +356,51 @@ def lookup_material(material_name: str, max_results: int = 5) -> str:
 
 @mcp.tool()
 def validate_psmiles(
-    psmiles: str,
+    psmiles: Union[str, List[Any]],
     material_name: str = "",
     crosscheck_web: bool = False,
 ) -> str:
     """
-    Validate and optionally canonicalize a PSMILES string.
-    Returns JSON: {valid, canonical?, error?, name_crosscheck?}.
+    Validate, annotate functional groups, and check name-structure consistency of a PSMILES.
 
-    If material_name is set and crosscheck_web is true, runs a DuckDuckGo web search for
-    "{material_name} polymer repeat unit SMILES" and returns snippets under name_crosscheck
-    so the agent can compare literature descriptions to the proposed PSMILES. This is a
-    heuristic aid only—not chemical proof that the name matches the structure.
+    **Always returned:** ``valid``, ``canonical`` (when valid), and ``functional_groups``
+    (RDKit SMARTS-based counts of carboxylic_acid, ester, ether, amine, amide, hydroxyl,
+    aldehyde, ketone, aromatic, etc.).
+
+    **When ``material_name`` is set:** ``name_consistency`` checks whether the name's
+    implied chemistry (e.g. "acid" expects carboxylic_acid or ester) matches the actual
+    functional groups. ``pubchem_lookup`` queries PubChem (cached per monomer in-process,
+    bounded HTTP timeouts) for the monomer SMILES and Tanimoto similarity vs the repeat
+    unit. If ``name_consistency.consistent`` is false, **fix the PSMILES before evaluating**.
+
+    **When ``crosscheck_web`` is also true:** adds ``name_crosscheck`` with DuckDuckGo
+    snippets (heuristic aid for manual comparison).
     """
     try:
-        from insulin_ai.material_mappings import validate_psmiles as _validate
+        from insulin_ai.material_mappings import (
+            annotate_functional_groups,
+            check_name_structure_consistency,
+            lookup_monomer_pubchem,
+            validate_psmiles as _validate,
+        )
 
-        out = dict(_validate(psmiles))
+        psm = _coerce_single_psmiles_string(psmiles)
+        out = dict(_validate(psm))
+
+        fg = annotate_functional_groups(psm)
+        if fg.get("ok"):
+            out["functional_groups"] = fg["groups"]
+        else:
+            out["functional_groups_error"] = fg.get("error", "unknown")
+
         name = (material_name or "").strip()
+        if name:
+            out["name_consistency"] = check_name_structure_consistency(name, psm)
+            try:
+                out["pubchem_lookup"] = lookup_monomer_pubchem(name, psm, timeout=5.0)
+            except Exception as e:
+                out["pubchem_lookup"] = {"ok": False, "error": str(e)}
+
         if crosscheck_web and name:
             q = f"{name} polymer repeat unit SMILES structure"
             raw = _ddg_text_results(q, max_results=5)
@@ -369,7 +421,7 @@ def validate_psmiles(
                     "Web snippets are for human/agent review only. They do not prove the PSMILES "
                     "matches the material name; compare chemistry carefully."
                 ),
-                "psmiles_submitted": psmiles.strip()[:200],
+                "psmiles_submitted": psm.strip()[:200],
             }
         elif crosscheck_web and not name:
             out["name_crosscheck"] = {
@@ -447,6 +499,8 @@ def evaluate_psmiles(
             "effective_mechanisms": result["effective_mechanisms"],
             "problematic_features": result["problematic_features"],
         }
+        if result.get("property_analysis"):
+            out["property_analysis"] = result["property_analysis"]
         if _score is not None:
             out["discovery_score"] = round(_score, 4)
         if result.get("evaluation_progress") is not None:
@@ -474,7 +528,40 @@ def evaluate_psmiles(
             out["structure_artifact_paths"] = paths
         return json.dumps(out, indent=2)
     except Exception as e:
-        return f"Error: {e}"
+        return json.dumps({"error": str(e), "ok": False}, indent=2)
+
+
+@mcp.tool()
+def generate_psmiles_from_name(material_name: str) -> str:
+    """
+    Convert a polymer or monomer **name** to a PSMILES repeat-unit string.
+
+    Resolution order:
+
+    1. **Known polymer table** (~60 common polymers: PEG, PLA, PLGA, PCL, PS,
+       PMMA, PVDF, chitosan, ...).  High confidence — no network call.
+    2. **PubChem lookup** → monomer SMILES → automated polymerisation-site
+       detection (vinyl C=C opening, hydroxy-acid condensation, amino-acid
+       amide condensation).  Medium confidence.
+
+    Examples::
+
+        generate_psmiles_from_name("PEG")           → "[*]OCC[*]"
+        generate_psmiles_from_name("polystyrene")    → "[*]CC([*])c1ccccc1"
+        generate_psmiles_from_name("lactic acid")    → "[*]OC(=O)C(C)[*]"
+
+    Returns JSON with ``ok``, ``psmiles``, ``source``, ``confidence``,
+    ``mechanism`` (for PubChem auto), and ``md_compatible`` (prescreen result).
+    If conversion fails, ``ok`` is false with ``error`` and the raw PubChem
+    SMILES so the caller can attempt manual conversion.
+    """
+    try:
+        from insulin_ai.material_mappings import name_to_psmiles
+
+        result = name_to_psmiles(material_name)
+        return json.dumps(result, indent=2)
+    except Exception as e:
+        return json.dumps({"ok": False, "error": str(e)}, indent=2)
 
 
 @mcp.tool()
