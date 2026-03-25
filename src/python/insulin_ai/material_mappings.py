@@ -26,6 +26,24 @@ def clear_pubchem_lookup_cache() -> None:
     _pubchem_monomer_cache.clear()
 
 
+def morgan_fingerprint_bit_vect(mol: Any, radius: int = 2, n_bits: int = 2048) -> Any:
+    """Morgan fingerprint as an RDKit ``ExplicitBitVect``.
+
+    Uses :func:`rdkit.Chem.rdFingerprintGenerator.GetMorganGenerator` when
+    available so RDKit does not emit deprecation warnings for the legacy
+    ``GetMorganFingerprintAsBitVect`` API.
+    """
+    try:
+        from rdkit.Chem.rdFingerprintGenerator import GetMorganGenerator
+
+        gen = GetMorganGenerator(radius=radius, fpSize=n_bits)
+        return gen.GetFingerprint(mol)
+    except (ImportError, AttributeError):
+        from rdkit.Chem import AllChem
+
+        return AllChem.GetMorganFingerprintAsBitVect(mol, radius, nBits=n_bits)
+
+
 def _pubchem_cache_get(key: str) -> Optional[Dict[str, Any]]:
     if key not in _pubchem_monomer_cache:
         return None
@@ -393,14 +411,13 @@ def _tanimoto_similarity(smiles_a: str, smiles_b: str) -> Optional[float]:
     """Morgan-fingerprint Tanimoto between two SMILES. Returns None on failure."""
     try:
         from rdkit import Chem, DataStructs
-        from rdkit.Chem import AllChem
 
         ma = Chem.MolFromSmiles(smiles_a)
         mb = Chem.MolFromSmiles(smiles_b)
         if ma is None or mb is None:
             return None
-        fpa = AllChem.GetMorganFingerprintAsBitVect(ma, 2, nBits=2048)
-        fpb = AllChem.GetMorganFingerprintAsBitVect(mb, 2, nBits=2048)
+        fpa = morgan_fingerprint_bit_vect(ma, radius=2, n_bits=2048)
+        fpb = morgan_fingerprint_bit_vect(mb, radius=2, n_bits=2048)
         return round(float(DataStructs.TanimotoSimilarity(fpa, fpb)), 4)
     except Exception:
         return None

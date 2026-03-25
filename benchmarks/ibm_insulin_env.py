@@ -7,7 +7,7 @@ Two classes mirror the IBM upstream structure:
 
 * ``InsulinPSMILESEnv`` (base env, registered as ``insulin-ai:InsulinPSMILES-v1``)
   — actions are PSMILES strings drawn from a dynamic candidate pool; each step
-  runs ``MDSimulator.evaluate_candidates`` (or a cache/surrogate) and returns a
+  runs ``MDSimulator.evaluate_candidates`` (or a test stub / in-memory cache) and returns a
   4-tier IBM-compatible reward.
 
 * ``LogicalInsulinPSMILESEnv`` (logical wrapper, registered as
@@ -119,18 +119,19 @@ def _tanimoto_to_pool(query_smiles: str, pool_smiles: List[str]) -> float:
     """
     try:
         from rdkit import Chem, DataStructs
-        from rdkit.Chem import AllChem
+
+        from insulin_ai.material_mappings import morgan_fingerprint_bit_vect
 
         qmol = Chem.MolFromSmiles(query_smiles.replace("[*]", "[H]"))
         if qmol is None:
             return 0.0
-        qfp = AllChem.GetMorganFingerprintAsBitVect(qmol, 2, nBits=2048)
+        qfp = morgan_fingerprint_bit_vect(qmol, radius=2, n_bits=2048)
         best = 0.0
         for smi in pool_smiles:
             pmol = Chem.MolFromSmiles(smi.replace("[*]", "[H]"))
             if pmol is None:
                 continue
-            pfp = AllChem.GetMorganFingerprintAsBitVect(pmol, 2, nBits=2048)
+            pfp = morgan_fingerprint_bit_vect(pmol, radius=2, n_bits=2048)
             sim = float(DataStructs.TanimotoSimilarity(qfp, pfp))
             if sim > best:
                 best = sim
@@ -170,12 +171,19 @@ class InsulinPSMILESEnv(_GymEnvBase):  # type: ignore[misc]
         Optional callable ``(candidates, max_candidates) -> md_result_dict`` to
         replace real OpenMM evaluation (inject cache or mock for tests).
     cache_path:
-        Optional path to a pre-computed JSON cache file produced by
-        ``precompute_psmiles_cache.py``.  When a PSMILES is found in the cache
-        the step is instant; missing entries fall through to the surrogate or
-        real MD.
+        Optional path to a JSON file mapping PSMILES to prior result rows (for
+        unit tests only). The IBM benchmark does not preload a cache so
+        evaluation matches the agentic workflow. After a live MD run, results
+        are stored in memory and reused for the same canonical PSMILES within the
+        process.
     verbose_md:
         Pass ``verbose=True`` to MDSimulator (produces more logging).
+    evaluation_log:
+        If set, each successful MD evaluation appends a dict with
+        ``phase``, ``interaction_energy_kj_mol``, ``psmiles``, ``tier``.
+        Used by the IBM benchmark to emit ``evaluation_trace`` in JSON.
+    evaluation_log_phase:
+        Label stored on each log entry (e.g. ``"train"`` / ``"test"``).
     """
 
     metadata = {"render_modes": []}
@@ -195,6 +203,9 @@ class InsulinPSMILESEnv(_GymEnvBase):  # type: ignore[misc]
         ] = None,
         cache_path: Optional[str] = None,
         verbose_md: bool = False,
+        evaluation_log: Optional[List[Dict[str, Any]]] = None,
+        evaluation_log_phase: str = "unknown",
+        initial_best_interaction_energy_kj_mol: Optional[float] = None,
     ) -> None:
         _require_gym()
         super().__init__()
@@ -211,6 +222,15 @@ class InsulinPSMILESEnv(_GymEnvBase):  # type: ignore[misc]
         self.random_seed = random_seed
         self.verbose_md = verbose_md
         self._evaluate_candidates_fn = evaluate_candidates_fn
+        self._evaluation_log = evaluation_log
+        self.evaluation_log_phase = evaluation_log_phase
+        # Cumulative best interaction energy (kJ/mol) over the whole benchmark run;
+        # not reset in reset() so train→test and multi-episode stats stay comparable.
+        self._best_interaction_energy_kj_mol: Optional[float] = (
+            float(initial_best_interaction_energy_kj_mol)
+            if initial_best_interaction_energy_kj_mol is not None
+            else None
+        )
 
         # --- Gym spaces (only constructed when Gym is available) ----------
         if _GYM_VERSION != "none":
@@ -244,6 +264,37 @@ class InsulinPSMILESEnv(_GymEnvBase):  # type: ignore[misc]
         # Last MD result (for info dict)
         self._last_md_result: Optional[Dict[str, Any]] = None
         self._obs: np.ndarray = np.zeros(n_proposals * 5, dtype=np.float32)
+
+    def _record_interaction_energy_from_row(self, row: Dict[str, Any]) -> None:
+        """Update cumulative best from an MD row (any path that yields a real energy)."""
+        e_int = row.get("interaction_energy_kj_mol")
+        if e_int is None:
+            return
+        fe = float(e_int)
+        if self._best_interaction_energy_kj_mol is None:
+            self._best_interaction_energy_kj_mol = fe
+        else:
+            self._best_interaction_energy_kj_mol = min(
+                self._best_interaction_energy_kj_mol, fe
+            )
+
+    def _append_evaluation_log(
+        self, psmiles: str, tier: str, row: Dict[str, Any]
+    ) -> None:
+        e_int = row.get("interaction_energy_kj_mol")
+        if e_int is None:
+            return
+        self._record_interaction_energy_from_row(row)
+        if self._evaluation_log is None:
+            return
+        self._evaluation_log.append(
+            {
+                "phase": self.evaluation_log_phase,
+                "interaction_energy_kj_mol": float(e_int),
+                "psmiles": psmiles,
+                "tier": tier,
+            }
+        )
 
     # ------------------------------------------------------------------
     # Cache helpers
@@ -425,7 +476,9 @@ class InsulinPSMILESEnv(_GymEnvBase):  # type: ignore[misc]
         # Cache lookup
         if canonical in self._cache:
             row = self._cache[canonical]
-            return self._reward_from_row(row), self._tier_from_row(row), row
+            tier = self._tier_from_row(row)
+            self._append_evaluation_log(canonical, tier, row)
+            return self._reward_from_row(row), tier, row
 
         # Real evaluation
         try:
@@ -446,7 +499,9 @@ class InsulinPSMILESEnv(_GymEnvBase):  # type: ignore[misc]
             # Cache the result for future episodes
             self._cache[canonical] = row
 
-            return self._reward_from_row(row), self._tier_from_row(row), row
+            tier = self._tier_from_row(row)
+            self._append_evaluation_log(canonical, tier, row)
+            return self._reward_from_row(row), tier, row
         except Exception as e:
             logger.warning("Evaluation failed for %s: %s", psmiles, e)
             return self.rewards["no-go"], "no-go", None
@@ -534,6 +589,11 @@ class LogicalInsulinPSMILESEnv(_GymEnvBase):  # type: ignore[misc]
         verbose_md: bool = False,
         regressor_type: Optional[str] = "GPy",
         regressor_train_interval: int = 5,
+        evaluation_log: Optional[List[Dict[str, Any]]] = None,
+        evaluation_log_phase: str = "unknown",
+        rl_step_progress_log: Optional[List[Dict[str, Any]]] = None,
+        initial_global_rl_step: int = 0,
+        initial_best_interaction_energy_kj_mol: Optional[float] = None,
     ) -> None:
         _require_gym()
         super().__init__()
@@ -550,7 +610,13 @@ class LogicalInsulinPSMILESEnv(_GymEnvBase):  # type: ignore[misc]
             evaluate_candidates_fn=evaluate_candidates_fn,
             cache_path=cache_path,
             verbose_md=verbose_md,
+            evaluation_log=evaluation_log,
+            evaluation_log_phase=evaluation_log_phase,
+            initial_best_interaction_energy_kj_mol=initial_best_interaction_energy_kj_mol,
         )
+
+        self._rl_step_progress_log = rl_step_progress_log
+        self._global_rl_step = int(initial_global_rl_step)
 
         self.n_proposals = n_proposals
         self.regressor_type = regressor_type
@@ -635,6 +701,17 @@ class LogicalInsulinPSMILESEnv(_GymEnvBase):  # type: ignore[misc]
         pred, std_dev = self._predict_pool(self._proposed_psmiles)
         logical_obs = self._logical_observation(self._proposed_psmiles, pred, std_dev)
         info["pool"] = self._proposed_psmiles
+
+        if self._rl_step_progress_log is not None:
+            self._global_rl_step += 1
+            self._rl_step_progress_log.append(
+                {
+                    "phase": self.env.evaluation_log_phase,
+                    "global_step": self._global_rl_step,
+                    "running_best_interaction_energy_kj_mol": self.env._best_interaction_energy_kj_mol,
+                }
+            )
+
         return logical_obs, reward, terminated, truncated, info
 
     # ------------------------------------------------------------------
@@ -703,12 +780,13 @@ class LogicalInsulinPSMILESEnv(_GymEnvBase):  # type: ignore[misc]
     def _psmiles_to_fp(self, psmiles: str) -> Optional[np.ndarray]:
         try:
             from rdkit import Chem
-            from rdkit.Chem import AllChem
+
+            from insulin_ai.material_mappings import morgan_fingerprint_bit_vect
 
             mol = Chem.MolFromSmiles(psmiles.replace("[*]", "[H]"))
             if mol is None:
                 return None
-            fp = AllChem.GetMorganFingerprintAsBitVect(mol, 2, nBits=256)
+            fp = morgan_fingerprint_bit_vect(mol, radius=2, n_bits=256)
             return np.array(fp, dtype=np.float32)
         except Exception:
             return None

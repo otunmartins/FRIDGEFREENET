@@ -247,6 +247,27 @@ class TestInsulinPSMILESEnvStep:
             env.step(0)
         assert env._n_steps == 3
 
+    def test_evaluation_log_appends_on_md_eval(self):
+        from benchmarks.ibm_insulin_env import InsulinPSMILESEnv
+
+        log: List[Dict[str, Any]] = []
+        env = InsulinPSMILESEnv(
+            seed_psmiles="[*]OCC[*]",
+            n_proposals=5,
+            max_steps=10,
+            n_targets=3,
+            random_seed=42,
+            evaluate_candidates_fn=_mock_nontarget_eval,
+            evaluation_log=log,
+            evaluation_log_phase="unit",
+        )
+        env.reset()
+        env.step(0)
+        assert len(log) == 1
+        assert log[0]["phase"] == "unit"
+        assert log[0]["interaction_energy_kj_mol"] == pytest.approx(10.0)
+        assert "[*]" in log[0]["psmiles"]
+
 
 # ---------------------------------------------------------------------------
 # Reward mapping
@@ -605,3 +626,47 @@ class TestComparisonRow:
         header_lines = [l for l in lines if l.startswith("method")]
         assert len(header_lines) == 1
         assert len(lines) == 4  # 1 header + 3 data rows
+
+
+# ---------------------------------------------------------------------------
+# Agentic parity resolution (no Gym)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(False, reason="no gym dep needed")
+class TestResolveAgenticParitySettings:
+    def test_defaults_match_product(self):
+        from benchmarks.ibm_insulin_rl_benchmark import resolve_agentic_parity_settings
+
+        r = resolve_agentic_parity_settings(20, 10)
+        assert r == {
+            "n_timesteps": 200,
+            "n_episodes": 20,
+            "n_proposals": 10,
+            "max_steps": 10,
+        }
+
+    def test_overrides_passthrough(self):
+        from benchmarks.ibm_insulin_rl_benchmark import resolve_agentic_parity_settings
+
+        r = resolve_agentic_parity_settings(
+            20,
+            10,
+            n_timesteps=50,
+            n_episodes=3,
+            n_proposals=7,
+            max_steps=8,
+        )
+        assert r["n_timesteps"] == 50
+        assert r["n_episodes"] == 3
+        assert r["n_proposals"] == 7
+        assert r["max_steps"] == 8
+
+    def test_eight_evals_matches_autonomous_discovery_default(self):
+        from benchmarks.ibm_insulin_rl_benchmark import resolve_agentic_parity_settings
+
+        r = resolve_agentic_parity_settings(20, 8)
+        assert r["n_timesteps"] == 160
+        assert r["n_episodes"] == 20
+        assert r["n_proposals"] == 8
+        assert r["max_steps"] == 8

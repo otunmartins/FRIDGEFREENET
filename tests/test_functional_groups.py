@@ -16,6 +16,7 @@ from insulin_ai.material_mappings import (  # noqa: E402
     check_name_structure_consistency,
     clear_pubchem_lookup_cache,
     lookup_monomer_pubchem,
+    morgan_fingerprint_bit_vect,
     _strip_poly_prefix,
     _tanimoto_similarity,
 )
@@ -138,6 +139,14 @@ class TestPubChemLookup:
         assert _strip_poly_prefix("poly(glutaric acid)") == "glutaric acid"
         assert _strip_poly_prefix("polyethylene glycol") == "ethylene glycol"
         assert _strip_poly_prefix("PEG") == "PEG"
+
+    def test_morgan_fingerprint_bit_vect_nonzero(self):
+        pytest.importorskip("rdkit")
+        from rdkit import Chem
+
+        m = Chem.MolFromSmiles("CCO")
+        fp = morgan_fingerprint_bit_vect(m, radius=2, n_bits=2048)
+        assert fp.GetNumOnBits() > 0
 
     def test_tanimoto_identical(self):
         sim = _tanimoto_similarity("CCO", "CCO")

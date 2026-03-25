@@ -53,8 +53,9 @@ All scoring functions are **identical** to the agentic MCP loop and the Optuna b
 |------|---------|
 | [`benchmarks/ibm_insulin_env.py`](../benchmarks/ibm_insulin_env.py) | `InsulinPSMILESEnv` (base Gym env) and `LogicalInsulinPSMILESEnv` (logical-feature wrapper) |
 | [`benchmarks/ibm_insulin_rl_benchmark.py`](../benchmarks/ibm_insulin_rl_benchmark.py) | Train/test entry script (mirrors `optuna_psmiles_discovery.py`); outputs JSON + TSV |
-| [`benchmarks/precompute_psmiles_cache.py`](../benchmarks/precompute_psmiles_cache.py) | Pre-evaluate a batch of PSMILES offline for reproducible training |
 | [`tests/test_ibm_insulin_env.py`](../tests/test_ibm_insulin_env.py) | Unit tests (skip when Gym not installed) |
+
+There is **no offline precompute** step: each new PSMILES goes through **live OpenMM** (`MDSimulator.evaluate_candidates`), matching the agentic discovery loop. The env may reuse in-memory results for a canonical PSMILES already evaluated in the same process (similar to skipping duplicate work), but there is no batch job before training.
 
 ### Quick start
 
@@ -64,30 +65,19 @@ All scoring functions are **identical** to the agentic MCP loop and the Optuna b
 pip install stable-baselines3 GPy gymnasium
 ```
 
-**Step 2 — pre-compute evaluation cache** (optional but recommended; requires OpenMM + Packmol)
+**Step 2 — train and test (live OpenMM + Packmol)**
 
-Default **`--n-candidates 200`** matches **20 agentic iterations × up to 10 evaluations** (same total evaluation budget as running the autonomous loop with `max_eval_per_iteration=10` for 20 iterations). The cache is a lookup table for PSMILES that may appear during RL; size can be lowered if you accept more cache misses.
-
-```bash
-python benchmarks/precompute_psmiles_cache.py \
-    --n-candidates 200 \
-    --output data/ibm_psmiles_cache.json
-```
-
-**Step 3 — train and test (live OpenMM; optional cache from Step 2)**
-
-CLI defaults are aligned with that same **20×10** scheme: **`--n-timesteps 200`** (training env steps), **`--max-steps 10`**, **`--n-proposals 10`**, **`--n-episodes 20`**. Override flags if you need a different budget.
+CLI defaults match **20 agentic iterations × 10 evals**: **`--n-timesteps 200`**, **`--max-steps 10`**, **`--n-proposals 10`**, **`--n-episodes 20`**. Override flags if you need a different budget.
 
 ```bash
 python benchmarks/ibm_insulin_rl_benchmark.py \
     --mode train_and_test --algorithm dqn \
-    --cache-path data/ibm_psmiles_cache.json \
     --model-path models/ibm_dqn_insulin.zip \
     --output results/ibm_dqn.json \
     --comparison-tsv benchmarks/comparison_results.tsv
 ```
 
-Omit `--cache-path` to evaluate only uncached PSMILES via OpenMM (slower). SB3 pipeline tests in `tests/test_ibm_insulin_env.py` inject a stub evaluator so CI does not require OpenMM.
+SB3 pipeline tests in `tests/test_ibm_insulin_env.py` inject a stub evaluator so CI does not require OpenMM.
 
 ### Reward structure
 

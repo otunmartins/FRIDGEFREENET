@@ -35,16 +35,15 @@ Usage
 -----
 .. code-block:: bash
 
-    # Defaults match 20 agentic iterations × 10 evals (see module constants).
+    # Defaults match 20 agentic iterations × 10 evals (see --agentic-iterations).
+    # Each new PSMILES is evaluated with live OpenMM (same as agentic MCP).
     python benchmarks/ibm_insulin_rl_benchmark.py \\
-        --cache-path data/ibm_psmiles_cache.json \\
         --output results/ibm_dqn.json
 
     # Test a saved model
     python benchmarks/ibm_insulin_rl_benchmark.py \\
         --mode test --algorithm dqn \\
         --model-path models/ibm_dqn_insulin.zip \\
-        --n-episodes 20 --cache-path data/ibm_psmiles_cache.json \\
         --output results/ibm_dqn_test.json
 """
 
@@ -71,15 +70,53 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 # Parity with agentic discovery: ``run_autonomous_discovery_loop`` uses up to
-# ``max_eval_per_iteration`` (often 8–10) evaluations per iteration. Defaults
-# below match **20 iterations × 10 evals** → 200 training env steps, 20 test
-# episodes, ≤10 steps per episode, 10 proposals per RL step.
-_AGENTIC_ITERATIONS_EQUIVALENT = 20
-_AGENTIC_EVALS_PER_ITERATION = 10
+# ``max_eval_per_iteration`` (default 8 in ``autonomous_discovery.main``).
+# CLI ``--agentic-iterations`` × ``--evals-per-iteration`` sets training length
+# and test episode count unless individual flags override.
+_DEFAULT_AGENTIC_ITERATIONS = 20
+_DEFAULT_EVALS_PER_AGENTIC_ITERATION = 10
+# Module-level defaults (same as resolved parity with defaults above):
+_AGENTIC_ITERATIONS_EQUIVALENT = _DEFAULT_AGENTIC_ITERATIONS
+_AGENTIC_EVALS_PER_ITERATION = _DEFAULT_EVALS_PER_AGENTIC_ITERATION
 DEFAULT_N_TIMESTEPS = _AGENTIC_ITERATIONS_EQUIVALENT * _AGENTIC_EVALS_PER_ITERATION
 DEFAULT_MAX_STEPS_ENV = _AGENTIC_EVALS_PER_ITERATION
 DEFAULT_N_PROPOSALS = _AGENTIC_EVALS_PER_ITERATION
 DEFAULT_N_EPISODES = _AGENTIC_ITERATIONS_EQUIVALENT
+
+
+def resolve_agentic_parity_settings(
+    agentic_iterations: int,
+    evals_per_iteration: int,
+    n_timesteps: Optional[int] = None,
+    n_episodes: Optional[int] = None,
+    n_proposals: Optional[int] = None,
+    max_steps: Optional[int] = None,
+) -> Dict[str, int]:
+    """Derive benchmark sizes from discovery-iteration parity.
+
+    Training: ``n_timesteps = iterations × evals`` (one RL env step per pick).
+    Testing: ``n_episodes = iterations`` (one rollout per notional iteration).
+    Pool: ``n_proposals`` and ``max_steps`` default to ``evals_per_iteration``.
+    Any argument that is not ``None`` is passed through unchanged.
+    """
+    if agentic_iterations < 1:
+        raise ValueError("agentic_iterations must be >= 1")
+    if evals_per_iteration < 1:
+        raise ValueError("evals_per_iteration must be >= 1")
+    return {
+        "n_timesteps": (
+            n_timesteps
+            if n_timesteps is not None
+            else agentic_iterations * evals_per_iteration
+        ),
+        "n_episodes": (
+            n_episodes if n_episodes is not None else agentic_iterations
+        ),
+        "n_proposals": (
+            n_proposals if n_proposals is not None else evals_per_iteration
+        ),
+        "max_steps": max_steps if max_steps is not None else evals_per_iteration,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -109,6 +146,36 @@ _COMPARISON_COLUMNS = [
 def make_comparison_row(**kwargs: Any) -> Dict[str, Any]:
     """Return a dict with all comparison columns, filling missing with None."""
     return {col: kwargs.get(col) for col in _COMPARISON_COLUMNS}
+
+
+def _min_interaction_energy_in_phase(
+    trace: List[Dict[str, Any]], phase: str
+) -> Optional[float]:
+    """Minimum interaction energy among ``evaluation_trace`` rows for a phase."""
+    best: Optional[float] = None
+    for e in trace:
+        if e.get("phase") != phase:
+            continue
+        v = e.get("interaction_energy_kj_mol")
+        if v is not None:
+            fv = float(v)
+            best = fv if best is None else min(best, fv)
+    return best
+
+
+def _running_best_interaction_energy(
+    trace: List[Dict[str, Any]],
+) -> List[Optional[float]]:
+    """Cumulative minimum interaction energy (kJ/mol) after each logged eval."""
+    out: List[Optional[float]] = []
+    best: Optional[float] = None
+    for entry in trace:
+        e = entry.get("interaction_energy_kj_mol")
+        if e is not None:
+            fe = float(e)
+            best = fe if best is None else min(best, fe)
+        out.append(best)
+    return out
 
 
 def append_comparison_tsv(tsv_path: str, row: Dict[str, Any]) -> None:
@@ -343,7 +410,6 @@ def run_ibm_insulin_benchmark(
     n_episodes: int = DEFAULT_N_EPISODES,
     random_seed: int = 42,
     model_path: Optional[str] = None,
-    cache_path: Optional[str] = None,
     evaluate_candidates_fn: Optional[
         Callable[[List[Dict[str, Any]], int], Dict[str, Any]]
     ] = None,
@@ -361,11 +427,10 @@ def run_ibm_insulin_benchmark(
         n_targets: Early-stop targets per episode.
         target_energy_kj: Reward "target" threshold (kJ/mol).
         md_steps: OpenMM minimisation steps (per candidate).
-        n_timesteps: RL training steps (default: 200 = 20 agentic iterations × 10 evals).
-        n_episodes: Test episodes (default: 20 = one rollout per iteration).
+        n_timesteps: RL training steps (CLI default: ``--agentic-iterations`` × ``--evals-per-iteration``).
+        n_episodes: Test episodes (CLI default: ``--agentic-iterations``).
         random_seed: Global RNG seed.
         model_path: Save / load model here.
-        cache_path: Pre-computed evaluation cache (JSON).
         evaluate_candidates_fn: Optional replacement for ``MDSimulator.evaluate_candidates``
             (tests only; default is live OpenMM).
         comparison_tsv: If set, append a comparison row to this TSV file.
@@ -374,6 +439,8 @@ def run_ibm_insulin_benchmark(
     Returns:
         JSON-serialisable result dict.
     """
+    evaluation_trace: List[Dict[str, Any]] = []
+    rl_step_progress_trace: List[Dict[str, Any]] = []
     env_kwargs: Dict[str, Any] = dict(
         seed_psmiles=seed_psmiles,
         n_proposals=n_proposals,
@@ -383,8 +450,12 @@ def run_ibm_insulin_benchmark(
         md_steps=md_steps,
         random_seed=random_seed,
         evaluate_candidates_fn=evaluate_candidates_fn,
-        cache_path=cache_path,
+        evaluation_log=evaluation_trace,
+        evaluation_log_phase="train",
+        rl_step_progress_log=rl_step_progress_trace,
     )
+    if mode == "test":
+        env_kwargs["evaluation_log_phase"] = "test"
 
     t_start = time.perf_counter()
     result: Dict[str, Any] = {
@@ -396,7 +467,6 @@ def run_ibm_insulin_benchmark(
         "n_timesteps": n_timesteps,
         "n_episodes": n_episodes,
         "evaluation": "injected" if evaluate_candidates_fn else "live_openmm",
-        "cache_path": cache_path,
     }
 
     model = None
@@ -413,6 +483,12 @@ def run_ibm_insulin_benchmark(
         result["train_completed"] = True
 
     if mode == "test" or (mode == "train_and_test" and model is not None):
+        env_kwargs["evaluation_log_phase"] = "test"
+        if mode == "train_and_test":
+            env_kwargs["initial_best_interaction_energy_kj_mol"] = (
+                _min_interaction_energy_in_phase(evaluation_trace, "train")
+            )
+            env_kwargs["initial_global_rl_step"] = len(rl_step_progress_trace)
         if model is None:
             if not model_path:
                 raise ValueError("--model-path required for --mode test")
@@ -434,6 +510,11 @@ def run_ibm_insulin_benchmark(
 
     wall_time = time.perf_counter() - t_start
     result["wall_time_s"] = round(wall_time, 1)
+    result["evaluation_trace"] = evaluation_trace
+    result["rl_step_progress_trace"] = rl_step_progress_trace
+    result["running_best_interaction_energy_kj_mol"] = (
+        _running_best_interaction_energy(evaluation_trace)
+    )
 
     # Append to comparison TSV
     if comparison_tsv:
@@ -454,11 +535,7 @@ def run_ibm_insulin_benchmark(
             seed_psmiles=seed_psmiles,
             n_proposals=n_proposals,
             target_energy_kj=target_energy_kj,
-            notes=(
-                "injected_evaluator"
-                if evaluate_candidates_fn
-                else ("cache" if cache_path else "live_openmm")
-            ),
+            notes="injected_evaluator" if evaluate_candidates_fn else "live_openmm",
         )
         append_comparison_tsv(comparison_tsv, row)
         logger.info("Comparison row appended to %s", comparison_tsv)
@@ -498,22 +575,49 @@ def main() -> None:
         dest="seed_psmiles",
         help="Seed PSMILES (default: PEG [*]OCC[*]).",
     )
+    ag = p.add_argument_group(
+        "Agentic parity",
+        "Size of the RL run vs autonomous discovery: iterations × evals/iteration. "
+        "Omit --n-timesteps / --n-episodes / --n-proposals / --max-steps to derive all from the two flags below.",
+    )
+    ag.add_argument(
+        "--agentic-iterations",
+        type=int,
+        default=_DEFAULT_AGENTIC_ITERATIONS,
+        metavar="N",
+        help=(
+            "Number of discovery-style iterations to mirror: n_episodes=N in test, "
+            "and (with --evals-per-iteration) n_timesteps=N×K unless --n-timesteps is set (default: %d)."
+            % _DEFAULT_AGENTIC_ITERATIONS
+        ),
+    )
+    ag.add_argument(
+        "--evals-per-iteration",
+        type=int,
+        default=_DEFAULT_EVALS_PER_AGENTIC_ITERATION,
+        metavar="K",
+        help=(
+            "Max evaluations per iteration, like autonomous_discovery --max-eval "
+            "(default: %d; use 8 to match autonomous_discovery.py default)."
+            % _DEFAULT_EVALS_PER_AGENTIC_ITERATION
+        ),
+    )
     p.add_argument(
         "--n-proposals",
         type=int,
-        default=DEFAULT_N_PROPOSALS,
+        default=None,
         help=(
-            "Candidate pool size per step (default: %d, same as agentic max evals/iteration)."
-            % DEFAULT_N_PROPOSALS
+            "Candidate pool size per step (default: --evals-per-iteration, "
+            "currently %d if parity defaults apply)." % _DEFAULT_EVALS_PER_AGENTIC_ITERATION
         ),
     )
     p.add_argument(
         "--max-steps",
         type=int,
-        default=DEFAULT_MAX_STEPS_ENV,
+        default=None,
         help=(
-            "Maximum steps per episode (default: %d, same cap as evals per agentic iteration)."
-            % DEFAULT_MAX_STEPS_ENV
+            "Maximum steps per episode (default: --evals-per-iteration, "
+            "currently %d if parity defaults apply)." % _DEFAULT_EVALS_PER_AGENTIC_ITERATION
         ),
     )
     p.add_argument(
@@ -538,22 +642,19 @@ def main() -> None:
     p.add_argument(
         "--n-timesteps",
         type=int,
-        default=DEFAULT_N_TIMESTEPS,
+        default=None,
         help=(
-            "RL training timesteps (default: %d = %d agentic iterations × %d evals)."
-            % (
-                DEFAULT_N_TIMESTEPS,
-                _AGENTIC_ITERATIONS_EQUIVALENT,
-                _AGENTIC_EVALS_PER_ITERATION,
-            )
+            "RL training timesteps (default: --agentic-iterations × --evals-per-iteration "
+            "= %d with current defaults)."
+            % DEFAULT_N_TIMESTEPS
         ),
     )
     p.add_argument(
         "--n-episodes",
         type=int,
-        default=DEFAULT_N_EPISODES,
+        default=None,
         help=(
-            "Test episodes (default: %d = one rollout per agentic iteration)."
+            "Test episodes (default: --agentic-iterations = %d with current defaults)."
             % DEFAULT_N_EPISODES
         ),
     )
@@ -568,12 +669,6 @@ def main() -> None:
         type=str,
         default=None,
         help="Path to save (train) or load (test) the model.",
-    )
-    p.add_argument(
-        "--cache-path",
-        type=str,
-        default=None,
-        help="Pre-computed PSMILES cache JSON (from precompute_psmiles_cache.py).",
     )
     p.add_argument(
         "--output",
@@ -595,20 +690,38 @@ def main() -> None:
     )
     args = p.parse_args()
 
+    parity = resolve_agentic_parity_settings(
+        args.agentic_iterations,
+        args.evals_per_iteration,
+        n_timesteps=args.n_timesteps,
+        n_episodes=args.n_episodes,
+        n_proposals=args.n_proposals,
+        max_steps=args.max_steps,
+    )
+    logger.info(
+        "Agentic parity: %d iterations × %d evals/iter → "
+        "n_timesteps=%d n_episodes=%d n_proposals=%d max_steps=%d",
+        args.agentic_iterations,
+        args.evals_per_iteration,
+        parity["n_timesteps"],
+        parity["n_episodes"],
+        parity["n_proposals"],
+        parity["max_steps"],
+    )
+
     out = run_ibm_insulin_benchmark(
         mode=args.mode,
         algorithm=args.algorithm,
         seed_psmiles=args.seed_psmiles,
-        n_proposals=args.n_proposals,
-        max_steps=args.max_steps,
+        n_proposals=parity["n_proposals"],
+        max_steps=parity["max_steps"],
         n_targets=args.n_targets,
         target_energy_kj=args.target_energy_kj,
         md_steps=args.md_steps,
-        n_timesteps=args.n_timesteps,
-        n_episodes=args.n_episodes,
+        n_timesteps=parity["n_timesteps"],
+        n_episodes=parity["n_episodes"],
         random_seed=args.random_seed,
         model_path=args.model_path,
-        cache_path=args.cache_path,
         comparison_tsv=args.comparison_tsv,
         verbose=args.verbose,
     )

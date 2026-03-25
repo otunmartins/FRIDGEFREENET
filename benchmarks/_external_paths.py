@@ -22,8 +22,5 @@ IBM_POLYMER_RL_ROOT = (
     / "logical-agent-driven-polymer-discovery"
 )
 
-# Pre-computed PSMILES evaluation cache (created by precompute_psmiles_cache.py)
-IBM_INSULIN_CACHE_DEFAULT = _REPO_ROOT / "data" / "ibm_psmiles_cache.json"
-
 # Shared comparison TSV for all benchmark methods
 BENCHMARK_COMPARISON_TSV_DEFAULT = _REPO_ROOT / "benchmarks" / "comparison_results.tsv"

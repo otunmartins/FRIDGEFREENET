@@ -67,6 +67,34 @@ def _memory_gb() -> float:
         return 0.0
 
 
+def _interaction_energy_stats(md_results: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Min/mean interaction energy (kJ/mol) from one ``evaluate_candidates`` result."""
+    if not md_results:
+        return {
+            "min_interaction_energy_kj_mol": None,
+            "mean_interaction_energy_kj_mol": None,
+            "n_md_evaluations": 0,
+        }
+    pa = md_results.get("property_analysis") or {}
+    vals: List[float] = []
+    for row in pa.values():
+        if isinstance(row, dict):
+            e = row.get("interaction_energy_kj_mol")
+            if e is not None:
+                vals.append(float(e))
+    if not vals:
+        return {
+            "min_interaction_energy_kj_mol": None,
+            "mean_interaction_energy_kj_mol": None,
+            "n_md_evaluations": 0,
+        }
+    return {
+        "min_interaction_energy_kj_mol": min(vals),
+        "mean_interaction_energy_kj_mol": sum(vals) / len(vals),
+        "n_md_evaluations": len(vals),
+    }
+
+
 def run_autonomous_discovery_loop(
     budget_minutes: float,
     session_dir: Path,
@@ -167,6 +195,7 @@ def run_autonomous_discovery_loop(
                 ]
             to_eval = with_psmiles[:max_eval_per_iteration] if with_psmiles else candidates[:max_eval_per_iteration]
 
+            md_results: Optional[Dict[str, Any]] = None
             if not to_eval:
                 status = "discard"
                 desc_parts.append("no_psmiles_candidates")
@@ -183,12 +212,14 @@ def run_autonomous_discovery_loop(
             iterations_run += 1
             last_score = score
 
+            energy_stats = _interaction_energy_stats(md_results)
             with open(session_dir / f"autoresearch_iteration_{iteration}.json", "w", encoding="utf-8") as sf:
                 json.dump(
                     {
                         "iteration": iteration,
                         "timestamp": datetime.now().isoformat(),
                         "score": score,
+                        **energy_stats,
                         "feedback_state": {k: v for k, v in feedback_state.items() if k != "target_properties"},
                         "run_id": run_id,
                     },
