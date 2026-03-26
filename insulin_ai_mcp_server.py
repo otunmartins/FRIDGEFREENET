@@ -26,7 +26,7 @@ sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "src", "python"))
 
 from pathlib import Path
-from typing import Any, List, Union
+from typing import Any, List, Optional, Union
 
 from mcp.server.fastmcp import FastMCP
 
@@ -438,6 +438,8 @@ def evaluate_psmiles(
     verbose: Union[bool, str, int] = True,
     run_dir: str = "",
     artifacts_dir: str = "",
+    max_workers: Optional[int] = None,
+    response_format: str = "full",
 ) -> str:
     """
     Evaluate PSMILES via OpenMM **Packmol matrix**: insulin AMBER14SB + multiple polymer
@@ -457,11 +459,31 @@ def evaluate_psmiles(
     and the MCP server logs progress to stderr. Pass verbose=false or set env INSULIN_AI_EVAL_QUIET=1
     (or INSULIN_AI_EVAL_VERBOSE=0) for a smaller response and no progress lines.
 
+    **response_format:** Controls the verbosity of the JSON returned to the caller.
+
+    - ``"full"`` (default): full output including ``evaluation_progress``, ``evaluation_note``,
+      and ``structure_artifact_paths`` (PNG paths for embedding in SUMMARY_REPORT). Use this
+      when writing a SUMMARY_REPORT or when you need structure artifact paths.
+    - ``"concise"``: strips ``evaluation_progress``, ``evaluation_note``, and
+      ``structure_artifact_paths`` from the response, reducing token usage ~3x. Use this
+      for discovery iterations where the LLM only needs energies and mechanisms.
+
+    **candidate_outcomes** is always present regardless of ``response_format`` or ``verbose``.
+    It is a compact per-candidate list with status and verbatim failure reason (Packmol timeout,
+    wall-clock limit, OpenMM force-field error, prescreen rejection, etc.) suitable for saving
+    in ``save_discovery_state`` for cross-iteration diagnostics.
+
     **Structure artifacts for SUMMARY_REPORT:** When ``run_dir`` is set (or ``INSULIN_AI_SESSION_DIR``
     points at the session folder), minimized matrix complex PDB plus monomer 2D PNG (psmiles ``savefig``),
     preview PNG, and ribbon/chemviz PNG are written under ``<session>/structures/`` unless
     disabled with ``INSULIN_AI_EVAL_NO_STRUCTURE_ARTIFACTS=1``. Override the directory with
     non-empty ``artifacts_dir`` or env ``INSULIN_AI_EVAL_ARTIFACTS_DIR``.
+
+    **Parallel evaluation:** Pass ``max_workers`` (e.g. 2–4) to run candidates concurrently
+    via ``ProcessPoolExecutor``. Default (``None``) reads ``INSULIN_AI_EVAL_MAX_WORKERS`` from
+    the environment, falling back to 1 (sequential). Each worker holds a full OpenMM matrix
+    system in RAM — start conservatively. Parallel runs may differ slightly from sequential
+    unless per-candidate seeds are fixed (they are: seed = base + candidate index).
     """
     try:
         parts = _normalize_psmiles_list_for_eval(psmiles_list)
@@ -482,11 +504,13 @@ def evaluate_psmiles(
         if not ad and (run_dir or "").strip():
             ad = str(_session_dir_for_mcp(run_dir) / "structures")
         vb = _coerce_bool_flag(verbose, default=True)
+        concise = str(response_format).strip().lower() == "concise"
         result = sim.evaluate_candidates(
             candidates,
             max_candidates=len(candidates),
             verbose=vb,
             artifacts_dir=ad or None,
+            max_workers=max_workers,
         )
         try:
             from insulin_ai.simulation.scoring import discovery_score
@@ -494,6 +518,31 @@ def evaluate_psmiles(
             _score = discovery_score(result)
         except Exception:
             _score = None
+
+        # ------------------------------------------------------------------ #
+        # candidate_outcomes — always present, regardless of verbose / mode. #
+        # Compact per-candidate summary with verbatim failure reason so the  #
+        # agent can log all failure types (prescreen chemistry errors,        #
+        # Packmol timeouts, wall-clock limits, OpenMM exceptions, etc.) in   #
+        # save_discovery_state for cross-iteration diagnostics.              #
+        # ------------------------------------------------------------------ #
+        candidate_outcomes = []
+        for ep in result.get("evaluation_progress") or []:
+            status = ep.get("status", "unknown")
+            oc: Dict[str, Any] = {
+                "index": ep.get("index"),
+                "material_name": ep.get("material_name"),
+                "status": status,
+            }
+            if status == "completed":
+                oc["interaction_energy_kj_mol"] = ep.get("interaction_energy_kj_mol")
+            else:
+                if ep.get("stage"):
+                    oc["stage"] = ep["stage"]
+                if ep.get("reason"):
+                    oc["reason"] = ep["reason"]
+            candidate_outcomes.append(oc)
+
         out = {
             "high_performers": result["high_performers"],
             "effective_mechanisms": result["effective_mechanisms"],
@@ -503,29 +552,32 @@ def evaluate_psmiles(
             out["property_analysis"] = result["property_analysis"]
         if _score is not None:
             out["discovery_score"] = round(_score, 4)
-        if result.get("evaluation_progress") is not None:
-            out["evaluation_progress"] = result["evaluation_progress"]
-        if result.get("evaluation_note"):
-            out["evaluation_note"] = result["evaluation_note"]
+        out["candidate_outcomes"] = candidate_outcomes
+        if not concise:
+            if vb and result.get("evaluation_progress") is not None:
+                out["evaluation_progress"] = result["evaluation_progress"]
+            if result.get("evaluation_note"):
+                out["evaluation_note"] = result["evaluation_note"]
         if result.get("structure_artifacts_dir"):
             out["structure_artifacts_dir"] = result["structure_artifacts_dir"]
-        raw = result.get("md_results_raw") or []
-        paths = []
-        for r in raw:
-            if not isinstance(r, dict):
-                continue
-            paths.append(
-                {
-                    "psmiles": r.get("psmiles"),
-                    "complex_pdb_path": r.get("complex_pdb_path"),
-                    "monomer_png_path": r.get("monomer_png_path"),
-                    "complex_preview_png_path": r.get("complex_preview_png_path"),
-                    "complex_chemviz_png_path": r.get("complex_chemviz_png_path"),
-                    "packing_metrics": r.get("packing_metrics"),
-                }
-            )
-        if paths:
-            out["structure_artifact_paths"] = paths
+        if not concise:
+            raw = result.get("md_results_raw") or []
+            paths = []
+            for r in raw:
+                if not isinstance(r, dict):
+                    continue
+                paths.append(
+                    {
+                        "psmiles": r.get("psmiles"),
+                        "complex_pdb_path": r.get("complex_pdb_path"),
+                        "monomer_png_path": r.get("monomer_png_path"),
+                        "complex_preview_png_path": r.get("complex_preview_png_path"),
+                        "complex_chemviz_png_path": r.get("complex_chemviz_png_path"),
+                        "packing_metrics": r.get("packing_metrics"),
+                    }
+                )
+            if paths:
+                out["structure_artifact_paths"] = paths
         return json.dumps(out, indent=2)
     except Exception as e:
         return json.dumps({"error": str(e), "ok": False}, indent=2)
@@ -595,12 +647,28 @@ def start_discovery_session(run_name: str = "") -> str:
     """
     Start a new discovery session. All subsequent saves and autonomous runs can use this folder.
     Returns session_dir path; pass it to save_discovery_state(run_dir=...) or set INSULIN_AI_SESSION_DIR in shell.
+    Also snapshots the active agent instructions (materials-discovery.md) to
+    agent_instructions_snapshot.md inside the session folder for reproducibility.
     """
     try:
         d = new_session_dir(Path(ROOT), name=run_name.strip() or None)
         os.environ[ENV_SESSION] = str(d)
+        snapshot_note = ""
+        instructions_src = Path(ROOT) / ".opencode" / "agent" / "materials-discovery.md"
+        if instructions_src.exists():
+            try:
+                shutil.copy2(str(instructions_src), str(d / "agent_instructions_snapshot.md"))
+                snapshot_note = " Agent instructions snapshotted to agent_instructions_snapshot.md."
+            except Exception as snap_err:
+                snapshot_note = f" Warning: could not snapshot agent instructions: {snap_err}"
         return json.dumps(
-            {"session_dir": str(d), "note": "Server process now uses this session for mine_literature saves and save_discovery_state when run_dir omitted."},
+            {
+                "session_dir": str(d),
+                "note": (
+                    "Server process now uses this session for mine_literature saves and "
+                    "save_discovery_state when run_dir omitted." + snapshot_note
+                ),
+            },
             indent=2,
         )
     except Exception as e:

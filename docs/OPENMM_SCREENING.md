@@ -37,9 +37,22 @@ MCP **`evaluate_psmiles`** and [`MDSimulator.evaluate_candidates`](../src/python
 | `INSULIN_AI_OPENMM_MATRIX_PACK_PER_ATTEMPT_TIMEOUT_S` | `120` | Per Packmol subprocess timeout (seconds) during progressive packing. |
 | `INSULIN_AI_OPENMM_MATRIX_PACK_MAX_TOTAL_S` | *(unset)* | Optional **cumulative** wall-clock budget for all progressive Packmol attempts (unset = no total cap). |
 | `INSULIN_AI_OPENMM_MATRIX_PROGRESSIVE_N_MAX` | *(unset)* | Optional **maximum** chain count (cap progressive growth). |
-| **Verbose / quiet:** `INSULIN_AI_EVAL_QUIET=1` or `INSULIN_AI_EVAL_VERBOSE=0` | | Smaller JSON / no stderr progress |
+|| **Verbose / quiet:** `INSULIN_AI_EVAL_QUIET=1` or `INSULIN_AI_EVAL_VERBOSE=0` | | Smaller JSON / no stderr progress |
+| `INSULIN_AI_EVAL_MAX_WORKERS` | `1` | Number of parallel worker processes for `evaluate_candidates` / `evaluate_psmiles`. `1` = sequential (default, safe). Set to `2`–`4` to evaluate multiple candidates concurrently via `ProcessPoolExecutor`. Each worker loads a full OpenMM matrix system — start conservatively. Can also be set per-call via the `max_workers` argument on `evaluate_psmiles` or `MDSimulator.evaluate_candidates` (argument takes precedence over env). |
 
 **Note:** NPT is **off** by default so MCP runs finish in minutes; turn on for sampling-averaged interaction energy at the cost of runtime.
+
+### Parallel evaluation
+
+`evaluate_psmiles` and `MDSimulator.evaluate_candidates` support concurrent candidate evaluation via `ProcessPoolExecutor`:
+
+- **Default:** `max_workers=1` — sequential, identical to previous behaviour, no regression.
+- **Enable:** pass `max_workers=N` to the MCP tool, or set `INSULIN_AI_EVAL_MAX_WORKERS=N` in the environment.  The explicit argument takes precedence over the environment variable.
+- **Prescreen in parent:** validity checks and `prescreen_psmiles_for_md` run in the main process; only candidates that pass are dispatched to workers. Skipped/rejected entries are recorded at their original indices before dispatching.
+- **Order preserved:** results are always returned in the original candidate order regardless of completion order.
+- **Seeds:** each worker receives `seed = base_seed + candidate_index` so runs are reproducible per candidate. Parallel and sequential results may differ slightly (interleaved RNG state in OpenMM NPT) but relative rankings are stable.
+- **RAM:** each worker holds a full OpenMM system in memory. Start with 2–4 workers; scale up only if RAM allows.
+- **Diminishing returns:** if `max_workers` exceeds the number of candidates it is clamped automatically.
 
 **Packing quality:** Each result includes **`packing_metrics`** (nearest protein–polymer heavy-atom distances in nm, fractions within 0.5 / 0.8 / 1.2 nm). Use **`min_polymer_protein_distance_nm`** and **`fraction_polymer_within_0.80_nm`** to spot sparse or disconnected polymer relative to insulin (e.g. very large min distance or low fraction within 0.8 nm after minimization).
 

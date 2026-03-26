@@ -4,8 +4,9 @@
 import os
 import sys
 import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from insulin_ai.run_paths import repo_root_from_package, session_dir_from_env
 
@@ -151,6 +152,173 @@ def resolve_eval_structure_artifacts_dir(artifacts_dir: Optional[str] = None) ->
     return None
 
 
+def _env_max_workers() -> int:
+    """
+    Read ``INSULIN_AI_EVAL_MAX_WORKERS`` from the environment.
+
+    Returns 1 (sequential) when the variable is absent or zero.
+    """
+    raw = os.environ.get("INSULIN_AI_EVAL_MAX_WORKERS", "").strip()
+    if not raw:
+        return 1
+    v = int(raw)
+    return max(1, v)
+
+
+def _evaluate_one_matrix_candidate(
+    index: int,
+    psmiles: str,
+    name: str,
+    n_total: int,
+    slug: str,
+    pdb_out: Optional[str],
+    struct_dir_str: Optional[str],
+    matrix_kw: Dict[str, Any],
+    random_seed_offset: int,
+) -> Tuple[int, Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+    """
+    Module-level picklable worker for ProcessPoolExecutor.
+
+    Runs ``run_openmm_matrix_relax_and_energy`` for a single prescreen-passed
+    candidate and assembles the post-processing block (packing metrics, PNG
+    artifacts) identical to the sequential path.
+
+    Parameters
+    ----------
+    index:
+        Candidate index within the original ``to_eval`` list; used for
+        deterministic output ordering and per-index random seed.
+    psmiles:
+        Validated PSMILES string (already passed prescreen in the parent).
+    name:
+        Human-readable material name (for progress logging).
+    n_total:
+        Total number of candidates being evaluated (for progress messages).
+    slug:
+        Filename-safe basename for artifact naming.
+    pdb_out:
+        Absolute path string for the minimized complex PDB, or None.
+    struct_dir_str:
+        Absolute path string of the structure artifacts directory, or None.
+    matrix_kw:
+        Serializable keyword arguments forwarded to
+        ``run_openmm_matrix_relax_and_energy``; ``random_seed`` inside will be
+        replaced by ``random_seed_offset`` to ensure per-candidate independence.
+    random_seed_offset:
+        Seed = base seed + index, passed down to the OpenMM call.
+
+    Returns
+    -------
+    (index, result_dict_or_none, progress_entry_or_none)
+    """
+    from insulin_ai.psmiles_drawing import save_psmiles_png
+
+    from .openmm_complex import run_openmm_matrix_relax_and_energy
+    from .pdb_preview import write_complex_preview_png
+    from .pymol_complex_viz import write_complex_viz_png_auto
+
+    kw = dict(matrix_kw)
+    kw["random_seed"] = random_seed_offset
+    # Suppress verbose output from inside workers; parent logs completions.
+    kw["verbose"] = False
+
+    preview = str(psmiles)[:60] + ("…" if len(str(psmiles)) > 60 else "")
+    t0 = time.perf_counter()
+
+    try:
+        res = run_openmm_matrix_relax_and_energy(psmiles, **kw)
+    except Exception as exc:
+        res = {"ok": False, "error": str(exc), "stage": "openmm", "psmiles": psmiles}
+
+    elapsed = time.perf_counter() - t0
+
+    if res is None or (isinstance(res, dict) and res.get("ok") is False):
+        err_msg = (res or {}).get("error", "unknown failure")
+        stage = (res or {}).get("stage", "unknown")
+        entry = {
+            "index": index,
+            "total": n_total,
+            "status": "failed",
+            "reason": err_msg,
+            "stage": stage,
+            "material_name": name,
+            "seconds": round(elapsed, 3),
+        }
+        return index, None, entry
+
+    if pdb_out:
+        res["complex_pdb_path"] = pdb_out
+    elif res.get("minimized_pdb"):
+        res["complex_pdb_path"] = res["minimized_pdb"]
+    npc = res.get("n_polymer_atoms_per_chain")
+    nch = res.get("n_polymer_chains")
+    if npc is not None and nch is not None:
+        res["n_polymer_atoms"] = int(npc) * int(nch)
+
+    cp = res.get("complex_pdb_path")
+    nprot = res.get("n_insulin_atoms")
+    if cp and nprot is not None:
+        try:
+            from .matrix_packing_metrics import compute_matrix_packing_metrics
+
+            res["packing_metrics"] = compute_matrix_packing_metrics(str(cp), int(nprot))
+        except Exception as ex:
+            res["packing_metrics"] = {"ok": False, "error": str(ex)}
+
+    if struct_dir_str is not None:
+        struct_dir = Path(struct_dir_str)
+        monomer_png = struct_dir / f"{slug}_monomer.png"
+        r_mono = save_psmiles_png(psmiles, monomer_png, overwrite=True)
+        res["monomer_png_path"] = r_mono.get("path") if r_mono.get("ok") else None
+        res["monomer_png_error"] = r_mono.get("error")
+        preview_png = struct_dir / f"{slug}_complex_preview.png"
+        if res.get("complex_pdb_path"):
+            r_prev = write_complex_preview_png(res["complex_pdb_path"], str(preview_png))
+            res["complex_preview_png_path"] = r_prev.get("path") if r_prev.get("ok") else None
+            res["complex_preview_png_error"] = r_prev.get("error")
+            chemviz_png = struct_dir / f"{slug}_complex_chemviz.png"
+            r_cv, cv_backend = write_complex_viz_png_auto(
+                res["complex_pdb_path"],
+                str(chemviz_png),
+                n_protein_atoms=res.get("n_insulin_atoms"),
+            )
+            res["complex_chemviz_png_path"] = r_cv.get("path") if r_cv.get("ok") else None
+            res["complex_chemviz_png_error"] = r_cv.get("error")
+            res["complex_chemviz_backend"] = cv_backend
+        else:
+            res["complex_preview_png_path"] = None
+            res["complex_preview_png_error"] = "complex PDB not written"
+            res["complex_chemviz_png_path"] = None
+            res["complex_chemviz_png_error"] = "complex PDB not written"
+            res["complex_chemviz_backend"] = None
+
+    pm = res.get("packing_metrics") or {}
+    entry = {
+        "index": index,
+        "total": n_total,
+        "status": "completed",
+        "material_name": name,
+        "psmiles_preview": preview,
+        "seconds": round(elapsed, 3),
+        "method": res.get("method"),
+        "interaction_energy_kj_mol": res.get("interaction_energy_kj_mol"),
+        "potential_energy_complex_kj_mol": res.get("potential_energy_complex_kj_mol"),
+        "n_insulin_atoms": res.get("n_insulin_atoms"),
+        "n_polymer_atoms": res.get("n_polymer_atoms"),
+        "n_polymer_chains": res.get("n_polymer_chains"),
+        "complex_pdb_path": res.get("complex_pdb_path"),
+        "monomer_png_path": res.get("monomer_png_path"),
+        "complex_preview_png_path": res.get("complex_preview_png_path"),
+        "complex_chemviz_png_path": res.get("complex_chemviz_png_path"),
+        "complex_chemviz_backend": res.get("complex_chemviz_backend"),
+    }
+    if pm.get("ok"):
+        entry["min_polymer_protein_distance_nm"] = pm.get("min_polymer_protein_distance_nm")
+        entry["fraction_polymer_within_0.80_nm"] = pm.get("fraction_polymer_within_0.80_nm")
+
+    return index, res, entry
+
+
 class MDSimulator:
     def __init__(
         self,
@@ -182,7 +350,33 @@ class MDSimulator:
         max_candidates: int = 10,
         verbose: bool = True,
         artifacts_dir: Optional[str] = None,
+        max_workers: Optional[int] = None,
     ) -> Dict[str, Any]:
+        """
+        Evaluate polymer PSMILES candidates via OpenMM Packmol matrix.
+
+        Parameters
+        ----------
+        candidates:
+            List of candidate dicts with ``psmiles`` / ``chemical_structure`` keys.
+        max_candidates:
+            Maximum number of candidates to evaluate from the head of the list.
+        verbose:
+            Emit per-candidate JSON progress to stderr and include
+            ``evaluation_progress`` in the output dict.
+        artifacts_dir:
+            Directory to write structure artifacts (PDB, PNG). Resolves via
+            ``resolve_eval_structure_artifacts_dir`` when not supplied.
+        max_workers:
+            Number of parallel worker processes. ``1`` (default) = sequential,
+            identical to previous behaviour. ``None`` reads
+            ``INSULIN_AI_EVAL_MAX_WORKERS`` from the environment (default 1).
+            Values ``>1`` dispatch each prescreen-passed candidate to a
+            ``ProcessPoolExecutor``; output order is always preserved.
+
+            **RAM warning:** each worker loads a full OpenMM matrix system.
+            Start with 2–4 on a machine with plenty of RAM.
+        """
         from insulin_ai.material_mappings import prescreen_psmiles_for_md
         from insulin_ai.psmiles_drawing import safe_filename_basename, save_psmiles_png
 
@@ -200,7 +394,7 @@ class MDSimulator:
         to_eval = candidates[:max_candidates]
         if not to_eval:
             raise ValueError("empty candidates")
-        md_results = []
+        md_results: List[Optional[Dict[str, Any]]] = []
         material_names = []
         progress: List[Dict[str, Any]] = []
         n_repeats = _env_int("INSULIN_AI_OPENMM_N_REPEATS", "INSULIN_AI_GMX_N_REPEATS", "4")
@@ -223,25 +417,72 @@ class MDSimulator:
             restrain_shell = _env_bool("INSULIN_AI_OPENMM_MATRIX_RESTRAIN_SHELL", True)
         barostat_fs = _env_float("INSULIN_AI_OPENMM_MATRIX_BAROSTAT_INTERVAL_FS", "", "10.0")
         n_total = len(to_eval)
+
+        # Resolve parallelism: explicit argument > env > 1.
+        effective_workers: int
+        if max_workers is None:
+            effective_workers = _env_max_workers()
+        else:
+            effective_workers = max(1, int(max_workers))
+        effective_workers = min(effective_workers, n_total)
+
         geom = "polymer bulk (full cell)" if packing_mode == "bulk" else "polymer shell"
         msg = (
             f"[insulin-ai] OpenMM matrix (Packmol): {n_total} candidate(s) — "
             f"insulin + {geom}, minimize"
             + (" + NPT sampling" if run_npt else "")
             + ", interaction energy (kJ/mol)."
+            + (f" workers={effective_workers}" if effective_workers > 1 else "")
         )
         print(f"  Evaluating {n_total} via OpenMM Packmol matrix...")
         if verbose:
             _progress_log(msg)
 
-        for i, cand in enumerate(to_eval):
-            psmiles = self._get_psmiles(cand)
-            name = cand.get("material_name", psmiles or f"candidate_{i}")
-            material_names.append(name)
+        # ------------------------------------------------------------------ #
+        # Build the shared matrix_kw template (without random_seed, which is  #
+        # per-candidate in the parallel path).                                 #
+        # ------------------------------------------------------------------ #
+        matrix_kw_template: Dict[str, Any] = dict(
+            n_repeats=n_repeats,
+            random_seed=self.random_seed,  # overridden per-candidate in parallel
+            max_minimize_steps=max_minimize,
+            verbose=verbose,
+            restrain_shell=restrain_shell,
+            run_npt=run_npt,
+            barostat_interval_fs=barostat_fs,
+            npt_duration_ps=npt_ps,
+            wall_clock_limit_s=wall_s,
+            packing_mode=packing_mode,
+        )
+        if progressive_pack:
+            matrix_kw_template["progressive_pack"] = True
+            matrix_kw_template["progressive_per_attempt_timeout_s"] = (
+                _matrix_progressive_per_attempt_timeout_s()
+            )
+            matrix_kw_template["progressive_max_total_s"] = _matrix_progressive_max_total_s()
+            matrix_kw_template["progressive_n_max"] = _matrix_progressive_n_max()
+        if target_density is not None:
+            matrix_kw_template["target_density_g_cm3"] = target_density
+            matrix_kw_template["box_size_nm"] = box_nm
+            matrix_kw_template["density_polymer_n_min"] = density_n_min
+            matrix_kw_template["density_polymer_n_max"] = density_n_max
+        else:
+            matrix_kw_template["n_polymers"] = n_polymers
+            matrix_kw_template["box_size_nm"] = box_nm
+            if packing_mode != "bulk":
+                matrix_kw_template["shell_only_angstrom"] = shell_a
 
-            if not psmiles or "[*]" not in str(psmiles):
-                md_results.append(None)
-                if verbose:
+        if effective_workers <= 1:
+            # ---------------------------------------------------------------- #
+            # Sequential path — unchanged behaviour.                           #
+            # ---------------------------------------------------------------- #
+            for i, cand in enumerate(to_eval):
+                psmiles = self._get_psmiles(cand)
+                name = cand.get("material_name", psmiles or f"candidate_{i}")
+                material_names.append(name)
+
+                if not psmiles or "[*]" not in str(psmiles):
+                    md_results.append(None)
                     entry = {
                         "index": i,
                         "total": n_total,
@@ -250,14 +491,14 @@ class MDSimulator:
                         "material_name": name,
                     }
                     progress.append(entry)
-                    _progress_log(f"[insulin-ai] {i + 1}/{n_total} skipped (no valid PSMILES)")
-                continue
+                    if verbose:
+                        _progress_log(f"[insulin-ai] {i + 1}/{n_total} skipped (no valid PSMILES)")
+                    continue
 
-            pre = prescreen_psmiles_for_md(psmiles)
-            if not pre.get("ok"):
-                md_results.append(None)
-                reason = pre.get("error", "prescreen rejected")
-                if verbose:
+                pre = prescreen_psmiles_for_md(psmiles)
+                if not pre.get("ok"):
+                    md_results.append(None)
+                    reason = pre.get("error", "prescreen rejected")
                     entry = {
                         "index": i,
                         "total": n_total,
@@ -267,61 +508,35 @@ class MDSimulator:
                         "stage": "prescreen",
                     }
                     progress.append(entry)
-                    _progress_log(f"[insulin-ai] {i + 1}/{n_total} rejected: {reason}")
-                continue
+                    if verbose:
+                        _progress_log(f"[insulin-ai] {i + 1}/{n_total} rejected: {reason}")
+                    continue
 
-            preview = str(psmiles)[:60] + ("…" if len(str(psmiles)) > 60 else "")
-            t0 = time.perf_counter()
-            if verbose:
-                _progress_log(
-                    f"[insulin-ai] {i + 1}/{n_total} Packmol+matrix: {preview} "
-                    f"(max {max_minimize} minimizer steps)"
-                )
-            slug = safe_filename_basename(str(name))
-            pdb_out: Optional[str] = None
-            if struct_dir is not None:
-                pdb_out = str(struct_dir / f"{slug}_complex_minimized.pdb")
-            matrix_kw: Dict[str, Any] = dict(
-                n_repeats=n_repeats,
-                random_seed=self.random_seed,
-                max_minimize_steps=max_minimize,
-                save_minimized_pdb=pdb_out,
-                verbose=verbose,
-                restrain_shell=restrain_shell,
-                run_npt=run_npt,
-                barostat_interval_fs=barostat_fs,
-                npt_duration_ps=npt_ps,
-                wall_clock_limit_s=wall_s,
-                packing_mode=packing_mode,
-            )
-            if progressive_pack:
-                matrix_kw["progressive_pack"] = True
-                matrix_kw["progressive_per_attempt_timeout_s"] = _matrix_progressive_per_attempt_timeout_s()
-                matrix_kw["progressive_max_total_s"] = _matrix_progressive_max_total_s()
-                matrix_kw["progressive_n_max"] = _matrix_progressive_n_max()
-            if target_density is not None:
-                matrix_kw["target_density_g_cm3"] = target_density
-                matrix_kw["box_size_nm"] = box_nm
-                matrix_kw["density_polymer_n_min"] = density_n_min
-                matrix_kw["density_polymer_n_max"] = density_n_max
-            else:
-                matrix_kw["n_polymers"] = n_polymers
-                matrix_kw["box_size_nm"] = box_nm
-                if packing_mode != "bulk":
-                    matrix_kw["shell_only_angstrom"] = shell_a
-
-            try:
-                res = run_openmm_matrix_relax_and_energy(psmiles, **matrix_kw)
-            except Exception as exc:
-                res = {"ok": False, "error": str(exc), "stage": "openmm", "psmiles": psmiles}
-
-            elapsed = time.perf_counter() - t0
-
-            if res is None or (isinstance(res, dict) and res.get("ok") is False):
-                err_msg = (res or {}).get("error", "unknown failure")
-                stage = (res or {}).get("stage", "unknown")
-                md_results.append(None)
+                preview = str(psmiles)[:60] + ("…" if len(str(psmiles)) > 60 else "")
+                t0 = time.perf_counter()
                 if verbose:
+                    _progress_log(
+                        f"[insulin-ai] {i + 1}/{n_total} Packmol+matrix: {preview} "
+                        f"(max {max_minimize} minimizer steps)"
+                    )
+                slug = safe_filename_basename(str(name))
+                pdb_out: Optional[str] = None
+                if struct_dir is not None:
+                    pdb_out = str(struct_dir / f"{slug}_complex_minimized.pdb")
+                matrix_kw: Dict[str, Any] = dict(matrix_kw_template)
+                matrix_kw["save_minimized_pdb"] = pdb_out
+
+                try:
+                    res = run_openmm_matrix_relax_and_energy(psmiles, **matrix_kw)
+                except Exception as exc:
+                    res = {"ok": False, "error": str(exc), "stage": "openmm", "psmiles": psmiles}
+
+                elapsed = time.perf_counter() - t0
+
+                if res is None or (isinstance(res, dict) and res.get("ok") is False):
+                    err_msg = (res or {}).get("error", "unknown failure")
+                    stage = (res or {}).get("stage", "unknown")
+                    md_results.append(None)
                     entry = {
                         "index": i,
                         "total": n_total,
@@ -332,60 +547,64 @@ class MDSimulator:
                         "seconds": round(elapsed, 3),
                     }
                     progress.append(entry)
-                    _progress_log(
-                        f"[insulin-ai] {i + 1}/{n_total} FAILED ({stage}): {err_msg[:200]}"
-                    )
-                continue
+                    if verbose:
+                        _progress_log(
+                            f"[insulin-ai] {i + 1}/{n_total} FAILED ({stage}): {err_msg[:200]}"
+                        )
+                    continue
 
-            if pdb_out:
-                res["complex_pdb_path"] = pdb_out
-            elif res.get("minimized_pdb"):
-                res["complex_pdb_path"] = res["minimized_pdb"]
-            npc = res.get("n_polymer_atoms_per_chain")
-            nch = res.get("n_polymer_chains")
-            if npc is not None and nch is not None:
-                res["n_polymer_atoms"] = int(npc) * int(nch)
-            cp = res.get("complex_pdb_path")
-            nprot = res.get("n_insulin_atoms")
-            if cp and nprot is not None:
-                try:
-                    from .matrix_packing_metrics import compute_matrix_packing_metrics
+                if pdb_out:
+                    res["complex_pdb_path"] = pdb_out
+                elif res.get("minimized_pdb"):
+                    res["complex_pdb_path"] = res["minimized_pdb"]
+                npc = res.get("n_polymer_atoms_per_chain")
+                nch = res.get("n_polymer_chains")
+                if npc is not None and nch is not None:
+                    res["n_polymer_atoms"] = int(npc) * int(nch)
+                cp = res.get("complex_pdb_path")
+                nprot = res.get("n_insulin_atoms")
+                if cp and nprot is not None:
+                    try:
+                        from .matrix_packing_metrics import compute_matrix_packing_metrics
 
-                    res["packing_metrics"] = compute_matrix_packing_metrics(
-                        str(cp), int(nprot)
-                    )
-                except Exception as ex:
-                    res["packing_metrics"] = {"ok": False, "error": str(ex)}
-            if struct_dir is not None:
-                monomer_png = struct_dir / f"{slug}_monomer.png"
-                r_mono = save_psmiles_png(psmiles, monomer_png, overwrite=True)
-                res["monomer_png_path"] = r_mono.get("path") if r_mono.get("ok") else None
-                res["monomer_png_error"] = r_mono.get("error")
-                preview_png = struct_dir / f"{slug}_complex_preview.png"
-                if res.get("complex_pdb_path"):
-                    r_prev = write_complex_preview_png(
-                        res["complex_pdb_path"],
-                        str(preview_png),
-                    )
-                    res["complex_preview_png_path"] = r_prev.get("path") if r_prev.get("ok") else None
-                    res["complex_preview_png_error"] = r_prev.get("error")
-                    chemviz_png = struct_dir / f"{slug}_complex_chemviz.png"
-                    r_cv, cv_backend = write_complex_viz_png_auto(
-                        res["complex_pdb_path"],
-                        str(chemviz_png),
-                        n_protein_atoms=res.get("n_insulin_atoms"),
-                    )
-                    res["complex_chemviz_png_path"] = r_cv.get("path") if r_cv.get("ok") else None
-                    res["complex_chemviz_png_error"] = r_cv.get("error")
-                    res["complex_chemviz_backend"] = cv_backend
-                else:
-                    res["complex_preview_png_path"] = None
-                    res["complex_preview_png_error"] = "complex PDB not written"
-                    res["complex_chemviz_png_path"] = None
-                    res["complex_chemviz_png_error"] = "complex PDB not written"
-                    res["complex_chemviz_backend"] = None
-            md_results.append(res)
-            if verbose:
+                        res["packing_metrics"] = compute_matrix_packing_metrics(
+                            str(cp), int(nprot)
+                        )
+                    except Exception as ex:
+                        res["packing_metrics"] = {"ok": False, "error": str(ex)}
+                if struct_dir is not None:
+                    monomer_png = struct_dir / f"{slug}_monomer.png"
+                    r_mono = save_psmiles_png(psmiles, monomer_png, overwrite=True)
+                    res["monomer_png_path"] = r_mono.get("path") if r_mono.get("ok") else None
+                    res["monomer_png_error"] = r_mono.get("error")
+                    preview_png = struct_dir / f"{slug}_complex_preview.png"
+                    if res.get("complex_pdb_path"):
+                        r_prev = write_complex_preview_png(
+                            res["complex_pdb_path"],
+                            str(preview_png),
+                        )
+                        res["complex_preview_png_path"] = (
+                            r_prev.get("path") if r_prev.get("ok") else None
+                        )
+                        res["complex_preview_png_error"] = r_prev.get("error")
+                        chemviz_png = struct_dir / f"{slug}_complex_chemviz.png"
+                        r_cv, cv_backend = write_complex_viz_png_auto(
+                            res["complex_pdb_path"],
+                            str(chemviz_png),
+                            n_protein_atoms=res.get("n_insulin_atoms"),
+                        )
+                        res["complex_chemviz_png_path"] = (
+                            r_cv.get("path") if r_cv.get("ok") else None
+                        )
+                        res["complex_chemviz_png_error"] = r_cv.get("error")
+                        res["complex_chemviz_backend"] = cv_backend
+                    else:
+                        res["complex_preview_png_path"] = None
+                        res["complex_preview_png_error"] = "complex PDB not written"
+                        res["complex_chemviz_png_path"] = None
+                        res["complex_chemviz_png_error"] = "complex PDB not written"
+                        res["complex_chemviz_backend"] = None
+                md_results.append(res)
                 entry = {
                     "index": i,
                     "total": n_total,
@@ -395,7 +614,9 @@ class MDSimulator:
                     "seconds": round(elapsed, 3),
                     "method": res.get("method"),
                     "interaction_energy_kj_mol": res.get("interaction_energy_kj_mol"),
-                    "potential_energy_complex_kj_mol": res.get("potential_energy_complex_kj_mol"),
+                    "potential_energy_complex_kj_mol": res.get(
+                        "potential_energy_complex_kj_mol"
+                    ),
                     "n_insulin_atoms": res.get("n_insulin_atoms"),
                     "n_polymer_atoms": res.get("n_polymer_atoms"),
                     "n_polymer_chains": res.get("n_polymer_chains"),
@@ -414,12 +635,126 @@ class MDSimulator:
                         "fraction_polymer_within_0.80_nm"
                     )
                 progress.append(entry)
-                log_tail = f"E_int={res.get('interaction_energy_kj_mol')} kJ/mol"
-                if pm.get("ok"):
-                    log_tail += (
-                        f", d_min(poly-prot)={pm.get('min_polymer_protein_distance_nm'):.3f} nm"
+                if verbose:
+                    log_tail = f"E_int={res.get('interaction_energy_kj_mol')} kJ/mol"
+                    if pm.get("ok"):
+                        log_tail += (
+                            f", d_min(poly-prot)="
+                            f"{pm.get('min_polymer_protein_distance_nm'):.3f} nm"
+                        )
+                    _progress_log(
+                        f"[insulin-ai] {i + 1}/{n_total} done in {elapsed:.1f}s {log_tail}"
                     )
-                _progress_log(f"[insulin-ai] {i + 1}/{n_total} done in {elapsed:.1f}s {log_tail}")
+
+        else:
+            # ---------------------------------------------------------------- #
+            # Parallel path — ProcessPoolExecutor.                             #
+            # Prescreen happens in the parent; workers only run OpenMM.        #
+            # Output order is guaranteed by sorting on the returned index.     #
+            # ---------------------------------------------------------------- #
+
+            # Phase 1: prescreen all candidates in the parent.
+            # Collect (index, psmiles, name, slug, pdb_out) for passing candidates
+            # and immediately record skipped/rejected entries.
+            md_results = [None] * n_total  # type: ignore[assignment]
+            material_names = [""] * n_total
+
+            jobs: List[Tuple[int, str, str, str, Optional[str]]] = []
+            for i, cand in enumerate(to_eval):
+                psmiles = self._get_psmiles(cand)
+                name = cand.get("material_name", psmiles or f"candidate_{i}")
+                material_names[i] = name
+
+                if not psmiles or "[*]" not in str(psmiles):
+                    entry = {
+                        "index": i,
+                        "total": n_total,
+                        "status": "skipped",
+                        "reason": "no valid PSMILES with [*]",
+                        "material_name": name,
+                    }
+                    progress.append(entry)
+                    if verbose:
+                        _progress_log(
+                            f"[insulin-ai] {i + 1}/{n_total} skipped (no valid PSMILES)"
+                        )
+                    continue
+
+                pre = prescreen_psmiles_for_md(psmiles)
+                if not pre.get("ok"):
+                    reason = pre.get("error", "prescreen rejected")
+                    entry = {
+                        "index": i,
+                        "total": n_total,
+                        "status": "rejected",
+                        "reason": reason,
+                        "material_name": name,
+                        "stage": "prescreen",
+                    }
+                    progress.append(entry)
+                    if verbose:
+                        _progress_log(f"[insulin-ai] {i + 1}/{n_total} rejected: {reason}")
+                    continue
+
+                slug = safe_filename_basename(str(name))
+                pdb_out_p: Optional[str] = None
+                if struct_dir is not None:
+                    pdb_out_p = str(struct_dir / f"{slug}_complex_minimized.pdb")
+                jobs.append((i, psmiles, name, slug, pdb_out_p))
+
+            # Phase 2: dispatch passing candidates to workers.
+            n_jobs = len(jobs)
+            if verbose and n_jobs:
+                _progress_log(
+                    f"[insulin-ai] Submitting {n_jobs} candidate(s) to "
+                    f"{effective_workers} worker process(es)."
+                )
+
+            struct_dir_str = str(struct_dir) if struct_dir is not None else None
+            # strip verbose from the template; workers always run quietly
+            worker_kw = {k: v for k, v in matrix_kw_template.items() if k != "verbose"}
+
+            with ProcessPoolExecutor(max_workers=effective_workers) as executor:
+                future_map = {
+                    executor.submit(
+                        _evaluate_one_matrix_candidate,
+                        idx,
+                        ps,
+                        nm,
+                        n_total,
+                        sl,
+                        pdb,
+                        struct_dir_str,
+                        worker_kw,
+                        self.random_seed + idx,  # per-candidate seed for reproducibility
+                    ): idx
+                    for idx, ps, nm, sl, pdb in jobs
+                }
+                for future in as_completed(future_map):
+                    idx, res, entry = future.result()
+                    md_results[idx] = res
+                    if entry is not None:
+                        progress.append(entry)
+                        if verbose:
+                            status = entry.get("status", "")
+                            if status == "completed":
+                                log_tail = (
+                                    f"E_int={entry.get('interaction_energy_kj_mol')} kJ/mol"
+                                )
+                                if entry.get("min_polymer_protein_distance_nm") is not None:
+                                    log_tail += (
+                                        f", d_min(poly-prot)="
+                                        f"{entry['min_polymer_protein_distance_nm']:.3f} nm"
+                                    )
+                                _progress_log(
+                                    f"[insulin-ai] {idx + 1}/{n_total} done in "
+                                    f"{entry.get('seconds', '?')}s {log_tail}"
+                                )
+                            else:
+                                _progress_log(
+                                    f"[insulin-ai] {idx + 1}/{n_total} {status}: "
+                                    f"{entry.get('reason', '')}"
+                                )
 
         feedback = self.extractor.extract_feedback(md_results, material_names)
         out: Dict[str, Any] = {
@@ -432,8 +767,8 @@ class MDSimulator:
         }
         if struct_dir is not None:
             out["structure_artifacts_dir"] = str(struct_dir)
+        out["evaluation_progress"] = progress
         if verbose:
-            out["evaluation_progress"] = progress
             out["evaluation_note"] = (
                 "Each candidate: Packmol-packed polymer shell around insulin (periodic box), "
                 "LocalEnergyMinimizer, optional short NPT segment (INSULIN_AI_OPENMM_MATRIX_NPT), "
@@ -441,5 +776,11 @@ class MDSimulator:
                 "By default uses density-driven chain count (INSULIN_AI_OPENMM_MATRIX_DEFAULT_DENSITY_G_CM3); "
                 "set INSULIN_AI_OPENMM_MATRIX_FIXED_MODE=1 for fixed N_POLYMERS + shell instead. "
                 "packing_metrics reports polymer–protein proximity on the minimized PDB."
+                + (
+                    f" Evaluated with {effective_workers} parallel worker process(es) "
+                    "(INSULIN_AI_EVAL_MAX_WORKERS)."
+                    if effective_workers > 1
+                    else ""
+                )
             )
         return out

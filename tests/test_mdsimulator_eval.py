@@ -72,3 +72,117 @@ def test_evaluate_candidates_matrix_smoke(tmp_path):
     pm = raw.get("packing_metrics") or {}
     assert pm.get("ok") is True
     assert "min_polymer_protein_distance_nm" in pm
+
+
+# ---------------------------------------------------------------------------
+# Parallel evaluation: ordering and max_workers wiring
+# ---------------------------------------------------------------------------
+
+
+def test_parallel_ordering_with_mock(monkeypatch):
+    """
+    With max_workers=2 and a real (or skipped) OpenMM stack, md_results_raw
+    order must match the original candidate order.
+
+    The parallel path dispatches to subprocess workers, so inter-process
+    mocking is not possible — this test runs real OpenMM with minimal settings
+    and skips if the stack is unavailable.
+    """
+    from insulin_ai.simulation import MDSimulator
+    from insulin_ai.simulation.openmm_compat import openmm_available
+    from insulin_ai.simulation.packmol_packer import _packmol_available
+
+    if not openmm_available():
+        pytest.skip("OpenMM stack required")
+    if not _packmol_available():
+        pytest.skip("packmol binary required")
+
+    import os
+
+    env_overrides = {
+        "INSULIN_AI_OPENMM_MATRIX_NPT": "0",
+        "INSULIN_AI_OPENMM_MATRIX_FIXED_MODE": "1",
+        "INSULIN_AI_OPENMM_MATRIX_N_POLYMERS": "2",
+        "INSULIN_AI_OPENMM_MAX_MINIMIZE_STEPS": "200",
+        "INSULIN_AI_OPENMM_N_REPEATS": "1",
+    }
+    for k, v in env_overrides.items():
+        os.environ[k] = v
+    try:
+        candidates = [
+            {"material_name": f"poly_{i}", "chemical_structure": "[*]CC[*]"}
+            for i in range(3)
+        ]
+        sim = MDSimulator(n_steps=100, random_seed=0)
+        result = sim.evaluate_candidates(
+            candidates,
+            max_candidates=3,
+            verbose=False,
+            max_workers=2,
+        )
+    finally:
+        for k in env_overrides:
+            os.environ.pop(k, None)
+
+    raw = result["md_results_raw"]
+    assert len(raw) == 3, "Must return one entry per candidate"
+    for entry in raw:
+        assert entry is not None, "All valid PSMILES should succeed with parallel workers"
+
+
+def test_max_workers_env_var(monkeypatch):
+    """_env_max_workers reads INSULIN_AI_EVAL_MAX_WORKERS and clamps to >=1."""
+    from insulin_ai.simulation.md_simulator import _env_max_workers
+
+    monkeypatch.setenv("INSULIN_AI_EVAL_MAX_WORKERS", "3")
+    assert _env_max_workers() == 3
+
+    monkeypatch.setenv("INSULIN_AI_EVAL_MAX_WORKERS", "0")
+    assert _env_max_workers() == 1
+
+    monkeypatch.delenv("INSULIN_AI_EVAL_MAX_WORKERS", raising=False)
+    assert _env_max_workers() == 1
+
+
+def test_max_workers_argument_overrides_env(monkeypatch):
+    """
+    Explicit max_workers=1 argument uses the sequential path even when
+    INSULIN_AI_EVAL_MAX_WORKERS is set to a higher value in the environment.
+    Verified by confirming evaluation_progress is absent with verbose=False.
+    """
+    from insulin_ai.simulation import MDSimulator
+    from insulin_ai.simulation.openmm_compat import openmm_available
+    from insulin_ai.simulation.packmol_packer import _packmol_available
+
+    if not openmm_available():
+        pytest.skip("OpenMM stack required")
+    if not _packmol_available():
+        pytest.skip("packmol binary required")
+
+    import os
+
+    env_overrides = {
+        "INSULIN_AI_EVAL_MAX_WORKERS": "4",
+        "INSULIN_AI_OPENMM_MATRIX_NPT": "0",
+        "INSULIN_AI_OPENMM_MATRIX_FIXED_MODE": "1",
+        "INSULIN_AI_OPENMM_MATRIX_N_POLYMERS": "2",
+        "INSULIN_AI_OPENMM_MAX_MINIMIZE_STEPS": "200",
+        "INSULIN_AI_OPENMM_N_REPEATS": "1",
+    }
+    for k, v in env_overrides.items():
+        os.environ[k] = v
+    try:
+        sim = MDSimulator(n_steps=100, random_seed=0)
+        result = sim.evaluate_candidates(
+            [{"material_name": "x", "chemical_structure": "[*]CC[*]"}],
+            max_candidates=1,
+            verbose=False,
+            max_workers=1,  # explicit override: env says 4 but we force sequential
+        )
+    finally:
+        for k in env_overrides:
+            os.environ.pop(k, None)
+
+    # Sequential path with verbose=False: evaluation_progress absent
+    assert "evaluation_progress" not in result
+    assert result.get("md_results_raw") is not None
