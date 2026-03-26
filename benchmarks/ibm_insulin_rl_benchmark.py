@@ -414,6 +414,7 @@ def run_ibm_insulin_benchmark(
         Callable[[List[Dict[str, Any]], int], Dict[str, Any]]
     ] = None,
     comparison_tsv: Optional[str] = None,
+    comparison_notes: str = "",
     verbose: int = 0,
 ) -> Dict[str, Any]:
     """Full train-or-test pipeline for the IBM insulin RL benchmark.
@@ -434,6 +435,7 @@ def run_ibm_insulin_benchmark(
         evaluate_candidates_fn: Optional replacement for ``MDSimulator.evaluate_candidates``
             (tests only; default is live OpenMM).
         comparison_tsv: If set, append a comparison row to this TSV file.
+        comparison_notes: Appended to the TSV ``notes`` column (comma-separated).
         verbose: SB3 verbosity (0=silent).
 
     Returns:
@@ -518,6 +520,9 @@ def run_ibm_insulin_benchmark(
 
     # Append to comparison TSV
     if comparison_tsv:
+        base_notes = "injected_evaluator" if evaluate_candidates_fn else "live_openmm"
+        extra = comparison_notes.strip()
+        notes_val = f"{base_notes},{extra}" if extra else base_notes
         row = make_comparison_row(
             method=f"ibm_rl_{algorithm}",
             n_evaluations=result.get("n_evaluations"),
@@ -535,7 +540,7 @@ def run_ibm_insulin_benchmark(
             seed_psmiles=seed_psmiles,
             n_proposals=n_proposals,
             target_energy_kj=target_energy_kj,
-            notes="injected_evaluator" if evaluate_candidates_fn else "live_openmm",
+            notes=notes_val,
         )
         append_comparison_tsv(comparison_tsv, row)
         logger.info("Comparison row appended to %s", comparison_tsv)
@@ -683,6 +688,12 @@ def main() -> None:
         help="Append a comparison row to this TSV (shared with optuna / agentic benchmarks).",
     )
     p.add_argument(
+        "--comparison-notes",
+        type=str,
+        default="",
+        help="Extra text appended to TSV notes (e.g. ablation label).",
+    )
+    p.add_argument(
         "--verbose",
         type=int,
         default=0,
@@ -723,6 +734,7 @@ def main() -> None:
         random_seed=args.random_seed,
         model_path=args.model_path,
         comparison_tsv=args.comparison_tsv,
+        comparison_notes=args.comparison_notes,
         verbose=args.verbose,
     )
 

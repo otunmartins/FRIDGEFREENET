@@ -99,10 +99,13 @@ method | n_evaluations | best_discovery_score | best_interaction_energy_kj_mol
 n_high_performers_found | n_unique_psmiles_evaluated | wall_time_s | ...
 ```
 
-This enables fixed-budget comparison (e.g. "50 OpenMM calls") across:
+This enables fixed-budget comparison (e.g. **20 iterations × 8 evals = 160** successful OpenMM evaluations in the paper study script) across:
 - `agentic` (LLM + MCP tools)
-- `optuna` (`benchmarks/optuna_psmiles_discovery.py`)
+- `optuna_tpe` (`benchmarks/optuna_psmiles_discovery.py`; `--output` / `--comparison-tsv`)
+- `random_psmiles` (`benchmarks/random_psmiles_baseline.py` — memoryless mutation baseline)
 - `ibm_rl_dqn` and `ibm_rl_ppo` (this adapter)
+
+For a **fresh paper study** (separate from ad hoc rows in `comparison_results.tsv`), use **`benchmarks/comparison_results_study.tsv`** and run **`benchmarks/run_paper_study.sh`** (see [`BENCHMARK_AND_REPRO_STUDY.md`](BENCHMARK_AND_REPRO_STUDY.md)).
 
 ## Dependencies
 

@@ -1,0 +1,5 @@
+method	n_evaluations	best_discovery_score	best_interaction_energy_kj_mol	n_high_performers_found	n_unique_psmiles_evaluated	wall_time_s	algorithm	n_timesteps_trained	avg_episode_reward	avg_targets_per_episode	avg_steps_to_first_target	avg_episode_length	seed_psmiles	n_proposals	target_energy_kj	notes
+ibm_rl_dqn	125	39.6991	-1244.4422	14	14	1029.2	dqn	200	4.6	5.0	1.0	5.8	[*]OCC[*]	8	-5.0	live_openmm,smoke_short_md
+ibm_rl_dqn	125	40.0318	-1065.1801	14	14	952.9	dqn	200	4.6	5.0	1.0	5.8	[*]OCC[*]	8	-5.0	live_openmm
+ibm_rl_dqn	124	39.1366	-1098.5194	14	14	644.5	dqn	200	4.48	4.96	1.0	5.92	[*]OCC[*]	8	-5.0	live_openmm
+ibm_rl_dqn	124	39.5327	-1056.2573	14	14	635.3	dqn	200	4.36	4.96	1.0	6.16	[*]OCC[*]	8	-5.0	live_openmm

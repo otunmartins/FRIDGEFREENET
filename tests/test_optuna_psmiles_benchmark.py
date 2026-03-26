@@ -24,20 +24,35 @@ from benchmarks.optuna_psmiles_discovery import (  # noqa: E402
 
 
 def _mock_evaluate(candidates, max_candidates):
-    """Minimal feedback dict compatible with discovery_score."""
-    names = [c.get("material_name", f"c{i}") for i, c in enumerate(candidates[:max_candidates])]
-    name = names[0] if names else "c0"
-    return {
-        "high_performers": [name],
-        "effective_mechanisms": ["OpenMM_merged_screening"],
-        "problematic_features": [],
-        "successful_materials": [name],
-        "property_analysis": {
-            name: {
+    """Minimal feedback dict compatible with discovery_score + md_results_raw."""
+    slice_c = candidates[:max_candidates]
+    names = [c.get("material_name", f"c{i}") for i, c in enumerate(slice_c)]
+    pa = {}
+    raw = []
+    for i, c in enumerate(slice_c):
+        name = names[i]
+        psm = c.get("chemical_structure") or "[*]CC[*]"
+        pa[name] = {
+            "interaction_energy_kj_mol": -120.0,
+            "insulin_rmsd_to_initial_nm": 0.06,
+            "psmiles": psm,
+        }
+        raw.append(
+            {
+                "ok": True,
+                "psmiles": psm,
                 "interaction_energy_kj_mol": -120.0,
                 "insulin_rmsd_to_initial_nm": 0.06,
             }
-        },
+        )
+    top = names[:1] if names else ["c0"]
+    return {
+        "high_performers": top,
+        "effective_mechanisms": ["OpenMM_merged_screening"],
+        "problematic_features": [],
+        "successful_materials": top,
+        "property_analysis": pa,
+        "md_results_raw": raw,
     }
 
 
@@ -64,9 +79,12 @@ def test_run_optuna_benchmark_mocked_completes_study():
         evaluate_candidates_fn=_mock_evaluate,
     )
     assert "error" not in out
-    assert out["best_value"] > float("-inf")
+    assert out["best_value"] is not None and out["best_value"] > float("-inf")
+    assert out["best_trial"] is not None
     assert out["best_trial"]["number"] >= 0
     assert out["n_trials"] == 3
+    assert out["n_evaluations"] == 3 * 2  # three trials × two candidates evaluated
+    assert len(out["evaluation_trace"]) == out["n_evaluations"]
 
 
 @pytest.mark.slow
