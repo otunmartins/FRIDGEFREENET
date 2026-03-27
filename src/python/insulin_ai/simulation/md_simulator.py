@@ -362,8 +362,12 @@ class MDSimulator:
         max_candidates:
             Maximum number of candidates to evaluate from the head of the list.
         verbose:
-            Emit per-candidate JSON progress to stderr and include
-            ``evaluation_progress`` in the output dict.
+            When ``True``, emit detailed per-candidate stderr progress and add
+            ``evaluation_note`` to the returned dict. When ``False`` and the
+            process has not opted out via ``INSULIN_AI_EVAL_QUIET`` /
+            ``INSULIN_AI_EVAL_VERBOSE=0``, a short **stderr heartbeat** still
+            prints one start and one finish line per candidate (useful with MCP
+            ``verbose=false`` / ``response_format=concise``).
         artifacts_dir:
             Directory to write structure artifacts (PDB, PNG). Resolves via
             ``resolve_eval_structure_artifacts_dir`` when not supplied.
@@ -388,8 +392,12 @@ class MDSimulator:
         if not _packmol_available():
             raise _packmol_required_error()
 
-        if _eval_quiet():
+        eval_quiet_env = _eval_quiet()
+        if eval_quiet_env:
             verbose = False
+        # One-line stderr progress per candidate when the caller passes verbose=False
+        # (e.g. MCP concise mode) but has not opted out via INSULIN_AI_EVAL_QUIET / _VERBOSE=0.
+        stderr_heartbeat = (not verbose) and (not eval_quiet_env)
         struct_dir = resolve_eval_structure_artifacts_dir(artifacts_dir)
         to_eval = candidates[:max_candidates]
         if not to_eval:
@@ -493,6 +501,10 @@ class MDSimulator:
                     progress.append(entry)
                     if verbose:
                         _progress_log(f"[insulin-ai] {i + 1}/{n_total} skipped (no valid PSMILES)")
+                    elif stderr_heartbeat:
+                        _progress_log(
+                            f"[insulin-ai] {i + 1}/{n_total} skipped (no valid PSMILES with [*])"
+                        )
                     continue
 
                 pre = prescreen_psmiles_for_md(psmiles)
@@ -510,6 +522,11 @@ class MDSimulator:
                     progress.append(entry)
                     if verbose:
                         _progress_log(f"[insulin-ai] {i + 1}/{n_total} rejected: {reason}")
+                    elif stderr_heartbeat:
+                        _progress_log(
+                            f"[insulin-ai] {i + 1}/{n_total} rejected (prescreen): "
+                            f"{reason[:120]}"
+                        )
                     continue
 
                 preview = str(psmiles)[:60] + ("…" if len(str(psmiles)) > 60 else "")
@@ -518,6 +535,10 @@ class MDSimulator:
                     _progress_log(
                         f"[insulin-ai] {i + 1}/{n_total} Packmol+matrix: {preview} "
                         f"(max {max_minimize} minimizer steps)"
+                    )
+                elif stderr_heartbeat:
+                    _progress_log(
+                        f"[insulin-ai] {i + 1}/{n_total} matrix eval starting: {preview}"
                     )
                 slug = safe_filename_basename(str(name))
                 pdb_out: Optional[str] = None
@@ -550,6 +571,11 @@ class MDSimulator:
                     if verbose:
                         _progress_log(
                             f"[insulin-ai] {i + 1}/{n_total} FAILED ({stage}): {err_msg[:200]}"
+                        )
+                    elif stderr_heartbeat:
+                        _progress_log(
+                            f"[insulin-ai] {i + 1}/{n_total} finished in {elapsed:.1f}s "
+                            f"status=failed stage={stage}"
                         )
                     continue
 
@@ -645,6 +671,12 @@ class MDSimulator:
                     _progress_log(
                         f"[insulin-ai] {i + 1}/{n_total} done in {elapsed:.1f}s {log_tail}"
                     )
+                elif stderr_heartbeat:
+                    eint = res.get("interaction_energy_kj_mol")
+                    _progress_log(
+                        f"[insulin-ai] {i + 1}/{n_total} finished in {elapsed:.1f}s "
+                        f"status=completed E_int={eint} kJ/mol"
+                    )
 
         else:
             # ---------------------------------------------------------------- #
@@ -678,6 +710,10 @@ class MDSimulator:
                         _progress_log(
                             f"[insulin-ai] {i + 1}/{n_total} skipped (no valid PSMILES)"
                         )
+                    elif stderr_heartbeat:
+                        _progress_log(
+                            f"[insulin-ai] {i + 1}/{n_total} skipped (no valid PSMILES with [*])"
+                        )
                     continue
 
                 pre = prescreen_psmiles_for_md(psmiles)
@@ -694,6 +730,11 @@ class MDSimulator:
                     progress.append(entry)
                     if verbose:
                         _progress_log(f"[insulin-ai] {i + 1}/{n_total} rejected: {reason}")
+                    elif stderr_heartbeat:
+                        _progress_log(
+                            f"[insulin-ai] {i + 1}/{n_total} rejected (prescreen): "
+                            f"{reason[:120]}"
+                        )
                     continue
 
                 slug = safe_filename_basename(str(name))
@@ -704,7 +745,7 @@ class MDSimulator:
 
             # Phase 2: dispatch passing candidates to workers.
             n_jobs = len(jobs)
-            if verbose and n_jobs:
+            if n_jobs and (verbose or stderr_heartbeat):
                 _progress_log(
                     f"[insulin-ai] Submitting {n_jobs} candidate(s) to "
                     f"{effective_workers} worker process(es)."
@@ -754,6 +795,20 @@ class MDSimulator:
                                 _progress_log(
                                     f"[insulin-ai] {idx + 1}/{n_total} {status}: "
                                     f"{entry.get('reason', '')}"
+                                )
+                        elif stderr_heartbeat:
+                            status = entry.get("status", "")
+                            sec = entry.get("seconds", "?")
+                            if status == "completed":
+                                eint = entry.get("interaction_energy_kj_mol")
+                                _progress_log(
+                                    f"[insulin-ai] {idx + 1}/{n_total} finished in {sec}s "
+                                    f"status=completed E_int={eint} kJ/mol"
+                                )
+                            else:
+                                _progress_log(
+                                    f"[insulin-ai] {idx + 1}/{n_total} finished in {sec}s "
+                                    f"status={status}"
                                 )
 
         feedback = self.extractor.extract_feedback(md_results, material_names)

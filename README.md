@@ -10,6 +10,19 @@ AI-driven design of fridge-free insulin delivery patches. An AI assistant uses a
 - **An IDE with MCP** — Cursor is the main target; others that support MCP will work too.
 - **Optional:** API keys for literature search (see [docs/SECURITY.md](docs/SECURITY.md)).
 
+### OpenMM / RDKit are not installed until you use the conda env
+
+**`pip install -r requirements.txt` alone does not install OpenMM, RDKit, pdbfixer, Packmol, or OpenFF Toolkit** (those are conda-forge binaries or not on PyPI). Until you run **`./install`** (or **`./install --conda-yml`** / **`mamba env create -f environment-simulation.yml`**), `python -c "import openmm"` will fail in a plain venv or a mismatched conda env.
+
+Use the env named **`insulin-ai-sim`** (that is what `./install` and `scripts/run_mcp_server.sh` expect):
+
+```bash
+./install   # first time (default: chunked conda + pip)
+mamba run -n insulin-ai-sim python -c "import openmm; print(openmm.__version__)"
+```
+
+If your shell shows a different env (for example `insulin-ai`), either activate `insulin-ai-sim` for screening or align that env with the same packages—see [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md).
+
 ---
 
 ## Quick start
@@ -43,13 +56,18 @@ From the repo root:
 ./install
 ```
 
-Or create the conda env manually:
+**`./install`** builds **`insulin-ai-sim`** by default with **chunked conda-forge installs + pip** (lower RAM than solving the whole YAML at once). For a single-shot solve from the YAML (more RAM): **`./install --conda-yml`**.
+
+Or create/update the env manually:
 
 ```bash
 mamba env create -f environment-simulation.yml
+# or low-RAM equivalent:  bash scripts/install_insulin_ai_sim_lowmem.sh
 ```
 
 The environment is named **`insulin-ai-sim`**. You don't need to activate it to use MCP—the launcher script does that for you.
+
+If the solver fails with **`libgfortran 1.0`** or unsatisfiable **packmol**, remove the legacy **`omnia`** channel (**`bash scripts/fix_conda_channels_for_insulin_ai.sh`**), then re-run **`./install`**. If you use **`./install --conda-yml`** and conda is **`Killed`** during **Solving environment**, use the default **`./install`** (chunked) instead. Details: [Dependencies — Troubleshooting](docs/DEPENDENCIES.md#troubleshooting-conda-solve-failures).
 
 ### Windows
 

@@ -37,7 +37,8 @@ MCP **`evaluate_psmiles`** and [`MDSimulator.evaluate_candidates`](../src/python
 | `INSULIN_AI_OPENMM_MATRIX_PACK_PER_ATTEMPT_TIMEOUT_S` | `120` | Per Packmol subprocess timeout (seconds) during progressive packing. |
 | `INSULIN_AI_OPENMM_MATRIX_PACK_MAX_TOTAL_S` | *(unset)* | Optional **cumulative** wall-clock budget for all progressive Packmol attempts (unset = no total cap). |
 | `INSULIN_AI_OPENMM_MATRIX_PROGRESSIVE_N_MAX` | *(unset)* | Optional **maximum** chain count (cap progressive growth). |
-|| **Verbose / quiet:** `INSULIN_AI_EVAL_QUIET=1` or `INSULIN_AI_EVAL_VERBOSE=0` | | Smaller JSON / no stderr progress |
+| **Verbose / quiet:** `INSULIN_AI_EVAL_QUIET=1` or `INSULIN_AI_EVAL_VERBOSE=0` | | Smaller JSON / no stderr progress (also disables stderr heartbeat) |
+| **Stderr heartbeat** (implicit) | *(on)* | When **`verbose=False`** on `evaluate_psmiles` / `evaluate_candidates` but **quiet env is not set**, stderr still prints **`[insulin-ai] i/n matrix eval starting: …`** and **`… finished …`** per candidate. Parallel runs also log **`Submitting N candidate(s) to W worker process(es).`** |
 | `INSULIN_AI_EVAL_MAX_WORKERS` | `1` | Number of parallel worker processes for `evaluate_candidates` / `evaluate_psmiles`. `1` = sequential (default, safe). Set to `2`–`4` to evaluate multiple candidates concurrently via `ProcessPoolExecutor`. Each worker loads a full OpenMM matrix system — start conservatively. Can also be set per-call via the `max_workers` argument on `evaluate_psmiles` or `MDSimulator.evaluate_candidates` (argument takes precedence over env). |
 
 **Note:** NPT is **off** by default so MCP runs finish in minutes; turn on for sampling-averaged interaction energy at the cost of runtime.
@@ -54,7 +55,46 @@ MCP **`evaluate_psmiles`** and [`MDSimulator.evaluate_candidates`](../src/python
 - **RAM:** each worker holds a full OpenMM system in memory. Start with 2–4 workers; scale up only if RAM allows.
 - **Diminishing returns:** if `max_workers` exceeds the number of candidates it is clamped automatically.
 
+### Why one `evaluate_psmiles` call can run for many hours (or look “stuck”)
+
+- **Single tool response:** The MCP tool returns **one** JSON only after **every** candidate in the batch finishes. OpenCode’s tool panel does not stream partial JSON. With **`response_format=concise`**, the returned payload is smaller, but the client still waits for the full batch.
+- **`verbose=false` vs quiet:** Passing **`verbose=false`** (common with concise mode) **does not** silence stderr on the MCP server unless you also set **`INSULIN_AI_EVAL_QUIET=1`** or **`INSULIN_AI_EVAL_VERBOSE=0`**. By default, **`verbose=false`** still emits the **stderr heartbeat** lines described in the environment table so the terminal running **`insulin_ai_mcp_server.py`** shows which candidate is running. OpenCode’s UI may still look idle if you are not watching that server terminal.
+- **Minimize has no wall-clock limit:** After Packmol, [`run_openmm_matrix_relax_and_energy`](../src/python/insulin_ai/simulation/openmm_complex.py) calls **`openmm.LocalEnergyMinimizer.minimize(..., maxIterations=INSULIN_AI_OPENMM_MAX_MINIMIZE_STEPS)`** (default **2000**). Each iteration can mean many force evaluations on a **large** system (insulin + **`n_polymers`** chains × oligomer). On **CPU**, one difficult candidate can take **hours**. The **`INSULIN_AI_OPENMM_MATRIX_WALL_CLOCK_S`** limit applies only to the **optional NPT** loop after minimize—not to minimization itself.
+- **Parallel workers:** **`max_workers=4`** runs four full matrix builds at once. That multiplies **RAM** and **CPU** contention; with **swap**, wall time explodes. Prefer **`max_workers=1`** or **`2`** unless you have confirmed headroom (see default in `INSULIN_AI_EVAL_MAX_WORKERS`).
+- **What to do:** Check **`htop`** for `packmol`, **`python`** (MCP server / workers), or **`pymol`** — rising CPU time means work in progress. For faster turns: smaller batches, **`max_workers=1`**, lower **`INSULIN_AI_OPENMM_MAX_MINIMIZE_STEPS`**, lower **`INSULIN_AI_OPENMM_MATRIX_N_POLYMERS`** (or density caps), **`INSULIN_AI_EVAL_NO_STRUCTURE_ARTIFACTS=1`** to skip PNG/PyMOL while debugging, or pass **`verbose=true`** on **`evaluate_psmiles`** for full per-candidate stderr detail (beyond the default heartbeat when `verbose=false`).
+
 **Packing quality:** Each result includes **`packing_metrics`** (nearest protein–polymer heavy-atom distances in nm, fractions within 0.5 / 0.8 / 1.2 nm). Use **`min_polymer_protein_distance_nm`** and **`fraction_polymer_within_0.80_nm`** to spot sparse or disconnected polymer relative to insulin (e.g. very large min distance or low fraction within 0.8 nm after minimization).
+
+### Faster diagnostic re-runs (verbose + lighter physics)
+
+To confirm the pipeline is alive without waiting for a full batch:
+
+1. Pass **`verbose=true`** on **`evaluate_psmiles`** (or call **`MDSimulator.evaluate_candidates(..., verbose=True)`**) so stderr shows Packmol/OpenMM detail.
+2. On the **MCP server** environment, optionally set:
+   - **`INSULIN_AI_EVAL_NO_STRUCTURE_ARTIFACTS=1`** — skip PDB/PNG/PyMOL writes.
+   - **`INSULIN_AI_OPENMM_MAX_MINIMIZE_STEPS=150`** (or similar) — shorter minimization for screening-only checks.
+   - **`INSULIN_AI_OPENMM_MATRIX_FIXED_MODE=1`**, **`INSULIN_AI_OPENMM_MATRIX_N_POLYMERS=2`**, **`INSULIN_AI_OPENMM_N_REPEATS=1`** — smallest matrix useful for smoke tests.
+
+Example (same physics as `tests/test_mdsimulator_eval.py` smoke), from the repo root:
+
+```bash
+INSULIN_AI_EVAL_NO_STRUCTURE_ARTIFACTS=1 \
+INSULIN_AI_OPENMM_MATRIX_NPT=0 \
+INSULIN_AI_OPENMM_MATRIX_FIXED_MODE=1 \
+INSULIN_AI_OPENMM_MATRIX_N_POLYMERS=2 \
+INSULIN_AI_OPENMM_MAX_MINIMIZE_STEPS=150 \
+INSULIN_AI_OPENMM_N_REPEATS=1 \
+mamba run -n insulin-ai-sim python -c "
+from insulin_ai.simulation import MDSimulator
+sim = MDSimulator(n_steps=100, random_seed=1)
+r = sim.evaluate_candidates(
+    [{'material_name': 'smoke', 'chemical_structure': '[*]CC[*]'}],
+    max_candidates=1,
+    verbose=True,
+)
+print(r['evaluation_progress'][0])
+"
+```
 
 ## Fast merged insulin + single oligomer (diagnostics only)
 

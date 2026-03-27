@@ -456,8 +456,10 @@ def evaluate_psmiles(
     use ``scripts/diagnose_openmm_complex.py`` — that path is **not** used here.
 
     By default (verbose=true) the JSON includes per-candidate timing and energies (evaluation_progress)
-    and the MCP server logs progress to stderr. Pass verbose=false or set env INSULIN_AI_EVAL_QUIET=1
-    (or INSULIN_AI_EVAL_VERBOSE=0) for a smaller response and no progress lines.
+    and the MCP server logs detailed progress to stderr. Pass verbose=false for a smaller JSON payload;
+    unless INSULIN_AI_EVAL_QUIET=1 or INSULIN_AI_EVAL_VERBOSE=0 is set, stderr still emits a short
+    **heartbeat** line when each candidate starts and finishes (see docs/OPENMM_SCREENING.md). Set
+    INSULIN_AI_EVAL_QUIET=1 (or INSULIN_AI_EVAL_VERBOSE=0) to silence stderr entirely.
 
     **response_format:** Controls the verbosity of the JSON returned to the caller.
 

@@ -34,7 +34,7 @@ From here, follow the same steps as Linux users. Paths in MCP config will look l
 From a terminal in the repo root:
 
 ```bash
-# Create the conda environment (includes OpenMM, RDKit, Packmol, psmiles, mcp)
+# Creates conda env insulin-ai-sim (chunked conda-forge + pip — safer on low RAM)
 ./install
 ```
 
@@ -44,11 +44,13 @@ If `./install` fails because you don’t have mamba or conda, use pip instead:
 ./install --pip-only
 ```
 
-The preferred path uses a conda env named **`insulin-ai-sim`**. You can create it manually:
+For a **single** solve from `environment-simulation.yml` (needs more RAM than the default):
 
 ```bash
-mamba env create -f environment-simulation.yml
+./install --conda-yml
 ```
+
+The preferred path uses a conda env named **`insulin-ai-sim`**. You can create it manually with **`mamba env create -f environment-simulation.yml`** or **`bash scripts/install_insulin_ai_sim_lowmem.sh`** (same as default `./install`).
 
 ---
 

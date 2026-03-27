@@ -2,9 +2,9 @@
 # Insulin AI Materials Discovery - Install
 #
 # 1) OpenCode + insulin-ai launcher
-# 2) Python deps: conda env insulin-ai-sim (preferred) OR pip install -e ".[simulation]"
+# 2) Python deps: conda env insulin-ai-sim (chunked conda + pip — low OOM risk) OR pip-only
 #
-# Usage: ./install [--no-path] [--pip-only]
+# Usage: ./install [--no-path] [--pip-only] [--conda-yml]
 
 set -euo pipefail
 
@@ -23,13 +23,14 @@ Insulin AI Materials Discovery – Install
 
 Usage: ./install [options]
 
-  --no-path     Don't add ~/.local/bin to PATH in shell config
-  --pip-only    Skip conda; use pip install -e ".[simulation]" (weaker OpenMM setup)
+  --no-path      Don't add ~/.local/bin to PATH in shell config
+  --pip-only     Skip conda; use pip install -e ".[simulation]" (weaker OpenMM setup)
+  --conda-yml    One-shot conda env create/update from environment-simulation.yml
+                 (needs more RAM; default is chunked install via scripts/install_insulin_ai_sim_lowmem.sh)
 
 Installs:
   - OpenCode (https://opencode.ai/install)
-  - Python environment: mamba env create -f environment-simulation.yml (default)
-    OR pip editable install + simulation extras if no mamba/conda or --pip-only
+  - Python environment: chunked conda-forge + pip (default), or --conda-yml, or --pip-only
 
 Run from the insulin-ai repo root.
 EOF
@@ -37,11 +38,13 @@ EOF
 
 no_modify_path=false
 pip_only=false
+conda_yml=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;
     --no-path) no_modify_path=true; shift ;;
     --pip-only) pip_only=true; shift ;;
+    --conda-yml) conda_yml=true; shift ;;
     *) echo -e "${RED}Unknown option: $1${NC}"; usage; exit 1 ;;
   esac
 done
@@ -74,22 +77,43 @@ echo ""
 echo -e "${GREEN}Python dependencies (MCP server + simulation)${NC}"
 
 install_conda_env() {
+  if ! command -v conda &>/dev/null && ! command -v mamba &>/dev/null; then
+    return 1
+  fi
+
+  # Default: chunked conda solves + pip (low peak RAM; avoids OOM "Killed" during solve).
+  if [[ "$conda_yml" != "true" ]]; then
+    echo -e "${YELLOW}Installing conda env insulin-ai-sim (chunked conda-forge + pip; see scripts/install_insulin_ai_sim_lowmem.sh)...${NC}"
+    bash "$SCRIPT_DIR/scripts/install_insulin_ai_sim_lowmem.sh"
+    echo -e "${GREEN}Activate before MCP:  conda activate insulin-ai-sim${NC}"
+    return 0
+  fi
+
+  # Optional: single environment-simulation.yml solve (needs more RAM).
   local runner
   if command -v mamba &>/dev/null; then
     runner=mamba
-  elif command -v conda &>/dev/null; then
-    runner=conda
   else
-    return 1
+    runner=conda
+  fi
+  if conda config --show channels 2>/dev/null | grep -qi omnia; then
+    echo -e "${RED}Your conda channel list includes \"omnia\" (see: conda config --show channels).${NC}"
+    echo -e "${YELLOW}Remove it, then re-run ./install — e.g.:  conda config --remove channels omnia${NC}"
+    echo -e "${YELLOW}Or edit ~/.condarc and delete the omnia entry. See docs/DEPENDENCIES.md (Troubleshooting).${NC}"
+    echo ""
+  fi
+  local solver_args=()
+  if [[ "$runner" == "conda" ]]; then
+    solver_args=(--solver classic)
   fi
   if conda env list 2>/dev/null | awk '{print $1}' | grep -qx insulin-ai-sim; then
-    echo -e "${YELLOW}Conda env insulin-ai-sim exists — updating...${NC}"
-    "$runner" env update -f "$YML" --prune
+    echo -e "${YELLOW}Conda env insulin-ai-sim exists — updating from environment-simulation.yml...${NC}"
+    "$runner" env update -f "$YML" --prune "${solver_args[@]}"
   else
-    echo "Creating conda env insulin-ai-sim (OpenMM, RDKit, psmiles, mcp, paper-qa)..."
-    "$runner" env create -f "$YML"
+    echo "Creating conda env insulin-ai-sim from environment-simulation.yml..."
+    "$runner" env create -f "$YML" "${solver_args[@]}"
   fi
-  echo -e "${GREEN}Activate before MCP:  mamba activate insulin-ai-sim${NC}"
+  echo -e "${GREEN}Activate before MCP:  conda activate insulin-ai-sim${NC}"
   return 0
 }
 
@@ -99,7 +123,9 @@ install_pip() {
   python3 -m pip install -U pip setuptools wheel
   python3 -m pip install -r requirements.txt
   python3 -m pip install -e ".[simulation,paperqa]" 2>/dev/null || python3 -m pip install -e ".[simulation]"
-  echo -e "${YELLOW}Tip: OpenMM + RDKit are easiest via conda; pip-only may miss binary wheels on some OS.${NC}"
+  echo -e "${YELLOW}Warning: OpenMM, RDKit, pdbfixer, Packmol, and OpenFF Toolkit are NOT installed by pip-only.${NC}"
+  echo -e "${YELLOW}  Use ./install (chunked conda) or bash scripts/install_insulin_ai_sim_lowmem.sh for the full stack.${NC}"
+  echo -e "${YELLOW}  Verify:  mamba run -n insulin-ai-sim python -c \"import openmm\"${NC}"
 }
 
 if [[ "$pip_only" == "true" ]] || ! command -v mamba &>/dev/null && ! command -v conda &>/dev/null; then

@@ -74,6 +74,49 @@ def test_evaluate_candidates_matrix_smoke(tmp_path):
     assert "min_polymer_protein_distance_nm" in pm
 
 
+def test_evaluate_stderr_heartbeat_when_verbose_false(capsys, tmp_path):
+    """verbose=False emits start/finish stderr lines unless INSULIN_AI_EVAL_QUIET is set."""
+    from insulin_ai.simulation import MDSimulator
+    from insulin_ai.simulation.openmm_compat import openmm_available
+    from insulin_ai.simulation.packmol_packer import _packmol_available
+
+    if not openmm_available():
+        pytest.skip("OpenMM stack required")
+    if not _packmol_available():
+        pytest.skip("packmol binary required")
+
+    import os
+
+    os.environ.pop("INSULIN_AI_EVAL_QUIET", None)
+    os.environ.pop("INSULIN_AI_EVAL_VERBOSE", None)
+    os.environ["INSULIN_AI_OPENMM_MATRIX_NPT"] = "0"
+    os.environ["INSULIN_AI_OPENMM_MATRIX_FIXED_MODE"] = "1"
+    os.environ["INSULIN_AI_OPENMM_MATRIX_N_POLYMERS"] = "2"
+    os.environ["INSULIN_AI_OPENMM_MAX_MINIMIZE_STEPS"] = "300"
+    os.environ["INSULIN_AI_OPENMM_N_REPEATS"] = "2"
+    try:
+        sim = MDSimulator(n_steps=100, random_seed=42)
+        sim.evaluate_candidates(
+            [{"material_name": "hb", "chemical_structure": "[*]CC[*]"}],
+            max_candidates=1,
+            verbose=False,
+            artifacts_dir=None,
+        )
+    finally:
+        for k in (
+            "INSULIN_AI_OPENMM_MATRIX_NPT",
+            "INSULIN_AI_OPENMM_MATRIX_FIXED_MODE",
+            "INSULIN_AI_OPENMM_MATRIX_N_POLYMERS",
+            "INSULIN_AI_OPENMM_MAX_MINIMIZE_STEPS",
+            "INSULIN_AI_OPENMM_N_REPEATS",
+        ):
+            os.environ.pop(k, None)
+
+    err = capsys.readouterr().err
+    assert "matrix eval starting" in err
+    assert "finished in" in err and "status=completed" in err
+
+
 # ---------------------------------------------------------------------------
 # Parallel evaluation: ordering and max_workers wiring
 # ---------------------------------------------------------------------------
