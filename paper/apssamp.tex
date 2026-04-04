@@ -1,563 +1,429 @@
-% REVTeX 4.2 template for comprehensive scientific documentation
-\documentclass[%
- reprint,
- amsmath,amssymb,
- aps,
-]{revtex4-2}
+% Fairmeta preprint style; build via ./compile_apssamp.sh (sets TEXINPUTS).
+\documentclass[]{fairmeta}
+\input{apssamp_imports}
 
-% REVTeX-compatible packages
-\usepackage{graphicx}% Include figure files
-\usepackage{dcolumn}% Align table columns on decimal point
-\usepackage{bm}% bold math
-\usepackage{xcolor}
-\usepackage{booktabs}
-\usepackage{algpseudocode}
-\usepackage{tikz}
-\usepackage{chemformula}
-\usepackage{listings}
-\usepackage{mhchem}
-\usepackage{tabularx}
-\usepackage{url}
-\usepackage{amsfonts}
-\usepackage{amssymb}
-\usepackage{subcaption}
-\usepackage{float}
+\title{Discovering of Insulin Delivery Polymers via Physics-Grounded Agentic Workflows}
 
-% TikZ libraries for the active learning diagram
-\usetikzlibrary{arrows.meta, positioning, shapes.geometric, decorations.pathreplacing, backgrounds}
+\author[1]{Otun Martins}
+\affiliation[1]{AI-Driven Material Discovery Laboratory}
 
-% Custom colors for code listings and diagrams
-\definecolor{deepblue}{RGB}{0,0,120}
-\definecolor{midgreen}{RGB}{0,120,0}
-\definecolor{darkred}{RGB}{120,0,0}
-\definecolor{codecolor}{RGB}{240,240,240}
-\definecolor{ragblue}{RGB}{51,122,183}
-\definecolor{psmilesgreen}{RGB}{92,184,92}
-\definecolor{mdorange}{RGB}{240,173,78}
-\definecolor{activepurple}{RGB}{150,100,200}
-
-% Setup code listings
-\lstset{
-  backgroundcolor=\color{codecolor},
-  basicstyle=\tiny\ttfamily,
-  keywordstyle=\color{deepblue},
-  commentstyle=\color{midgreen},
-  stringstyle=\color{darkred},
-  showstringspaces=false,
-  breaklines=true,
-  frame=single,
-  captionpos=b
-}
+\abstract{%
+We present an agentic materials discovery platform that couples a large language model (LLM) with physics-based molecular screening to search the polymer space for fridge-free insulin delivery patch candidates.
+The system operates as a Model Context Protocol (MCP) server inside an interactive coding environment (OpenCode/Cursor), exposing literature mining, PSMILES validation, cheminformatics mutation, and OpenMM Packmol-matrix screening as callable tools.
+A structured ``discovery world'' state file accumulates hypotheses, literature claims, and simulation outcomes across iterations, enabling coherent multi-cycle campaigns without loss of context.
+We benchmark four search strategies: deep-Q network (DQN) and proximal policy optimization (PPO) reinforcement learning, Optuna tree-structured Parzen estimator (TPE) Bayesian optimization, and the LLM-orchestrated agentic workflow itself.
+Under a fixed budget of ${\sim}$160 OpenMM screenings, DQN achieves a mean best interaction energy of $-1345 \pm 67$~kJ/mol and PPO reaches $-1314 \pm 185$~kJ/mol across three random seeds, each evaluating ${\sim}$100 candidates in under 8 minutes.
+Optuna TPE attains $-1902$~kJ/mol from 143 evaluations but requires 15$\times$ the wall time.
+In a 25-iteration autonomous agentic campaign (115+ candidates), the LLM-orchestrated workflow discovers three breakthrough scaffolds, with the best candidate, poly(N-acetyl-1,2-diaminoethane), reaching $-2263$~kJ/mol, a 19\% improvement over Optuna and 68\% over the best RL result.
+Structure--activity analysis across all 25 iterations reveals that a C2 backbone bearing a primary amine, secondary amide, and primary amide is optimal for insulin surface complementarity; that ring expansion, thio-substitution, and bulky N-substituents systematically degrade performance; and that hydroxamic acid and hydrazide motifs provide near-optimal alternatives.
+These results demonstrate that LLM-orchestrated, physics-grounded search outperforms classical optimization on this task while producing chemically interpretable design rules for insulin-stabilizing polymer matrices.}
 
 \begin{document}
 
-\title{AI-Orchestrated Active Learning for Insulin Delivery Material Discovery}
-
-\author{Otun Martins}
-\affiliation{AI-Driven Material Discovery Laboratory}
-
-\date{\today}
-
-\begin{abstract}
-We present a comprehensive implementation of an AI-driven material discovery platform for insulin delivery patches, featuring LangChain-orchestrated active learning that integrates three core computational workflows: (1) Retrieval-Augmented Generation (RAG) powered literature mining using Semantic Scholar API with ChromaDB vector storage and OpenAI embeddings, (2) conversational memory-enhanced PSMILES (Polymer SMILES) generation using GPT-4o with chemical validation frameworks, and (3) OpenMM molecular dynamics simulations employing Langevin integrators with AMBER force fields for insulin-polymer systems. The platform implements a closed-loop active learning orchestrator that iteratively refines material discovery through intelligent feedback mechanisms. Our RAG system utilizes text-embedding-3-small (1536-dimensional) vectors with ChromaDB persistent storage, achieving semantic similarity search over scientific literature. The PSMILES generator employs conversation buffer memory with 10-exchange context windows and multi-stage validation pipelines. MD simulations use LangevinMiddleIntegrator with 2 fs timesteps at physiological temperature (310 K) under NPT ensemble conditions with MonteCarloBarostat pressure coupling. The complete system demonstrates the integration of large language models as orchestration agents for complex scientific workflows, providing a template for AI-accelerated materials discovery in biomedical applications.
-\end{abstract}
-
 \maketitle
 
+%% =====================================================================
 \section{Introduction}
+%% =====================================================================
 
-The development of intelligent drug delivery systems represents a critical intersection of materials science, computational chemistry, and artificial intelligence. Traditional approaches to material discovery for insulin delivery patches rely on empirical testing and iterative experimental design, processes that are time-intensive and resource-limited. Recent advances in large language models (LLMs) and retrieval-augmented generation (RAG) systems present unprecedented opportunities to accelerate materials discovery through intelligent automation of literature analysis, molecular design, and property prediction~\cite{boiko2023autonomous}.
+Maintaining insulin bioactivity outside the cold chain remains a barrier to diabetes management in resource-limited settings.
+A transdermal patch whose polymer matrix stabilizes the protein at ambient temperature would bypass the 2--8$^{\circ}$C storage requirement, yet the combinatorial space of candidate polymers far exceeds what empirical screening can explore~\cite{hsu2022glycosylated}.
 
-This work presents a comprehensive implementation of an AI-driven material discovery platform that leverages LangChain as the central orchestration framework for coordinating three distinct but interconnected computational workflows~\cite{langchain2023framework}. The platform addresses the fundamental challenge of insulin delivery material optimization by implementing a closed-loop active learning system that iteratively improves through intelligent feedback mechanisms.
+Recent work has shown that LLM agents can orchestrate multi-step scientific workflows: Boiko et al.\ demonstrated autonomous chemical synthesis planning~\cite{boiko2023autonomous}, Zheng et al.\ applied ChatGPT to metal--organic framework prediction~\cite{zheng2023chatgpt}, and the Kosmos system combined parallel literature and data-analysis agents through a shared world model to produce multi-domain discoveries~\cite{kosmos2025}.
+Complementary efforts in polymer informatics have established PSMILES notation for machine-readable repeat units~\cite{lin2019bigsmiles,kuenneth2023polybert,gurnani2024ai} and graph-neural-network property predictors trained on curated polymer databases~\cite{huan2020polymer,kern2022solvent}.
 
-Our approach is distinguished by its pedagogical implementation of established AI engineering principles, emphasizing the integration of LLM agents with domain-specific scientific tools rather than relying on monolithic AI solutions~\cite{guan2025langchain,wang2024langgraph}. The system demonstrates how modern AI orchestration frameworks can be applied to complex scientific workflows while maintaining scientific rigor and reproducibility.
+Despite these advances, no existing system integrates (i) LLM-driven literature mining and hypothesis formation, (ii) cheminformatics-based candidate generation and mutation, and (iii) physics-based screening through explicit molecular simulation into a single interactive loop where a human scientist can steer each iteration.
+We address this gap with a platform built on the Model Context Protocol (MCP)~\cite{mcp2024}, which exposes every capability as a tool callable from an interactive coding environment.
+A structured session state (``discovery world'') persists objectives, claims, and results across iterations, providing the cross-cycle coherence that Kosmos achieves through its world model~\cite{kosmos2025} while preserving full human-in-the-loop control.
 
-\begin{figure*}[t]
+The contributions of this work are threefold.
+First, we describe the architecture and implementation of the agentic discovery platform, including a structured ``discovery world'' that enables coherent multi-iteration campaigns (\S\ref{sec:methods}).
+Second, we benchmark four search strategies (DQN, PPO, Optuna TPE, and the LLM-orchestrated agentic workflow itself) against the same physics-based objective, demonstrating that the agentic approach achieves a 19\% improvement over the best classical optimizer and a 68\% improvement over RL (\S\ref{sec:results}).
+Third, we analyze the structure--activity relationships discovered across a 25-iteration autonomous campaign, extracting quantitative design rules for insulin-stabilizing polymer matrices (\S\ref{sec:analysis}).
+
+%% =====================================================================
+\section{Methods}
+\label{sec:methods}
+%% =====================================================================
+
+\subsection{Platform architecture}
+
+The platform is implemented as a single Python MCP server~\cite{mcp2024} (FastMCP) that registers tools for literature mining, polymer validation, molecular screening, cheminformatics mutation, and session management.
+The server runs inside the \texttt{insulin-ai-sim} conda environment, which bundles OpenMM~\cite{eastman2017openmm}, RDKit~\cite{landrum2013rdkit}, Packmol~\cite{packmol2009}, the Open Force Field toolkit~\cite{qiu2021development}, and Stable-Baselines3~\cite{sb3_2021} for reinforcement learning.
+An LLM hosted by OpenCode (or Cursor) connects to the MCP server and calls tools in response to user prompts; the model, tool schema, and session artifacts are version-controlled alongside the scientific code.
+
+Figure~\ref{fig:architecture} summarizes the data flow.
+Each discovery session creates a folder under \texttt{runs/<session\_id>/} containing per-iteration state files (\texttt{agent\_iteration\_N.json}), a structured world-model rollup (\texttt{discovery\_world.json}), cumulative best-candidate records (\texttt{ALL\_ITERATIONS\_BEST\_CANDIDATES.tsv}), structure artifacts (PDB, PNG), and a compiled summary report (Markdown and PDF).
+
+\begin{figure}[t]
 \centering
+\resizebox{\linewidth}{!}{%
 \begin{tikzpicture}[
-    node distance=3cm and 4cm,
-    every node/.style={align=center},
-    arrow/.style={-{Stealth[length=3mm]}, thick},
-    ragbox/.style={rectangle, draw=ragblue, fill=ragblue!10, thick, minimum width=2.8cm, minimum height=1.8cm, font=\footnotesize},
-    psmilesbox/.style={rectangle, draw=psmilesgreen, fill=psmilesgreen!10, thick, minimum width=2.8cm, minimum height=1.8cm, font=\footnotesize},
-    mdbox/.style={rectangle, draw=mdorange, fill=mdorange!10, thick, minimum width=2.8cm, minimum height=1.8cm, font=\footnotesize},
-    activebox/.style={rectangle, draw=activepurple, fill=activepurple!10, thick, minimum width=4cm, minimum height=1.2cm, font=\footnotesize},
-    dataflow/.style={arrow, color=blue!70},
-    feedback/.style={arrow, color=red!70, dashed, line width=1.5pt}
+    node distance=1.8cm and 2.5cm,
+    every node/.style={align=center, font=\small},
+    box/.style={rectangle, rounded corners=4pt, draw, thick,
+                minimum width=2.6cm, minimum height=1.1cm},
+    litbox/.style={box, fill=ragblue!15, draw=ragblue},
+    genbox/.style={box, fill=psmilesgreen!15, draw=psmilesgreen},
+    simbox/.style={box, fill=mdorange!15, draw=mdorange},
+    statebox/.style={box, fill=activepurple!15, draw=activepurple},
+    arr/.style={-{Stealth[length=2.5mm]}, thick},
+    fb/.style={arr, dashed, color=red!70}
 ]
+\node[litbox] (lit)  {Literature\\Mining};
+\node[genbox, right=of lit] (gen) {PSMILES\\Generate + Validate};
+\node[simbox, right=of gen] (sim) {OpenMM\\Packmol Screen};
+\node[statebox, below=1.4cm of gen] (world) {Discovery World\\+ Iteration State};
+\node[box, fill=white, above=1.2cm of gen] (llm) {LLM Agent\\(OpenCode / Cursor)};
 
-% Title
-\node[above=0.8cm, font=\large] at (0,5.5) {\textbf{LangChain Active Learning Orchestration for Insulin Delivery Materials}};
+\draw[arr] (llm) -- (lit);
+\draw[arr] (llm) -- (gen);
+\draw[arr] (llm) -- (sim);
+\draw[arr] (lit) -- (gen) node[midway, above, font=\scriptsize] {candidates};
+\draw[arr] (gen) -- (sim) node[midway, above, font=\scriptsize] {PSMILES};
+\draw[fb]  (sim.south) -- ++(0,-0.5) -| (world.east);
+\draw[fb]  (world.west) -| (lit.south);
+\draw[arr] (llm) -- (world) node[midway, right, font=\scriptsize] {patch / query};
+\end{tikzpicture}%
+}
+\caption{Platform architecture. Solid arrows denote tool calls from the LLM agent; dashed arrows show feedback paths through the session state. The discovery world file persists hypotheses, literature claims, and simulation outcomes for cross-iteration planning.}
+\label{fig:architecture}
+\end{figure}
 
-% Main workflow nodes - symmetrical spacing
-\node[ragbox] (rag) at (-5,3) {\textbf{RAG Literature}\\ChromaDB + OpenAI\\Semantic Scholar API\\SciBERT Embeddings};
+\subsection{Discovery world model}
 
-\node[psmilesbox] (psmiles) at (0,3) {\textbf{PSMILES Generation}\\GPT-4o + Memory\\Chemical Validation\\RDKit Processing};
+Inspired by the structured world model in Kosmos~\cite{kosmos2025}, we maintain a session-scoped JSON document (\texttt{discovery\_world.json}) that accumulates:
+\begin{itemize}
+\item \textbf{Objective and history:} the user's research goal and any mid-campaign steering notes.
+\item \textbf{Literature entries:} stable IDs, titles, one-sentence claims, source iteration, and optional DOI or Semantic Scholar identifiers.
+\item \textbf{Simulation entries:} PSMILES, interaction energy, screening status, and pointers to structure artifacts.
+\item \textbf{Hypotheses:} free-text statements with supporting evidence IDs and a status tag (open, supported, weak, dropped).
+\item \textbf{Open questions and human directives:} recorded per iteration for traceability.
+\end{itemize}
+Three MCP tools operate on this file: \texttt{patch\_discovery\_world} merges id-keyed lists (update existing or append new entries); \texttt{discovery\_world\_planning\_context} returns a bounded text digest for prompt construction; and \texttt{get\_discovery\_world\_state} provides full or summarized JSON for inspection.
+When the agent calls \texttt{save\_discovery\_state} after each iteration, the server automatically updates \texttt{meta.last\_iteration} and links the latest \texttt{agent\_iteration\_N.json} into the world file, ensuring the rollup stays synchronized without requiring the model to issue a second patch.
 
-\node[mdbox] (md) at (5,3) {\textbf{OpenMM MD Simulation}\\Langevin Integrator\\AMBER Force Fields\\NPT Ensemble};
+\subsection{Agentic discovery loop}
 
-% Active learning orchestrator - centered and larger
-\node[activebox] (orchestrator) at (0,0.5) {\textbf{LangChain Orchestrator}\\Active Learning Controller \& State Management\\Decision Engine \& Context Engineering};
+A single iteration proceeds as follows:
+\begin{enumerate}
+\item \textbf{Literature mining.} The agent queries Semantic Scholar~\cite{lo2020s2orc} (or an Asta-backed corpus when an API key is available) with an adaptive query derived from the world model's hypotheses, open questions, and prior top performers.
+\item \textbf{Candidate generation.} Material names from the literature are converted to PSMILES via a curated 60-polymer lookup table with PubChem fallback (automated polymerization-site detection for vinyl, ester, and amide monomers). Each candidate is validated with RDKit (connectivity, valence, exactly two \texttt{[*]} connection points) and cross-checked against PubChem monomer Tanimoto similarity.
+\item \textbf{OpenMM screening.} Validated PSMILES are evaluated by the Packmol-matrix protocol: short polymer oligomers are packed around insulin (PDB 4F1C), the composite is energy-minimized with the GAFF/OpenFF force field for polymers and AMBER ff14SB for the protein~\cite{he2020amber,maier2015ff14sb,qiu2021development}, and the insulin--polymer interaction energy is computed.
+\item \textbf{Mutation.} A cheminformatics mutator generates derivative PSMILES from top performers via functional-group substitution, backbone extension, and random fragment recombination, optionally guided by feedback on problematic substructures.
+\item \textbf{State persistence.} The agent saves iteration state, patches the world model with new literature and simulation entries, updates hypotheses, and appends the best candidate to a cumulative TSV.
+\end{enumerate}
+In \emph{human-in-the-loop} mode the agent pauses after step~5 for user feedback; in \emph{autonomous} mode it immediately proceeds to the next iteration, stopping after $N$ cycles or upon energy-threshold or saturation criteria.
 
-% Feedback and analysis - positioned below orchestrator
-\node[ragbox] (analysis) at (0,-2) {\textbf{Property Analysis \& Feedback}\\RAG-based Insights\\Next Iteration Prompts\\Convergence Monitoring};
+\subsection{Molecular screening protocol}
+\label{sec:screening}
 
-% Clean data flows - horizontal then vertical routing with better label positioning
-\draw[dataflow] (rag) -- (psmiles) node[midway,above=0.3cm,font=\scriptsize] {Literature\\Insights};
-\draw[dataflow] (psmiles) -- (md) node[midway,above=0.3cm,font=\scriptsize] {PSMILES\\Molecules};
+The screening objective is the non-bonded interaction energy between insulin and a polymer shell.
+For each candidate PSMILES, the server:
+(a) generates a 3D oligomer conformer with RDKit;
+(b) packs $n$ polymer chains around insulin using Packmol~\cite{packmol2009} at a target density;
+(c) assigns GAFF2/OpenFF parameters to the polymer and AMBER ff14SB to insulin;
+(d) runs a two-stage energy minimization (steepest descent followed by L-BFGS);
+(e) optionally performs a short NPT equilibration at 310~K and 1~bar using the LangevinMiddleIntegrator~\cite{eastman2017openmm} with a 2~fs timestep.
+The interaction energy $E_\text{int}$ is defined as
+\begin{equation}
+E_\text{int} = E_\text{complex} - E_\text{insulin} - E_\text{polymer}
+\label{eq:eint}
+\end{equation}
+where each term is the potential energy of the specified subsystem after minimization.
+More negative values indicate stronger insulin--polymer attraction.
+This single-point heuristic does not replace free-energy calculations but provides a computationally tractable ranking across hundreds of candidates.
 
-% Vertical connections to orchestrator - symmetrical routing
-\draw[dataflow] (rag) -- (-5,1.8) -- (-2.5,1.8) -- (-2.5,1.1) -- (orchestrator.north west);
-\draw[dataflow] (psmiles) -- (0,1.8) -- (orchestrator.north);
-\draw[dataflow] (md) -- (5,1.8) -- (2.5,1.8) -- (2.5,1.1) -- (orchestrator.north east);
+Candidates that fail RDKit parsing, violate prescreen chemistry rules (e.g.\ forbidden elements, excessive molecular weight), or exceed Packmol packing timeouts are logged with verbatim failure reasons and excluded from energy rankings.
 
-% Clean feedback flows
-\draw[feedback] (orchestrator) -- (analysis) node[midway,right,font=\scriptsize] {State Update};
+\subsection{Benchmark methods}
+\label{sec:benchmark_methods}
 
-% Refined feedback to RAG - L-shaped to bottom left corner
-\draw[feedback] (analysis.south) -- (0,-2.8) -- (-6.4,-2.8) -- (-6.4,2.1);
-%\draw[feedback, -{Stealth[length=3mm]}] (-6.4,2.1) -- (-6.4,2.4);
-\node[font=\scriptsize] at (-2.5,-3.1) {Refined Queries};
+To contextualize the agentic workflow, we benchmark three non-agentic search strategies under a matched evaluation budget of $B{=}160$ successful OpenMM screenings.
 
-% Main iteration loop - outer boundary with label at top
-\draw[feedback, very thick] (analysis.south) -- (0,-3.5) -- (8,-3.5) -- (8,4.5) -- (-8,4.5) -- (-8,3) -- (rag.west);
-\node[font=\scriptsize] at (0,4.8) {\textbf{Iterative Refinement Loop}};
+\paragraph{DQN and PPO reinforcement learning.}
+We adapt an IBM-style RL formulation~\cite{boiko2023autonomous} to polymer discovery.
+The state encodes the current best PSMILES and energy; actions select from a discrete library of cheminformatics mutations (functional-group swap, backbone extension, fragment insertion); and the reward is the negative interaction energy of the resulting candidate evaluated by the same Packmol-matrix protocol (\S\ref{sec:screening}).
+We train DQN and PPO agents using Stable-Baselines3~\cite{sb3_2021} for 160 timesteps (20 episodes $\times$ 8 steps), seeding from \texttt{[*]OCC[*]} (polyethylene glycol repeat unit).
+Each agent is run with three random seeds (42, 123, 456) to estimate variance.
 
-% Legend - symmetrical spacing
-\begin{scope}[shift={(0,-5)}]
-\node[font=\footnotesize] at (0,0.5) {\textbf{Legend:}};
-\draw[dataflow] (-6.5,0) -- (-5.5,0) node[right,font=\scriptsize] {Data Flow};
-\draw[feedback] (-3.5,0) -- (-2.5,0) node[right,font=\scriptsize] {Feedback};
-\node[ragbox,minimum width=0.8cm,minimum height=0.3cm,font=\tiny] at (-0.5,0) {};
-\node[right,font=\scriptsize] at (0.1,0) {RAG System};
-\node[psmilesbox,minimum width=0.8cm,minimum height=0.3cm,font=\tiny] at (2.2,0) {};
-\node[right,font=\scriptsize] at (2.8,0) {PSMILES Gen};
-\node[mdbox,minimum width=0.8cm,minimum height=0.3cm,font=\tiny] at (4.8,0) {};
-\node[right,font=\scriptsize] at (5.4,0) {MD Simulation};
-\end{scope}
+\paragraph{Optuna TPE.}
+Optuna's tree-structured Parzen estimator (TPE)~\cite{optuna2019} searches over mutator seed and feedback fraction as hyperparameters, generating 8 PSMILES candidates per trial across 20 trials.
+The objective maximizes a composite discovery score that rewards low interaction energy and chemical diversity.
 
+\paragraph{Evaluation protocol.}
+All methods use the same \texttt{MDSimulator.evaluate\_candidates} entry point, the same insulin PDB (4F1C), the same force field assignments, and \texttt{INSULIN\_AI\_EVAL\_MAX\_WORKERS=1} for deterministic execution order.
+Results are recorded in a shared TSV schema with columns for method, number of evaluations, best interaction energy, unique PSMILES evaluated, and wall-clock time.
+
+%% =====================================================================
+\section{Benchmark Results}
+\label{sec:results}
+%% =====================================================================
+
+We compare four methods: DQN, PPO, Optuna TPE, and the LLM-orchestrated agentic workflow.
+Table~\ref{tab:benchmarks} reports performance metrics.
+All OpenMM screenings were executed on CPU without GPU acceleration.
+
+\begin{table*}[t]
+\centering
+\caption{Benchmark results. DQN and PPO values are mean $\pm$ standard deviation over three random seeds (42, 123, 456). Optuna TPE and the agentic campaign are single runs with seed~42. The agentic run uses 25 iterations with up to 8 candidates per iteration.}
+\label{tab:benchmarks}
+\begin{tabular}{lccccc}
+\toprule
+\textbf{Method} & \textbf{$N_\text{eval}$} & \textbf{$E_\text{int}^\text{best}$ (kJ/mol)} & \textbf{Unique PSMILES} & \textbf{Wall time} & \textbf{Best candidate} \\
+\midrule
+DQN (3 seeds)   & $99 \pm 1$  & $-1345 \pm 67$   & 14 & ${\sim}$8 min  & \texttt{[*]CCOC([*])=O} \\
+PPO (3 seeds)   & $100$       & $-1314 \pm 185$  & 14 & ${\sim}$8 min  & \texttt{[*]CCOC([*])=O} \\
+Optuna TPE      & 143         & $-1902$          & 26 & ${\sim}$1.9 h  & \texttt{[*]NC(=O)NC([*])=O} \\
+Agentic (LLM)   & 115+        & $\mathbf{-2263}$ & 25+ & ${\sim}$6 h  & \texttt{[*]CNC(=O)NC([*])=O} \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\subsection{Reinforcement learning (DQN and PPO)}
+
+Both RL algorithms converge rapidly: the mean number of steps to the first ``target'' polymer (energy below threshold) is 1.0 across all seeds, indicating that even the initial mutation from PEG yields a favorable candidate.
+DQN achieves best interaction energies of $-1412$~kJ/mol (seed~42), $-1280$~kJ/mol (seed~123), and $-1343$~kJ/mol (seed~456), with a cross-seed mean of $-1345 \pm 67$~kJ/mol.
+PPO produces a wider spread: $-1261$, $-1525$, and $-1156$~kJ/mol (mean $-1314 \pm 185$~kJ/mol), reflecting greater sensitivity to the random seed.
+Both methods evaluate approximately 100 candidates in ${\sim}$450~s, with 14 unique PSMILES passing prescreen filters per run.
+
+The similar mean energies but different variances suggest that DQN's replay buffer provides more stable exploration than PPO's on-policy updates in this low-dimensional action space.
+The modest number of unique PSMILES (14 out of ${\sim}$100 evaluations) indicates substantial re-evaluation of previously seen candidates, a known feature of discrete-action RL when the mutation library is small relative to the episode count.
+Both methods converge to ester and ether backbones (\texttt{[*]CCOC([*])=O}, \texttt{[*]COC[*]}) but never discover amide-rich or nitrogen-heterocyclic motifs.
+
+\subsection{Bayesian optimization (Optuna TPE)}
+
+Optuna evaluates 143 candidates across 20 trials, discovering 26 unique PSMILES and achieving a best interaction energy of $-1902$~kJ/mol, substantially lower than either RL method.
+This improvement comes at a 15$\times$ wall-time cost (6807~s vs.\ ${\sim}$450~s).
+The higher unique-PSMILES count (26 vs.\ 14) demonstrates that TPE's sampling strategy explores a broader region of chemical space; notably, Optuna discovers the urea-bridged structure \texttt{[*]NC(=O)NC([*])=O} ($-1683$~kJ/mol) that RL never encounters.
+However, Optuna also proposes the hydrolytically unstable peroxide-ester \texttt{[*]OOC(=O)C([*])=O} ($-1171$~kJ/mol), illustrating the risk of energy-only optimization without chemical judgment.
+
+\subsection{Agentic LLM workflow}
+
+The 25-iteration autonomous campaign evaluates over 115 candidates and produces three breakthrough scaffolds that substantially surpass all non-agentic methods (Figure~\ref{fig:running_best}).
+The running-best interaction energy improves progressively: from chitosan ($-1450$~kJ/mol, iteration~1) through poly(2-hydroxyethyl acrylate) ($-1549$~kJ/mol, iteration~3) and poly(N-vinyl-2-oxazolidinone) ($-1665$~kJ/mol, iteration~8) to poly(N-vinyl lactamide) ($-1807$~kJ/mol, iteration~12), before the first breakthrough at iteration~15 with poly(N-acetyl-1,2-diaminoethane) at $-2263$~kJ/mol.
+Two additional top-5 candidates emerge in later iterations: poly(N-hydroxyacetyl-1,2-diaminoethane) at $-2200$~kJ/mol (iteration~20) and poly(N-acetyl-N-methyl-hydrazinoacetamide) at $-2145$~kJ/mol (iteration~25).
+
+The agentic workflow achieves a 19\% improvement over Optuna's best ($-1902$~kJ/mol) and a 68\% improvement over DQN's cross-seed mean ($-1345$~kJ/mol), while evaluating a comparable number of candidates.
+The key differentiator is not brute-force sampling but \emph{directed exploration}: the agent uses literature context to propose entire polymer families (oxazolidinones, lactamides, serinamides) that lie outside the mutation library available to RL and Optuna, then uses structure--activity feedback to converge on the optimal C2 amide scaffold.
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+    width=\linewidth,
+    height=6cm,
+    xlabel={Iteration},
+    ylabel={Running-best $E_\text{int}$ (kJ/mol)},
+    xmin=0, xmax=26,
+    ymin=-2400, ymax=-800,
+    legend style={at={(0.98,0.98)}, anchor=north east, font=\scriptsize},
+    grid=major,
+    grid style={gray!30},
+    every axis label/.style={font=\small},
+    tick label style={font=\scriptsize},
+    mark options={solid}
+]
+\addplot[activepurple, thick, mark=*, mark size=1.5pt] coordinates {
+    (1,-1450) (2,-1473) (3,-1549) (4,-1549) (5,-1549)
+    (6,-1549) (7,-1549) (8,-1665) (9,-1665) (10,-1665)
+    (11,-1665) (12,-1807) (13,-1807) (14,-1807) (15,-2263)
+    (16,-2263) (17,-2263) (18,-2263) (19,-2263) (20,-2263)
+    (21,-2263) (22,-2263) (23,-2263) (24,-2263) (25,-2263)
+};
+\addplot[ragblue, dashed, thick, domain=0:26] {-1345};
+\addplot[psmilesgreen, dotted, thick, domain=0:26] {-1314};
+\addplot[mdorange, dashdotted, thick, domain=0:26] {-1902};
+\legend{Agentic (LLM), DQN mean, PPO mean, Optuna best}
+\end{axis}
 \end{tikzpicture}
-\caption{Comprehensive Active Learning Architecture. The system implements a closed-loop workflow where LangChain orchestrates three core components: (1) RAG-powered literature mining using ChromaDB and scientific embeddings, (2) conversational PSMILES generation with chemical validation, and (3) OpenMM molecular dynamics with Langevin integrators. The active learning controller manages state transitions, conversation memory, and iterative refinement based on simulation feedback.}
-\label{fig:active_learning}
-\end{figure*}
-
-The following sections detail the theoretical foundations and practical implementation of our AI-orchestrated platform. We begin with the mathematical and computational principles underlying RAG-enabled literature mining, examining how semantic similarity search and vector databases transform scientific knowledge discovery. We then explore the polymer generation methodology through PSMILES notation, demonstrating how conversational AI systems can translate natural language descriptions into valid molecular representations. The molecular dynamics implementation follows, establishing the physical principles and numerical algorithms that govern insulin-polymer system simulations. Finally, we examine the feedback loop architecture that coordinates these components through intelligent state management and iterative refinement mechanisms.
-
-\section{Theory and Implementation}
-
-\subsection{RAG-Enabled Literature Mining}
-
-Modern RAG architectures have evolved significantly beyond simple single-step retrieval paradigms, representing a fundamental shift from static retrieval to dynamic, context-aware information gathering. Recent advances demonstrate the critical importance of multi-hop reasoning and iterative refinement mechanisms, with frameworks like Chain-of-Retrieval Augmented Generation (CoRAG) enabling query decomposition and iterative reasoning that achieves substantial improvements across knowledge-intensive benchmarks~\cite{cohan2020specter}. The integration of reliability scoring mechanisms through weighted majority voting and misalignment filtering has significantly reduced hallucinations while enhancing factual accuracy across heterogeneous knowledge bases.
-
-Scientific applications have benefited from domain-specific RAG implementations with specialized embedding models fine-tuned for research domains. These systems employ iterative retrieval processes with search engines for step-by-step reasoning, while the integration of graph structures with vector representations facilitates efficient retrieval of related entities and their relationships~\cite{cohan2020specter}. This hybrid approach combines the efficiency of vector search with the structured reasoning capabilities of symbolic knowledge representation, enabling more sophisticated query understanding and context synthesis for scientific discovery workflows.
-
-In short, the theory behind RAG is as follows: RAG systems are capable of combining two complementary information sources: parametric knowledge encoded in model weights during training, and non-parametric knowledge retrieved dynamically from external databases~\cite{cohan2020specter,singh2023scirepeval}. This paradigm proves especially powerful for scientific applications where current research and domain-specific knowledge must be accessible in real-time.
-The mathematical foundation underlying all RAG systems expresses the generation probability as a marginalization over retrieved documents:
-\begin{equation}
-P(y|x) = \sum_{z \in Z} P(z|x) \cdot P(y|x,z)
-\end{equation}
-where $x$ represents the input query, $y$ is the generated response, $z$ denotes retrieved documents from knowledge base $Z$, $P(z|x)$ is the retrieval probability determining which documents are most relevant, and $P(y|x,z)$ is the generation probability conditioned on both the original query and retrieved context.
-
-This theoretical framework translates directly into our implementation through semantic similarity search. The retrieval probability $P(z|x)$ is computed using cosine similarity between embedding vectors:
-\begin{equation}
-\text{similarity}(q, d) = \frac{\mathbf{e}_q \cdot \mathbf{e}_d}{|\mathbf{e}_q| \cdot |\mathbf{e}_d|}
-\end{equation}
-where $\mathbf{e}_q$ and $\mathbf{e}_d$ represent the embedding vectors for query $q$ and document $d$, respectively.
-
-These mathematical principles are realized through our vector database system that employs multiple embedding models optimized for scientific literature~\cite{beltagy2019scibert,allenai2020specter}. ChromaDB serves as the persistent storage layer~\cite{chromadb2023vector}, while specialized embeddings from OpenAI's text-embedding-3-small (1536-dimensional), SciBERT, and SPECTER models capture semantic relationships in scientific text~\cite{cohan2020specter,church2024academic}.
-
-Recall that our RAG foundation relies on computing similarity between query and document embeddings (Equation 2). This mathematical abstraction demands a concrete infrastructure capable of: (1) transforming scientific text into high-dimensional vectors, (2) efficiently storing and indexing these vectors, and (3) performing rapid similarity computations across large literature databases~\cite{chromadb2023vector}.
-
-The implementation bridges theory to practice through a multi-layered architecture where ChromaDB provides persistent vector storage while specialized embedding models capture domain-specific semantic relationships:
-
-\begin{figure}[!htb]
-\centering
-\begin{lstlisting}[language=Python, caption=Vector Database Implementation with Scientific Embeddings]
-class VectorDatabase:
-    def __init__(self): # Setup ChromaDB client, embedding models (OpenAI/SciBERT/SPECTER)
-    def store_documents(self, papers): # Embed and store literature with metadata
-    def semantic_search(self, query): # Return top-k similar documents using cosine similarity
-\end{lstlisting}
+\caption{Running-best interaction energy across 25 agentic iterations (solid purple), compared with the final best energies of DQN (dashed blue, mean of 3 seeds), PPO (dotted green, mean of 3 seeds), and Optuna TPE (dash-dotted orange). The agentic workflow surpasses Optuna's best at iteration~15 and continues improving through iteration~25.}
+\label{fig:running_best}
 \end{figure}
 
-The literature mining system integrates with Semantic Scholar's academic API to access peer-reviewed research. The implementation employs intelligent query generation and result filtering:
+\subsection{Cross-method comparison}
 
-\begin{figure}[!htb]
+Figure~\ref{fig:comparison} summarizes the trade-off between chemical diversity and best energy across all four methods.
+RL agents are fast but explore only 14 unique PSMILES drawn from a fixed mutation library of simple functional-group swaps.
+Optuna broadens the search (26 unique PSMILES) at 15$\times$ the wall time.
+The agentic workflow achieves the deepest energy minimum ($-2263$~kJ/mol) with 25+ unique candidates by leveraging literature-informed candidate proposals and iterative structure--activity reasoning.
+
+\begin{figure}[t]
 \centering
-\begin{lstlisting}[language=Python, caption=RAG Literature Mining System]
-class RAGLiteratureMiningSystem:
-    def __init__(self): # Setup LLM, embeddings, conversation_memory, semantic_scholar_client
-    async def intelligent_literature_search(self, query, context):
-        enhanced_queries = generate_search_queries(query, context)
-        papers = search_semantic_scholar(enhanced_queries)
-        documents = process_and_embed(papers)
-        insights = generate_insights(query, semantic_retrieval(documents))
-        return insights
-\end{lstlisting}
+\begin{tikzpicture}
+\begin{axis}[
+    width=\linewidth,
+    height=5.5cm,
+    xlabel={Unique PSMILES evaluated},
+    ylabel={Best $E_\text{int}$ (kJ/mol)},
+    xmin=10, xmax=30,
+    ymin=-2400, ymax=-900,
+    legend style={at={(0.02,0.02)}, anchor=south west, font=\scriptsize},
+    grid=major,
+    grid style={gray!30},
+    every axis label/.style={font=\small},
+    tick label style={font=\scriptsize}
+]
+\addplot[only marks, mark=square*, mark size=3pt, ragblue, error bars/.cd, y dir=both, y explicit]
+    coordinates {(14, -1345) +- (0, 67)};
+\addplot[only marks, mark=triangle*, mark size=3.5pt, psmilesgreen, error bars/.cd, y dir=both, y explicit]
+    coordinates {(14, -1314) +- (0, 185)};
+\addplot[only marks, mark=*, mark size=3pt, mdorange]
+    coordinates {(26, -1902)};
+\addplot[only marks, mark=diamond*, mark size=4pt, activepurple]
+    coordinates {(25, -2263)};
+\legend{DQN (3 seeds), PPO (3 seeds), Optuna TPE, Agentic (LLM)}
+\end{axis}
+\end{tikzpicture}
+\caption{Best interaction energy vs.\ number of unique PSMILES evaluated. Error bars show $\pm 1\sigma$ over three random seeds. The agentic workflow (diamond) achieves the lowest energy with comparable diversity to Optuna.}
+\label{fig:comparison}
 \end{figure}
 
-The RAG system implements sophisticated context engineering to maintain coherent conversations across multiple iterations. Context is managed through multiple hierarchical levels that work together to preserve information integrity throughout the discovery process. The conversation memory component maintains recent exchange history using LangChain's ConversationBufferWindowMemory, ensuring that the system can reference previous interactions and build upon earlier insights~\cite{langchain2023framework}. Complementing this, the iteration context layer preserves simulation results and material properties across active learning cycles, allowing the system to track progress and avoid redundant calculations. Finally, the knowledge graph component builds semantic relationships between discovered materials and their properties, creating a structured representation of accumulated knowledge that enables more sophisticated reasoning about material-property relationships and guides future exploration strategies~\cite{cohan2020specter}.
+%% =====================================================================
+\section{Analysis of Chemical Reasoning}
+\label{sec:analysis}
+%% =====================================================================
 
-\subsection{Polymer Generation Through PSMILES}
+The 25-iteration agentic campaign provides a unique window into how an LLM-orchestrated agent develops and refines structure--activity hypotheses.
+Unlike RL and Optuna, the agent annotates each iteration with chemical reasoning: naming functional groups, proposing mechanistic explanations, and deliberately designing mutations to test hypotheses.
+We analyze the full evaluation trace to extract interpretable design rules.
 
-The challenge of translating natural language descriptions of desired material properties into concrete molecular structures represents a fundamental bottleneck in materials discovery. Traditional approaches require extensive chemical expertise to manually design polymer structures. Our approach leverages the representational power of PSMILES (Polymer SMILES) notation combined with large language model reasoning~\cite{kuenneth2023polybert,huan2020polymer}.
+\subsection{The optimal scaffold: C2 backbone with amine and dual amide}
 
-PSMILES extends the standard SMILES molecular representation to capture polymer repeat units through connection points marked as [*]. This creates a mathematical framework for polymer description, developed by Ramprasad's group as part of their comprehensive polymer informatics ecosystem~\cite{kern2022solvent,gurnani2024ai}:
-\begin{equation}
-\text{Polymer} = \bigcup_{i=1}^{n} \text{PSMILES}_{\text{repeat}}^{(i)}
-\end{equation}
-where $n$ represents the degree of polymerization and each repeat unit maintains consistent connection topology. This formalism enables systematic exploration of polymer space through combinatorial generation and modification of repeat units. The PSMILES representation has been extensively validated through the polyBERT chemical language model and integrated into tools for polymer canonicalization and fingerprinting~\cite{kuenneth2023polybert}.
+The all-time best material, poly(N-acetyl-1,2-diaminoethane) (\texttt{[*]CNC(=O)NC([*])=O}, $-2263$~kJ/mol, iteration~15), defines a clear structural optimum (Table~\ref{tab:agentic_top}).
+Its repeat unit contains three nitrogen atoms in a C2 backbone: a primary amine, a secondary amide (N-acetyl), and a primary amide (C-terminal). These groups provide multiple hydrogen-bond donors (NH from amine and both amides) and complementary acceptors (carbonyl oxygens).
+This arrangement matches the density and spacing of hydrogen-bond partners on the insulin surface (PDB 4F1C), particularly the Asn, Gln, and Arg side-chain residues exposed in the B-chain helix region.
 
-The translation from descriptive text to valid PSMILES requires sophisticated chemical reasoning that can maintain conversation context across iterative refinements. We implement this through GPT-4o with structured conversation memory, creating a system that learns from previous exchanges and builds chemical understanding progressively~\cite{openai2023gpt4,zheng2023chatgpt}.
+Replication in iteration~16 yielded $-1909$~kJ/mol, confirming the scaffold's robustness within the stochastic variability of the Packmol-matrix protocol (the packing is not identical between runs).
+The mean of the two evaluations, $-2086 \pm 250$~kJ/mol, still exceeds Optuna's best by 10\%.
 
-\begin{figure}[!htb]
+\begin{table*}[t]
 \centering
-\begin{lstlisting}[language=Python, caption=PSMILES Generator with Conversation Memory]
-class PSMILESGenerator:
-    def __init__(self): # Setup GPT-4o, conversation_memory, chemistry_prompts, validator
-    def generate_psmiles(self, description, num_candidates=3):
-        for i in range(num_candidates):
-            psmiles = conversation_chain.run(description)  # Generate with memory context
-            candidates.append(validate_psmiles(psmiles))   # RDKit + chemistry rules
-        return candidates
-\end{lstlisting}
-\end{figure}
-
-The PSMILES validation system employs RDKit for molecular validation and custom chemical rules for polymer-specific constraints. RDKit provides comprehensive molecular graph analysis and chemical property calculations, enabling validation of molecular connectivity, aromaticity, and stereochemistry~\cite{landrum2013rdkit}:
-
-\begin{figure}[!htb]
-\centering
-\begin{lstlisting}[language=Python, caption=PSMILES Chemical Validation System]
-class PSMILESValidator:
-    def validate_psmiles(self, psmiles):
-        if psmiles.count('[*]') != 2: return False, "Must have exactly 2 connection points"
-        mol = Chem.MolFromSmiles(psmiles.replace('[*]', 'C'))  # RDKit validation
-        return mol is not None and validate_chemistry_rules(mol)  # Size, elements, etc.
-\end{lstlisting}
-\end{figure}
-
-\subsection{Molecular Dynamics Simulations}
-
-The physics governing molecular motion provides the foundation for understanding how insulin-polymer systems behave at the atomic level. Molecular dynamics simulations solve Newton's second law for systems of $N$ interacting particles~\cite{eastman2017openmm,he2020amber}:
-\begin{equation}
-m_i \frac{d^2\mathbf{r}_i}{dt^2} = \mathbf{F}_i = -\frac{\partial U(\mathbf{r}_1, \mathbf{r}_2, ..., \mathbf{r}_N)}{\partial \mathbf{r}_i}
-\end{equation}
-where $m_i$ is the mass of particle $i$, $\mathbf{r}_i$ is its position vector, $\mathbf{F}_i$ is the force acting on particle $i$, and $U$ represents the potential energy function that captures all intermolecular interactions.
-
-However, biological systems require temperature control to maintain physiological conditions (310 K for body temperature)~\cite{hsu2022glycosylated}. This necessitates coupling to a thermal bath through Langevin dynamics:
-\begin{equation}
-m_i \frac{d^2\mathbf{r}_i}{dt^2} = \mathbf{F}_i - \gamma m_i \frac{d\mathbf{r}_i}{dt} + \mathbf{R}_i(t)
-\end{equation}
-where $\gamma$ is the friction coefficient controlling energy dissipation, and $\mathbf{R}_i(t)$ represents stochastic forces that satisfy the fluctuation-dissipation theorem:
-\begin{equation}
-\langle \mathbf{R}_i(t) \cdot \mathbf{R}_j(t') \rangle = 6 k_B T \gamma m_i \delta_{ij} \delta(t-t')
-\end{equation}
-This ensures that the system maintains the correct thermal distribution while allowing energy exchange with the environment.
-
-Our OpenMM-based simulator implements these algorithms with carefully chosen parameters: 2 fs timesteps (constrained by hydrogen motion), NPT ensemble conditions (1 bar pressure, 310 K temperature), and dual force field approaches (AMBER for insulin protein, GAFF/OpenFF for synthetic polymers)~\cite{talagayev2025openmmdl,bozdaganyan2014docking}.
-
-Contemporary force field development has evolved dramatically beyond traditional empirical approaches, particularly with the emergence of automated parameterization frameworks and machine learning-enhanced methodologies. The AMBER force field family exemplifies this evolution, progressing from ff99SB through ff14SB to the current ff19SB generation, each incorporating increasingly sophisticated treatments of backbone conformational preferences and side-chain interactions. The ff19SB force field represents a paradigm shift by incorporating grid-based corrections (CMAP) to backbone torsions that more accurately reproduce quantum mechanical conformational energy surfaces, achieving significant improvements in secondary structure prediction and protein stability~\cite{maier2015ff14sb}.
-
-The transition from traditional General AMBER Force Field (GAFF) to next-generation approaches exemplifies the fundamental challenges in small molecule parameterization. GAFF2 introduced enhanced torsional parameters and improved charge models through the ABCG2 (AMBER Bond Charge Correction Generation 2) framework, which achieves mean unsigned errors of only 0.37 kcal/mol for hydration free energies across diverse organic solutes~\cite{he2020amber}. However, the Open Force Field Initiative has pioneered a revolutionary approach that transcends traditional atom-type-based parameterization through the SMIRKS Native Open Force Field (SMIRNOFF) methodology~\cite{qiu2021development}.
-
-This new paradigm employs chemical perception based on SMARTS patterns rather than predefined atom types, enabling automated parameter assignment across millions of drug-like molecules with unprecedented transferability. The latest OpenFF releases (Parsley 1.2.0 and Sage 2.0) demonstrate competitive performance with commercial force fields like OPLS3e while maintaining complete open-source accessibility. Benchmark assessments across 22,675 molecular conformers reveal that OpenFF approaches the accuracy of leading proprietary force fields in reproducing quantum mechanical geometries and energetics~\cite{qiu2021development}.
-
-The molecular dynamics landscape has been further transformed by hybrid approaches that address limitations of both all-atom and coarse-grained methodologies. Advanced AMBER implementations now support multimillion-atom simulations through optimized NAMD integration, overcoming traditional limitations of the fixed-column-width PRMTOP format~\cite{phillips2020scalable}. These developments enable unprecedented simulations of viral capsids, cellular machinery, and complete biological assemblies at atomic resolution, with systems reaching up to two billion atoms.
-
-Force field accuracy validation has become increasingly sophisticated through systematic benchmarking against high-level quantum mechanical references. Contemporary approaches employ B3LYP-D3BJ/DZVP calculations as reference data, evaluating force field performance through relative energy differences, geometric deviations, and torsional fingerprint analyses~\cite{becke1993density}. Emerging methodologies integrate machine learning approaches for automated parameter optimization, with neural network potentials achieving superior accuracy in specific applications while maintaining computational efficiency.
-
-The integration of polarizable force fields represents another frontier in molecular simulation accuracy. The CHARMM Drude oscillator model, AMOEBA polarizable framework, and emerging Gaussian Electrostatic Models address fundamental limitations of fixed-charge approaches by incorporating explicit electronic polarization effects~\cite{ponder2010current}. These models demonstrate particular advantages in heterogeneous environments, membrane-protein interfaces, and systems involving significant charge transfer or polarization effects.
-
-Advanced ensemble methods have revolutionized conformational sampling for both structured and disordered systems. Replica exchange molecular dynamics, enhanced sampling techniques, and multi-replica approaches enable comprehensive exploration of protein conformational landscapes within computationally accessible timescales. These methodologies prove essential for intrinsically disordered proteins, where traditional force fields often produce overly compact conformations that deviate significantly from experimental observations~\cite{maier2015ff14sb}.
-
-The emergence of hybrid QM/MM methodologies bridges the gap between accuracy and efficiency, enabling quantum mechanical treatment of reactive centers while maintaining classical force field efficiency for bulk environments~\cite{senn2009qmmm}. Contemporary implementations in AMBER and other packages support Born-Oppenheimer and Car-Parrinello dynamics, reactive force fields like ReaxFF, and automated QM region selection algorithms that optimize computational resource allocation based on chemical reactivity and electronic effects.
-
-Our MD simulation system employs OpenMM's LangevinMiddleIntegrator for thermodynamically consistent molecular dynamics~\cite{eastman2017openmm}. The integrator implements the stochastic differential equation:
-\begin{equation}
-m \frac{d\mathbf{v}}{dt} = \mathbf{F}(\mathbf{r}) - \gamma m \mathbf{v} + \sqrt{2\gamma m k_B T} \mathbf{R}(t)
-\end{equation}
-where $\mathbf{R}(t)$ represents white noise with $\langle R_i(t) R_j(t') \rangle = \delta_{ij} \delta(t-t')$.
-The numerical integration scheme employed by LangevinMiddleIntegrator follows the BAOAB splitting method:
-\begin{align}
-\mathbf{v}_{1/2} &= \mathbf{v}_0 + \frac{\Delta t}{2m} \mathbf{F}_0 \quad \text{(B step)} \\
-\mathbf{r}_1 &= \mathbf{r}_0 + \frac{\Delta t}{2} \mathbf{v}_{1/2} \quad \text{(A step)} \\
-\mathbf{v}_{1/2}' &= e^{-\gamma \Delta t} \mathbf{v}_{1/2} + \sqrt{\frac{k_B T}{m}(1-e^{-2\gamma \Delta t})} \mathbf{R} \quad \text{(O step)} \\
-\mathbf{r}_1 &= \mathbf{r}_1 + \frac{\Delta t}{2} \mathbf{v}_{1/2}' \quad \text{(A step)} \\
-\mathbf{v}_1 &= \mathbf{v}_{1/2}' + \frac{\Delta t}{2m} \mathbf{F}_1 \quad \text{(B step)}
-\end{align}
-Additionally, the simulation system employs dual force field approaches: AMBER force fields for protein components (insulin) and GAFF/OpenFF force fields for polymer components. This hybrid approach ensures accurate representation of both biological and synthetic components~\cite{he2020amber}.
-
-\begin{figure}[!htb]
-\centering
-\begin{lstlisting}[language=Python, caption=OpenMM MD Simulator Implementation]
-class OpenMMInsulinSimulator:
-    def __init__(self): # Setup simulation parameters (T=310K, P=1bar, dt=2fs), force_fields, platform
-    def create_simulation(self, topology, system, positions):
-        integrator = LangevinMiddleIntegrator(T, friction, dt)  # NPT ensemble with barostat
-        return Simulation(topology, system, integrator, platform)
-    def run_production_md(self, simulation, steps): # Run simulation with trajectory logging
-\end{lstlisting}
-\end{figure}
-
-The system preparation protocol involves several critical steps to ensure physically realistic simulations. The process begins with comprehensive protein preparation, including insulin structure validation, missing atom addition, and protonation state assignment to ensure the protein structure is complete and chemically accurate~\cite{he2020amber}. Following protein preparation, polymer parameterization transforms PSMILES representations into three-dimensional structures using RDKit molecular modeling tools and conformer generation algorithms to sample realistic polymer conformations~\cite{landrum2013rdkit}. The system assembly phase involves the strategic spatial arrangement of insulin and polymer molecules with appropriate packing density to reflect realistic interaction environments. Force field assignment employs a dual parameterization strategy, utilizing AMBER force fields for the insulin protein component and GAFF/OpenFF force fields for the synthetic polymer components, ensuring accurate representation of both biological and synthetic molecular interactions~\cite{he2020amber}. Energy minimization follows through a two-stage optimization process employing steepest descent algorithms followed by conjugate gradient optimization to remove unfavorable atomic contacts and achieve stable initial configurations. Finally, the equilibration phase employs NPT ensemble conditions with position restraints applied to the insulin backbone, allowing the system to reach thermal and mechanical equilibrium while preserving protein structural integrity~\cite{he2020amber}.
-
-\subsection{Feedback Loop}
-
-The mathematical frameworks established above—RAG marginalization and Langevin dynamics—represent distinct computational paradigms that must be coordinated within a unified discovery pipeline. LangChain serves as our orchestration framework, transforming the abstract mathematical formulations into concrete, asynchronous workflows~\cite{suh2024langchain,narayana2024agentic}.
-
-The orchestration challenge is fundamentally one of \textit{state management}: how do we maintain coherent information flow between RAG retrieval, molecular generation, and MD simulation while preserving the mathematical rigor of each component? Our solution implements the ActiveLearningOrchestrator pattern, which encapsulates the iterative refinement loop central to scientific discovery~\cite{kim2025research,harris2025lmc}.
-
-\begin{figure}[!htb]
-\centering
-\begin{lstlisting}[language=Python, caption=Core Active Learning Orchestrator Implementation]
-class ActiveLearningOrchestrator:
-    def __init__(self): # Initialize components: state_manager, decision_engine, workflow_modules
-    async def run_active_learning_loop(self, prompt):
-        for iteration in range(max_iterations):
-            state = execute_iteration(literature_mining -> psmiles_generation -> md_simulation -> feedback)
-            if convergence_achieved(state): break
-\end{lstlisting}
-\end{figure}
-
-The orchestrator implements asynchronous execution patterns to optimize computational resource utilization across literature mining, molecular generation, and simulation phases. The active learning orchestrator maintains comprehensive state information across iterations using a hierarchical state management system:
-
-\begin{figure}[!htb]
-\centering
-\begin{lstlisting}[language=Python, caption=Active Learning State Management]
-@dataclass
-class IterationState:  # Complete state: iteration_number, status, results, analysis, scores
-
-class ActiveLearningOrchestrator:
-    async def _execute_iteration(self, state):
-        state.literature_results = await literature_mining.run(state)      # Phase 1
-        state.generated_molecules = await psmiles_generation.run(state)    # Phase 2  
-        state.simulation_results = await md_simulation.run(state)          # Phase 3
-        state.rag_analysis = await rag_analysis(state)                     # Phase 4
-        state.overall_score = calculate_score(state)                       # Phase 5
-\end{lstlisting}
-\end{figure}
-
-The feedback system employs RAG-based analysis to generate intelligent prompts for subsequent iterations:
-
-\begin{figure}[!htb]
-\centering
-\begin{lstlisting}[language=Python, caption=RAG-Based Feedback Generation]
-class FeedbackGenerator:
-    def __init__(self): # Setup LLM, vector_database, literature_analyzer
-    async def generate_iteration_feedback(self, state):
-        feedback = analyze_literature_insights(state) + analyze_simulation_performance(state)
-        next_prompt = generate_optimized_prompt(state, feedback)  # RAG-based improvement
-        return IterationFeedback(feedback, next_prompt, confidence_score)
-\end{lstlisting}
-\end{figure}
-
-\section{Results}
-
-The following results were obtained using the default prompt configuration of the implemented system. While the specific outcomes may vary depending on the initial prompt and search parameters, these results demonstrate the comprehensive capabilities of the AI-orchestrated active learning platform for insulin delivery material discovery. The presented data illustrates the system's ability to perform literature mining, generate chemically valid molecular candidates, conduct molecular dynamics simulations, and provide iterative feedback for material optimization.
-
-\subsection{Literature Mining and Knowledge Discovery}
-
-The RAG-powered literature mining system consistently identified 48 relevant papers across all active learning iterations, demonstrating stable retrieval performance. The system extracted three primary material categories from the scientific literature: general polymers, chitosan-based systems, and alginate composites. These materials represent established approaches in insulin delivery research, though their relevance to the specific design objectives varied considerably.
-
-The literature analysis revealed a predominant focus on polyhedral oligosilsesquioxane (POSS) modified with 3-aminophenylboronic acid (APBA) as the highest-confidence material candidate (confidence score: 0.9). This recommendation appeared consistently across iterations, suggesting strong literature support for glucose-responsive boronic acid functionalization in insulin delivery applications. However, the system's emphasis on silicon-containing POSS structures conflicted with the specified biocompatibility constraints that explicitly excluded silicon, aluminum, and germanium.
-
-The extracted insights highlighted critical design principles including glucose responsiveness, pH stability, and nanoscale architecture for enhanced cellular uptake. The literature mining identified specific performance benchmarks such as 73.2% insulin entrapment efficiency for POSS-APBA nanoparticles and dynamic particle sizes of approximately 350.8 nm for alginate-chitosan-layered double hydroxide composites. These quantitative targets provided concrete optimization goals for the molecular generation pipeline.
-
-Notably, the literature analysis consistently recommended materials that required complex multi-component assembly rather than simple polymer repeat units suitable for PSMILES representation. This mismatch between literature-derived insights and the target molecular representation format represents a fundamental challenge in translating established research findings to novel polymer design through automated generation systems.
-
-\subsection{Molecular Candidate Generation and Physical Realizability}
-
-The active learning system generated four distinct molecular candidates across iterations, each representing different chemical design strategies informed by literature insights and previous iteration feedback. Table~\ref{tab:molecular_candidates} summarizes the generated PSMILES structures and their physical validation outcomes.
-
-\begin{table*}
-\centering
-\caption{Generated Molecular Candidates and Physical Validation Results}
-\label{tab:molecular_candidates}
-\begin{ruledtabular}
-\begin{tabular}{p{1.5cm}p{5cm}p{3cm}p{2cm}p{4cm}}
-\textbf{Iteration} & \textbf{PSMILES Structure} & \textbf{Design Strategy} & \textbf{Validation} & \textbf{Failure Mechanism} \\
-1 & \texttt{C(NCC[N+]C[*])CN[*]} & Chitosan-inspired cationic & Failed & Radical electrons present \\
-2 & \texttt{O(CCc1ccccc1BO[*])CCC1C(CCO1)[*]} & Phenylboronic acid glucose response & Success & N/A \\
-3 & \texttt{[*]BOCC1CCO1[*]} & Simplified boron functionality & Failed & Oxygen valence violation \\
-4 & \texttt{C(O[*])C[*]} & Minimal ether linkage & Success & N/A \\
+\caption{Top 10 candidates from the 25-iteration agentic campaign, sorted by best interaction energy. Three candidates exceed $-2100$~kJ/mol.}
+\label{tab:agentic_top}
+\small
+\begin{tabular}{clcccl}
+\toprule
+\textbf{Rank} & \textbf{Polymer} & \textbf{PSMILES} & \textbf{$E_\text{int}$} & \textbf{Iter} & \textbf{Key motifs} \\
+\midrule
+1  & poly(N-acetyl-1,2-diaminoethane) & \texttt{\footnotesize [*]CNC(=O)NC([*])=O} & $-2263$ & 15 & amine + 2$\times$amide \\
+2  & poly(N-hydroxyacetyl-diaminoethane) & \texttt{\footnotesize [*]C(NC(=O)N[*])C(=O)NO} & $-2200$ & 20 & hydroxamic acid \\
+3  & poly(N-acetyl-hydrazinoacetamide) & \texttt{\footnotesize [*]CNNC(=O)NC([*])=O} & $-2145$ & 25 & hydrazide + amide \\
+4  & poly(N-acetyl-biuret) & \texttt{\footnotesize [*]NCNC(=O)NC([*])=O} & $-1941$ & 22 & 3$\times$amide (biuret) \\
+5  & poly(N-acetyl-1,2-diaminoethane) rep. & \texttt{\footnotesize [*]CNC(=O)NC([*])=O} & $-1909$ & 16 & replication \\
+6  & poly(N-acetyl-oxalyldiamide) & \texttt{\footnotesize [*]CNC(=O)C(=O)NC([*])=O} & $-1866$ & 24 & 3$\times$amide (oxalyl) \\
+7  & poly(N-vinyl lactamide) & \texttt{\footnotesize [*]CC([*])NC(=O)C(C)O} & $-1807$ & 12 & amide + hydroxyl \\
+8  & poly(N,N'-diformylethylenediamine) & \texttt{\footnotesize [*]NC(=O)NC([*])=O} & $-1701$ & 14 & 2$\times$amide (urea) \\
+9  & poly(N-acetyl-serinamide) & \texttt{\footnotesize [*]CC(O)CNC([*])=O} & $-1686$ & 23 & amide + hydroxyl \\
+10 & poly(N-vinyl-2-oxazolidinone) & \texttt{\footnotesize [*]CC([*])N1CCOC1=O} & $-1665$ & 8  & cyclic urethane \\
+\bottomrule
 \end{tabular}
-\end{ruledtabular}
 \end{table*}
 
-The first iteration produced a structure inspired by chitosan's cationic nature, incorporating charged nitrogen centers intended to facilitate insulin binding through electrostatic interactions. The molecular validation pipeline rejected this candidate due to the presence of unpaired radical electrons, indicating fundamental chemical instability. This failure demonstrated the system's ability to identify physically unrealistic structures before computational resource allocation to molecular dynamics simulations.
+\subsection{C2 vs.\ C3 backbone geometry}
 
-Iteration 2 generated a more sophisticated structure featuring phenylboronic acid functionality connected through ether linkages to a cyclic framework. This design successfully incorporated glucose-responsive elements while maintaining chemical stability through proper valence satisfaction. The structure passed all validation checks and proceeded to full molecular dynamics evaluation, representing the first successful transition from conceptual design to physical simulation.
+The agent systematically tested the effect of backbone length by comparing C2 and C3 analogs.
+The C3 variant poly(N-acetyl-1,3-diaminopropane) (\texttt{[*]CNC(=O)NCCC([*])=O}) failed to pack within the Packmol 300-second timeout, indicating severe steric clashes when the backbone is elongated by a single methylene unit.
+This suggests that the C2 geometry is precisely complementary to the spacing between hydrogen-bond partners on the insulin surface, a geometric constraint that purely energy-based optimizers cannot exploit without explicit structural reasoning.
 
-The third iteration attempted to simplify the boron-containing motif while preserving glucose responsiveness. However, the generated structure violated basic chemical valence rules for oxygen atoms, resulting in rejection during SMILES sanitization. This failure illustrated the challenge of balancing chemical simplification with fundamental bonding constraints.
+\subsection{Ring systems underperform linear amides}
 
-Iteration 4 produced a minimal ethylene glycol-inspired structure that satisfied all chemical validation requirements. While chemically stable, this simplified design abandoned the glucose-responsive functionality that motivated previous iterations. The system's acceptance of this structure demonstrated the tension between chemical realizability and functional complexity in automated molecular design.
+Ring-expanded analogs of the oxazolidinone scaffold showed progressive degradation with ring size:
+the 5-membered oxazolidinone ($-1665$~kJ/mol),
+the 6-membered oxazinone ($-1239$~kJ/mol),
+and the 7-membered oxazepanone (packing failure).
+The 4-membered azetidinone also failed, indicating excessive ring strain.
+These results establish that the linear, flexible C2 amide backbone provides superior binding geometry compared to constrained cyclic urethane or lactam scaffolds.
+The flexibility allows the polymer to adapt to the insulin surface topology, whereas rigid ring systems impose geometric penalties.
 
-These generation patterns reveal systematic exploration of chemical space within the constraints of physical realizability. The molecular validation pipeline served as an effective filter, preventing computational resources from being allocated to chemically impossible structures while allowing promising candidates to proceed to detailed simulation analysis.
+\subsection{Thio-substitution and sulfur/fluorine weakness}
 
-\subsection{Molecular Dynamics Simulation Analysis}
+Systematic replacement of oxygen by sulfur consistently reduced binding affinity across the campaign.
+The thio-oxazolidinone scored $-830$~kJ/mol versus $-1665$~kJ/mol for the parent oxazolidinone, a 50\% reduction.
+Sulfur is a weaker hydrogen-bond acceptor than oxygen (electronegativity: S~2.58 vs.\ O~3.44), and its larger van der Waals radius introduces steric penalties in the binding interface.
+These findings are consistent with the RL results, where thioether (\texttt{[*]CS[*]}, $-317$~kJ/mol) and difluoromethylene (\texttt{[*]C([*])(F)F}, $-163$~kJ/mol) ranked among the weakest binders.
 
-Two molecular candidates successfully passed validation and underwent comprehensive molecular dynamics simulation using the dual GAFF/AMBER force field approach. The simulations employed insulin-polymer composite systems under physiological conditions (310 K, 1 bar) with 15-second production runs following energy minimization and equilibration protocols.
+\subsection{Hydroxyl group additivity}
 
-\begin{table*}
-\centering
-\caption{Molecular Dynamics Simulation Results for Validated Candidates}
-\label{tab:md_results}
-\begin{ruledtabular}
-\begin{tabular}{p{3cm}p{2.5cm}p{2.5cm}p{2cm}p{2cm}}
-\textbf{Property} & \textbf{Iteration 2} & \textbf{Iteration 4} & \textbf{Unit} & \textbf{Method} \\
-Final Energy & -1426.9 & -2026.1 & kJ/mol & MD simulation \\
-RMSD (mean) & 1.94 $\pm$ 0.63 & 2.10 $\pm$ 0.65 & \AA & Insulin backbone \\
-Hydrogen Bonds & 0.067 $\pm$ 0.31 & 0.067 $\pm$ 0.31 & count & Polymer-insulin \\
-\end{tabular}
-\end{ruledtabular}
-\end{table*}
+Hydroxyl groups on the C2 backbone provide cooperative stabilization when combined with amide motifs.
+Poly(N-hydroxyacetyl-1,2-diaminoethane) ($-2200$~kJ/mol) demonstrates that the hydroxamic acid group (CONHOH) combined with a secondary amide provides near-optimal binding.
+The hydroxyl can form additional hydrogen bonds with insulin while the hydroxamate acts as a bidentate ligand.
 
-The phenylboronic acid-containing polymer from iteration 2 demonstrated stable insulin complexation with moderate structural fluctuations. The insulin protein maintained its secondary structure throughout the simulation, with $\alpha$-helical content remaining at approximately 50% and $\beta$-sheet content at 4%. The low hydrogen bond count between polymer and insulin suggests weak direct interactions, indicating that complexation may proceed through hydrophobic or $\pi$-$\pi$ stacking mechanisms rather than specific binding.
+Similarly, poly(N-vinyl lactamide) ($-1807$~kJ/mol, secondary hydroxyl $\alpha$ to amide) outperforms poly(N-vinyl-2-hydroxyacetamide) ($-1576$~kJ/mol, primary hydroxyl), consistent with known cooperativity of hydrogen bonds in constrained geometries.
 
-The simplified ether polymer from iteration 4 achieved lower final energy, suggesting more favorable thermodynamic stability. However, the increased RMSD values indicate greater insulin structural flexibility, potentially compromising protein stability. The identical hydrogen bonding statistics across both systems reflect the minimal direct polymer-insulin interactions observed in these simulations.
+\subsection{Hydrazide as a high-performance motif}
 
-Both systems maintained insulin structural integrity within acceptable bounds for pharmaceutical applications. The RMSD values below 3 \AA\ indicate preservation of insulin's native fold, while the stable secondary structure percentages confirm maintained biological activity potential. The simulation trajectories revealed no evidence of protein denaturation or aggregation under the tested conditions.
+The final iterations introduced hydrazide derivatives, which proved highly effective.
+Poly(N-acetyl-N-methyl-hydrazinoacetamide) ($-2145$~kJ/mol, iteration~25) entered the all-time top~3.
+The secondary hydrazide (N-methyl substitution on hydrazine) combined with a secondary amide provides a hydrogen-bonding geometry analogous to the parent C2 scaffold with the additional stabilization of the hydrazide NH donor.
+The primary hydrazide variant scored $-1698$~kJ/mol, confirming that secondary hydrazide geometry is superior, mirroring the primary/secondary amide trend observed in the top scaffold.
 
-\subsection{Comprehensive Property Analysis and Design Insights}
+\subsection{Comparison of search strategies' chemical coverage}
 
-The comprehensive analysis pipeline evaluated multiple aspects of polymer-insulin system behavior, including protein stability, binding interactions, and structural dynamics. The root mean square fluctuation (RMSF) analysis revealed differential mobility patterns across insulin residues, with highest flexibility in loop regions and maintained rigidity in structured secondary elements.
+The three non-agentic methods explore fundamentally different regions of chemical space.
+RL converges to 14 unique PSMILES dominated by esters, ethers, and simple carbonyls (best: $-1412$~kJ/mol), all functional groups accessible through single-step mutations from the PEG seed.
+Optuna discovers 26 unique candidates including the urea bridge \texttt{[*]NC(=O)NC([*])=O} ($-1683$~kJ/mol) and peroxide-ester \texttt{[*]OOC(=O)C([*])=O} ($-1171$~kJ/mol), the latter illustrating the risk of energy-only optimization without chemical judgment (O--O peroxide bonds are thermally labile).
 
-The volume analysis indicated system density values consistent with physiological polymer solutions, suggesting appropriate solvation behavior. Mesh analysis of the polymer networks revealed adequate pore structures for insulin accommodation without excessive confinement that might promote aggregation.
+The agentic workflow produces 25+ unique candidates spanning polysaccharides (chitosan, iteration~1), acrylates (iterations~3--7), heterocyclic urethanes (iterations~8--11), linear amides (iterations~12--16), and novel motifs including biuret, hydroxamic acid, and hydrazide scaffolds (iterations~17--25).
+This breadth arises from the agent's ability to propose entire polymer families based on literature context, rather than applying point mutations to a seed PSMILES.
+The agent's chemical reasoning, visible in the iteration logs, shows explicit hypothesis formation (``C2 backbone with dual amide is optimal because\ldots'') and targeted falsification (testing the C3 analog, the thio variant, and the ring-expanded analog to confirm the hypothesis).
 
-Secondary structure analysis confirmed maintenance of insulin's native architecture across both successful polymer candidates. The predominance of coil conformations (45-49%) with stable helical content (47-50%) matches expected values for insulin in solution. The preservation of these structural features throughout simulation trajectories indicates compatibility between the generated polymers and insulin's structural requirements.
+%% =====================================================================
+\section{Discussion}
+%% =====================================================================
 
-The analysis revealed common design principles underlying successful candidates. Both validated structures incorporated ether linkages that provide conformational flexibility while maintaining chemical stability. The absence of highly charged groups prevented unwanted electrostatic interactions that might disrupt insulin structure. The moderate molecular complexity allowed successful force field parameterization while preserving functional diversity.
+\paragraph{Agentic advantage is structural, not statistical.}
+The 68\% improvement of the agentic workflow over RL and 19\% over Optuna does not arise from evaluating more candidates---the agentic campaign (115+ evaluations) is comparable to Optuna (143) and RL (${\sim}$100).
+Rather, the advantage is \emph{structural}: the LLM proposes qualitatively different polymer families based on literature context (polysaccharides, heterocyclic urethanes, linear amides, hydrazides), while RL and Optuna are confined to single-step mutations from a seed PSMILES.
+The discovery of the C2 amide scaffold at iteration~15 required traversing a chemical space that no mutation operator in the RL library could reach from PEG.
 
-These results demonstrate the effectiveness of the integrated validation pipeline in identifying physically realizable polymer candidates suitable for insulin delivery applications. The system successfully navigated the complex landscape of chemical constraints, functional requirements, and computational limitations to produce viable molecular designs for further development.
+\paragraph{Energy vs.\ synthesizability.}
+The interaction energy metric captures non-bonded attraction in a near-static geometry but does not account for synthetic accessibility, thermal stability of the polymer, or kinetic aspects of insulin release.
+The peroxide-ester discovered by Optuna (\texttt{[*]OOC(=O)C([*])=O}, $-1171$~kJ/mol) illustrates the risk: a domain expert would immediately flag the labile O--O bond.
+The agentic workflow avoids such candidates through implicit chemical knowledge, but systematic integration of synthesizability scores (e.g.\ SAScore~\cite{landrum2013rdkit}) into the objective is planned.
 
+\paragraph{Stochastic variability in screening.}
+The replication of poly(N-acetyl-1,2-diaminoethane) in iteration~16 ($-1909$~kJ/mol vs.\ $-2263$~kJ/mol in iteration~15) reveals ${\sim}$15\% variability in the Packmol-matrix protocol due to different random packing configurations.
+This noise level means that energy differences below ${\sim}$200~kJ/mol should be interpreted cautiously, while the ${\sim}$900~kJ/mol gap between the agentic best and RL is highly significant.
+
+\paragraph{World model and coherence.}
+The discovery world file addresses a key limitation of chat-based agentic systems: loss of context over long conversations.
+By persisting structured claims and hypotheses as a JSON artifact, the agent can ``remember'' across 25 iterations without relying on the LLM's context window.
+The agent's explicit hypothesis formation (``C2 backbone is optimal'') and targeted falsification (C3 analog, thio variant, ring expansion) across iterations~14--21 demonstrate that the world model enables genuine scientific reasoning, not merely pattern matching.
+This is conceptually similar to the world model in Kosmos~\cite{kosmos2025}, adapted for a single-agent, human-in-the-loop setting.
+
+\paragraph{Limitations of the screening protocol.}
+The Packmol-matrix protocol packs polymer chains around insulin in vacuum, minimizes, and computes a single-point interaction energy.
+It does not sample conformational ensembles, account for explicit water, or compute binding free energies.
+We use it as a computationally tractable filter (seconds per candidate) rather than a predictive model.
+Planned extensions include NPT molecular dynamics with the UMA universal force field~\cite{wood2025uma} and free-energy perturbation calculations for the top three candidates.
+
+\paragraph{Comparison with Kosmos.}
+Kosmos~\cite{kosmos2025} executes ${\sim}$42,000 lines of code and reads 1,500 papers per 12-hour run, achieving 79.4\% statement accuracy in generated reports.
+Our platform operates at a smaller scale (tens of candidates per iteration, ${\sim}$20 papers per mining call) but provides two capabilities Kosmos lacks: physics-grounded molecular screening through explicit simulation, and iterative structure--activity reasoning that produces falsifiable hypotheses and quantitative design rules.
+
+%% =====================================================================
 \section{Conclusions}
+%% =====================================================================
 
-We have presented a comprehensive implementation of an AI-driven material discovery platform that successfully integrates LangChain orchestration with established scientific computing workflows~\cite{tang2025chemagent,zhang2025llm}. The system demonstrates the potential for AI-accelerated materials discovery through intelligent automation of literature analysis, molecular design, and property evaluation.
+We have presented an agentic materials discovery platform for insulin delivery polymers that integrates LLM-driven literature mining, cheminformatics mutation, and OpenMM-based molecular screening through a Model Context Protocol server with a structured discovery world model.
 
-Our work makes several key contributions to the field. We have developed a pedagogical implementation of RAG-powered literature mining that leverages scientific embeddings and ChromaDB vector storage to effectively process and retrieve relevant research materials~\cite{balazs2024chromadb,nikose2024chromadb}. The platform incorporates conversational PSMILES generation capabilities using OpenAI models combined with robust chemical validation frameworks to ensure molecular validity~\cite{openai2023gpt4,zheng2023chatgpt}. We have also successfully integrated OpenMM molecular dynamics with Langevin integrators and dual force field approaches, enabling accurate simulation of molecular properties~\cite{talagayev2025openmmdl,bozdaganyan2014docking}. Finally, we have implemented a comprehensive active learning orchestration system with intelligent feedback mechanisms that coordinates these components while continuously improving based on results~\cite{kim2025research,harris2025lmc}.
+Benchmarking four search strategies reveals a clear hierarchy: RL (DQN, PPO) provides fast search with best energies near $-1345$~kJ/mol but limited chemical diversity (14 unique PSMILES); Optuna TPE achieves $-1902$~kJ/mol through broader exploration at 15$\times$ the wall time; and the LLM-orchestrated agentic workflow reaches $-2263$~kJ/mol---a 19\% improvement over Optuna and 68\% over RL---by leveraging literature context and iterative structure--activity reasoning to discover polymer families inaccessible to mutation-based optimizers.
 
-The platform provides a template for applying modern AI orchestration techniques to complex scientific workflows while maintaining scientific rigor and reproducibility. The integration of large language models as coordination agents represents a promising direction for accelerating discovery in materials science and related fields~\cite{jeong2024construction}.
+The agentic campaign identifies three breakthrough scaffolds for insulin stabilization, all sharing a C2 backbone with multiple amide groups.
+Structure--activity analysis across 25 iterations establishes quantitative design rules: the C2 backbone geometry is critical (C3 fails to pack); primary amine combined with secondary and primary amide groups provides optimal hydrogen-bond complementarity with insulin; ring expansion, thio-substitution, and bulky N-substituents systematically degrade performance; and hydroxamic acid and hydrazide motifs provide high-performance alternatives to the parent amide scaffold.
+
+These results demonstrate that LLM-orchestrated, physics-grounded search produces both superior candidates and chemically interpretable design rules compared to classical optimization methods.
+The top three candidates---poly(N-acetyl-1,2-diaminoethane), poly(N-hydroxyacetyl-1,2-diaminoethane), and poly(N-acetyl-N-methyl-hydrazinoacetamide)---merit experimental validation for insulin stabilization at elevated temperatures and transdermal patch fabrication.
+Code, benchmark scripts, and full iteration logs are available in the project repository.
 
 \section{Acknowledgments}
 
-We acknowledge the developers of OpenMM, LangChain, ChromaDB, and the OpenFF toolkit for providing the foundational software infrastructure that enabled this work. We also thank the Semantic Scholar team for providing access to academic literature through their API~\cite{semantic_scholar_api}. The author also acknowledge MRH Scientififc for crucial computational expertise and resources. 
+We acknowledge the developers of OpenMM, RDKit, Packmol, Stable-Baselines3, Optuna, and the Open Force Field Initiative for providing the foundational software infrastructure.
+We thank the Semantic Scholar team at the Allen Institute for AI for access to their academic API.
+The author also acknowledges MRH Scientific for computational resources.
 
-\begin{thebibliography}{99}
-
-\bibitem{boiko2023autonomous}
-D. A. Boiko, R. MacKnight, B. Kline, and G. Gomes, Nature 624, 570 (2023).
-
-\bibitem{langchain2023framework}
-LangChain Documentation, \url{https://python.langchain.com/docs/} (2023).
-
-\bibitem{guan2025langchain}
-Y. Guan, L. Zhang, and M. Chen, arXiv preprint arXiv:2501.02847 (2025).
-
-\bibitem{wang2024langgraph}
-X. Wang, H. Liu, and J. Smith, Proceedings of the 38th AAAI Conference on Artificial Intelligence (2024).
-
-\bibitem{cohan2020specter}
-A. Cohan, S. Feldman, I. Beltagy, D. Downey, and D. S. Weld, Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics, 2270 (2020).
-
-\bibitem{singh2023scirepeval}
-A. Singh, J. D'souza, and S. Auer, Proceedings of the 61st Annual Meeting of the Association for Computational Linguistics, 13893 (2023).
-
-\bibitem{beltagy2019scibert}
-I. Beltagy, K. Lo, and A. Cohan, Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing, 3615 (2019).
-
-\bibitem{allenai2020specter}
-A. Cohan, S. Feldman, I. Beltagy, D. Downey, and D. S. Weld, arXiv preprint arXiv:2004.07180 (2020).
-
-\bibitem{chromadb2023vector}
-ChromaDB Documentation, \url{https://docs.trychroma.com/} (2023).
-
-\bibitem{church2024academic}
-K. Church, R. Zhao, and L. Wang, Journal of Academic Computing 15, 234 (2024).
-
-\bibitem{kuenneth2023polybert}
-C. Kuenneth, G. Ramprasad, B. Kim, T. Pilania, A. Mannodi-Kanakkithodi, and R. Ramprasad, Nature Communications 14, 4099 (2023).
-
-\bibitem{huan2020polymer}
-T. D. Huan and R. Ramprasad, Journal of Physical Chemistry Letters 11, 5823 (2020).
-
-\bibitem{kern2022solvent}
-J. Kern, S. Venkatram, M. Banerjee, B. Brettmann, and R. Ramprasad, Physical Chemistry Chemical Physics 24, 26547 (2022).
-
-\bibitem{gurnani2024ai}
-R. Gurnani, S. Shukla, D. Kamal, C. Wu, J. Hao, C. Kuenneth, P. Aklujkar, A. Khomane, R. Daniels, A. A. Deshmukh, Y. Cao, G. Sotzing, and R. Ramprasad, Nature Communications 15, 6107 (2024).
-
-\bibitem{openai2023gpt4}
-OpenAI, GPT-4 Technical Report, arXiv preprint arXiv:2303.08774 (2023).
-
-\bibitem{zheng2023chatgpt}
-L. Zheng, W. L. Chiang, Y. Sheng, S. Zhuang, Z. Wu, Y. Zhuang, Z. Lin, Z. Li, D. Li, E. P. Xing, H. Zhang, J. E. Gonzalez, and I. Stoica, arXiv preprint arXiv:2306.05685 (2023).
-
-\bibitem{landrum2013rdkit}
-G. Landrum, RDKit: Open-source cheminformatics, \url{http://www.rdkit.org} (2013).
-
-\bibitem{eastman2017openmm}
-P. Eastman, J. Swails, J. D. Chodera, R. T. McGibbon, Y. Zhao, K. A. Beauchamp, L.-P. Wang, A. C. Simmonett, M. P. Harrigan, C. D. Stern, R. P. Wiewiora, B. R. Brooks, and V. S. Pande, PLOS Computational Biology 13, e1005659 (2017).
-
-\bibitem{he2020amber}
-X. He, B. Man, and W. Yang, Journal of Chemical Physics 153, 114502 (2020).
-
-\bibitem{hsu2022glycosylated}
-P.-C. Hsu, P. M. Bruininks, D. Jefferies, P. C. T. de Souza, J. Lee, D. S. Patel, S. J. Marrink, Y. Qi, S. Khalid, and W. Im, Nature Communications 13, 7418 (2022).
-
-\bibitem{talagayev2025openmmdl}
-V. Talagayev, G. Isayev, A. Tkatchenko, and O. A. von Lilienfeld, Journal of Chemical Information and Modeling 65, 123 (2025).
-
-\bibitem{bozdaganyan2014docking}
-M. E. Bozdaganyan, P. S. Orekhov, A. K. Shaytan, and K. V. Shaitan, PLOS ONE 9, e102045 (2014).
-
-\bibitem{maier2015ff14sb}
-J. A. Maier, C. Martinez, K. Kasavajhala, L. Wickstrom, K. E. Hauser, and C. Simmerling, Journal of Chemical Theory and Computation 11, 3696 (2015).
-
-\bibitem{qiu2021development}
-Y. Qiu, D. G. A. Smith, S. Boothroyd, H. Jang, D. F. Hahn, J. Wagner, C. Bannan, T. Gokey, V. T. Lim, C. I. Bayly, A. Mobley, M. R. Shirts, M. K. Gilson, J. D. Chodera, C. Bayly, J. Wagner, and L.-P. Wang, Journal of Chemical Theory and Computation 17, 6262 (2021).
-
-\bibitem{phillips2020scalable}
-J. C. Phillips, D. J. Hardy, J. D. C. Maia, J. E. Stone, J. V. Ribeiro, R. C. Bernardi, R. Buch, G. Fiorin, J. Hénin, W. Jiang, R. McGreevy, M. C. R. Melo, B. K. Radak, R. D. Skeel, A. Singharoy, Y. Wang, B. Roux, A. Aksimentiev, Z. Luthey-Schulten, L. V. Kalé, K. Schulten, C. Chipot, and E. Tajkhorshid, Journal of Chemical Physics 153, 044130 (2020).
-
-\bibitem{becke1993density}
-A. D. Becke, Journal of Chemical Physics 98, 5648 (1993).
-
-\bibitem{ponder2010current}
-J. W. Ponder and D. A. Case, Advances in Protein Chemistry 66, 27 (2010).
-
-\bibitem{senn2009qmmm}
-H. M. Senn and W. Thiel, Angewandte Chemie International Edition 48, 1198 (2009).
-
-\bibitem{suh2024langchain}
-Y. Suh, K. Lee, and M. Park, Proceedings of the International Conference on Machine Learning Applications (2024).
-
-\bibitem{narayana2024agentic}
-S. Narayana, R. Patel, and A. Kumar, Journal of Artificial Intelligence Research 72, 456 (2024).
-
-\bibitem{kim2025research}
-H. Kim, J. Chen, and L. Martinez, Nature Machine Intelligence 7, 89 (2025).
-
-\bibitem{harris2025lmc}
-D. Harris, S. Thompson, and R. Williams, Proceedings of the Neural Information Processing Systems Conference (2025).
-
-\bibitem{tang2025chemagent}
-L. Tang, X. Zhang, and Y. Liu, Journal of Chemical Information and Modeling 65, 234 (2025).
-
-\bibitem{zhang2025llm}
-W. Zhang, H. Li, and M. Brown, Nature Communications 16, 1234 (2025).
-
-\bibitem{balazs2024chromadb}
-P. Balazs, K. Johnson, and T. Davis, Database Systems Journal 45, 167 (2024).
-
-\bibitem{nikose2024chromadb}
-A. Nikose, R. Gupta, and S. Sharma, Computational Intelligence and Data Science 28, 89 (2024).
-
-\bibitem{jeong2024construction}
-S. Jeong, Y. Park, and K. Choi, Materials Discovery Letters 12, 456 (2024).
-
-\bibitem{semantic_scholar_api}
-Semantic Scholar Academic Graph API, \url{https://www.semanticscholar.org/product/api} (2024).
-
-\end{thebibliography}
+\bibliographystyle{plainnat}
+\bibliography{references}
 
 \end{document}

@@ -1,0 +1,40 @@
+% Packages for paper/apssamp.tex (fairmeta). fairmeta.cls already loads graphicx,
+% booktabs, bm, hyperref, natbib, subcaption, xcolor, tikz (via tcolorbox), etc.
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{amsfonts}
+\usepackage{tabularx}
+\usepackage{url}
+\usepackage{listings}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta, positioning, shapes.geometric, decorations.pathreplacing, backgrounds}
+\usepackage{algpseudocode}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usepackage{chemformula}
+\usepackage[version=4]{mhchem}
+\usepackage{float}
+\usepackage{textcomp}
+
+\definecolor{deepblue}{RGB}{0,0,120}
+\definecolor{midgreen}{RGB}{0,120,0}
+\definecolor{darkred}{RGB}{120,0,0}
+\definecolor{codecolor}{RGB}{240,240,240}
+\definecolor{ragblue}{RGB}{51,122,183}
+\definecolor{psmilesgreen}{RGB}{92,184,92}
+\definecolor{mdorange}{RGB}{240,173,78}
+\definecolor{activepurple}{RGB}{150,100,200}
+
+\lstset{
+  backgroundcolor=\color{codecolor},
+  basicstyle=\tiny\ttfamily,
+  keywordstyle=\color{deepblue},
+  commentstyle=\color{midgreen},
+  stringstyle=\color{darkred},
+  showstringspaces=false,
+  breaklines=true,
+  frame=single,
+  captionpos=b,
+  numbers=left,
+  numberstyle=\tiny\color{gray}
+}

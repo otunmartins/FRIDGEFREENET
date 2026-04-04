@@ -31,6 +31,14 @@ from typing import Any, List, Optional, Union
 from mcp.server.fastmcp import FastMCP
 
 from insulin_ai.run_paths import ENV_SESSION, new_session_dir, session_dir_from_env
+from insulin_ai.discovery_world import (
+    apply_patch,
+    load_world,
+    planning_context,
+    save_world,
+    touch_meta_after_iteration,
+    world_path_for_session,
+)
 
 
 def _normalize_psmiles_list_for_eval(psmiles_list: Union[str, List[Any], None]) -> List[str]:
@@ -121,6 +129,7 @@ mcp = FastMCP(
         "compile_discovery_markdown_to_pdf (agent-written MD → PDF), "
         "write_discovery_summary_report (optional batch from saved JSON), "
         "save_session_transcript / import_chat_transcript_file (required each run: copy chat archive into runs/<session>/ only, never under .cursor/), "
+        "discovery world: get_discovery_world_state, patch_discovery_world, discovery_world_planning_context (session-scoped discovery_world.json rollup), "
         "PubMed, arXiv, Scholar, web search."
     ),
 )
@@ -908,6 +917,16 @@ def save_discovery_state(
     path = session / f"agent_iteration_{iteration}.json"
     with open(path, "w", encoding="utf-8") as f:
         json.dump(state, f, indent=2, ensure_ascii=False)
+
+    wp = world_path_for_session(session)
+    if wp.is_file():
+        try:
+            world = load_world(wp)
+            world = touch_meta_after_iteration(world, iteration, path.name)
+            save_world(wp, world)
+        except OSError:
+            pass
+
     return json.dumps({"saved": str(path), "session_dir": str(session)}, indent=2)
 
 
@@ -938,6 +957,106 @@ def load_discovery_state(iteration: int = 0, run_dir: str = "") -> str:
 
     with open(path, "r", encoding="utf-8") as f:
         return f.read()
+
+
+@mcp.tool()
+def get_discovery_world_state(run_dir: str = "", summary: bool = False) -> str:
+    """
+    Read ``discovery_world.json`` for the session (Kosmos-style structured rollup).
+    If ``summary=true``, returns compact JSON with ``planning_context`` text only (smaller payload).
+    If the file is missing, returns a fresh empty schema (or empty planning context when summary).
+    """
+    session = _session_dir_for_mcp(run_dir)
+    session.mkdir(parents=True, exist_ok=True)
+    os.environ[ENV_SESSION] = str(session)
+    wp = world_path_for_session(session)
+    try:
+        data = load_world(wp)
+        if _coerce_bool_flag(summary, default=False):
+            ctx = planning_context(data, max_chars=12_000)
+            return json.dumps(
+                {
+                    "session_dir": str(session),
+                    "world_path": str(wp),
+                    "planning_context": ctx,
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+        return json.dumps(
+            {"session_dir": str(session), "world_path": str(wp), "world": data},
+            indent=2,
+            ensure_ascii=False,
+        )
+    except Exception as e:
+        return json.dumps({"error": str(e)}, indent=2)
+
+
+@mcp.tool()
+def patch_discovery_world(patch_json: str, run_dir: str = "") -> str:
+    """
+    Merge a JSON patch into ``discovery_world.json`` (lists keyed by ``id`` are merged).
+    Creates the file if missing. Use after iterations to record literature claims, simulation rows,
+    hypotheses, open questions, and human directives.
+    """
+    session = _session_dir_for_mcp(run_dir)
+    session.mkdir(parents=True, exist_ok=True)
+    os.environ[ENV_SESSION] = str(session)
+    wp = world_path_for_session(session)
+    try:
+        patch = json.loads(patch_json) if patch_json.strip() else {}
+        if not isinstance(patch, dict):
+            return json.dumps({"error": "patch_json must be a JSON object"}, indent=2)
+        existing = load_world(wp)
+        merged = apply_patch(existing, patch)
+        save_world(wp, merged)
+        return json.dumps(
+            {
+                "ok": True,
+                "world_path": str(wp),
+                "session_dir": str(session),
+                "meta": merged.get("meta", {}),
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+    except ValueError as e:
+        return json.dumps({"ok": False, "error": str(e)}, indent=2)
+    except json.JSONDecodeError as e:
+        return json.dumps({"ok": False, "error": f"invalid JSON: {e}"}, indent=2)
+    except OSError as e:
+        return json.dumps({"ok": False, "error": str(e)}, indent=2)
+
+
+@mcp.tool()
+def discovery_world_planning_context(max_chars: int = 8000, run_dir: str = "") -> str:
+    """
+    Return a bounded Markdown-friendly text block for prompts (objective, hypotheses, questions,
+    human directives, recent literature/simulation summaries). Prefer this over full world JSON during discovery.
+    """
+    session = _session_dir_for_mcp(run_dir)
+    session.mkdir(parents=True, exist_ok=True)
+    os.environ[ENV_SESSION] = str(session)
+    wp = world_path_for_session(session)
+    try:
+        data = load_world(wp)
+        n = int(max_chars) if max_chars else 8000
+        if n < 500:
+            n = 500
+        if n > 50_000:
+            n = 50_000
+        ctx = planning_context(data, max_chars=n)
+        return json.dumps(
+            {
+                "session_dir": str(session),
+                "world_path": str(wp),
+                "planning_context": ctx,
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+    except Exception as e:
+        return json.dumps({"error": str(e)}, indent=2)
 
 
 # --- Literature search (folded from lit-* servers) ---

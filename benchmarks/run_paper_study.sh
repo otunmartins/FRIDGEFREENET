@@ -4,16 +4,25 @@
 #
 #   ./benchmarks/run_paper_study.sh
 #
+# Resume after partial failure (Optuna 123/456 + Study B only): see
+# ``benchmarks/run_optuna_resume_study_b.sh``.
+#
 # Parity: 20 discovery iterations × 8 evals/iteration = 160 successful OpenMM evals
 # for IBM RL, Optuna (20 trials × 8 candidates), and random baseline.
 # Runtime: many hours (≈160 OpenMM evaluations × 15+ runs on CPU).
+#
+# Logging: ``conda run`` captures child stdout/stderr by default, so ``nohup`` logs
+# look empty for hours. We use ``--no-capture-output`` and ``PYTHONUNBUFFERED=1``
+# so lines reach ``nohup.out`` as they are produced (still sparse when SB3 verbose=0).
 
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-RUN="mamba run -n insulin-ai-sim"
+export PYTHONUNBUFFERED=1
+# Stream subprocess output; without this, nohup.out may stay nearly empty until exit.
+RUN="conda run -n insulin-ai-sim --no-capture-output"
 TSV="${PAPER_STUDY_TSV:-benchmarks/comparison_results_study.tsv}"
 SEEDS=(42 123 456)
 

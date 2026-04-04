@@ -114,3 +114,54 @@ def test_no_mcp_tool_without_parens():
         f"Use @mcp.tool() not @mcp.tool in: {bad_files}. "
         "FastMCP requires parentheses: @mcp.tool()"
     )
+
+
+def test_discovery_world_mcp_patch_and_get():
+    try:
+        mod = _load_mcp_server("insulin_ai_mcp_server.py")
+    except (ImportError, ModuleNotFoundError) as e:
+        import pytest
+
+        pytest.skip(f"MCP dependencies unavailable: {e}")
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as td:
+        patch = {
+            "objective": "Test objective",
+            "literature_entries": [
+                {"id": "L1", "title": "Paper", "claim": "Claim text", "iteration": 1},
+            ],
+        }
+        out = json.loads(mod.patch_discovery_world(json.dumps(patch), run_dir=td))
+        assert out.get("ok") is True
+        full = json.loads(mod.get_discovery_world_state(run_dir=td, summary=False))
+        assert "world" in full
+        assert full["world"]["objective"] == "Test objective"
+        summ = json.loads(mod.get_discovery_world_state(run_dir=td, summary=True))
+        assert "planning_context" in summ
+        assert "Test objective" in summ["planning_context"]
+        ctx = json.loads(mod.discovery_world_planning_context(max_chars=4000, run_dir=td))
+        assert "planning_context" in ctx
+
+
+def test_save_discovery_state_updates_world_meta_when_world_exists():
+    try:
+        mod = _load_mcp_server("insulin_ai_mcp_server.py")
+    except (ImportError, ModuleNotFoundError) as e:
+        import pytest
+
+        pytest.skip(f"MCP dependencies unavailable: {e}")
+    import tempfile
+
+    sys.path.insert(0, os.path.join(ROOT, "src", "python"))
+    from insulin_ai.discovery_world import empty_world, save_world, world_path_for_session
+
+    with tempfile.TemporaryDirectory() as td:
+        wp = world_path_for_session(td)
+        save_world(wp, empty_world())
+        fb = json.dumps({"high_performers": []})
+        out = json.loads(mod.save_discovery_state(2, fb, run_dir=td))
+        assert "saved" in out
+        data = json.loads(mod.get_discovery_world_state(run_dir=td, summary=False))
+        assert data["world"]["meta"]["last_iteration"] == 2
+        assert data["world"]["meta"]["links"].get("last_agent_iteration_file") == "agent_iteration_2.json"

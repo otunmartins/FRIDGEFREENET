@@ -1,61 +1,15 @@
-\documentclass[%
- reprint,
- amsmath,amssymb,
- aps,
-]{revtex4-2}
-
-% REVTeX-compatible packages
-\usepackage{graphicx}% Include figure files
-\usepackage{dcolumn}% Align table columns on decimal point
-\usepackage{bm}% bold math
-\usepackage{xcolor}
-\usepackage{booktabs}
-\usepackage{algpseudocode}
-\usepackage{tikz}
-\usepackage{chemformula}
-\usepackage{listings}
-\usepackage{mhchem}
-\usepackage{tabularx}
-\usepackage{url}
-
-% Custom colors for code listings
-\definecolor{deepblue}{RGB}{0,0,120}
-\definecolor{midgreen}{RGB}{0,120,0}
-\definecolor{darkred}{RGB}{120,0,0}
-\definecolor{codecolor}{RGB}{240,240,240}
-
-% Setup code listings
-\lstset{
-  backgroundcolor=\color{codecolor},
-  basicstyle=\footnotesize\ttfamily,
-  breaklines=true,
-  captionpos=b,
-  keepspaces=true,
-  columns=flexible,
-  tabsize=2,
-  frame=single,
-  numbers=left,
-  numberstyle=\tiny\color{gray},
-  keywordstyle=\color{blue},
-  commentstyle=\color{darkred},
-  stringstyle=\color{midgreen}
-}
-
-\begin{document}
+% Formatted with the FAIR ``fairmeta'' preprint class (arXiv:2505.08762 style).
+\documentclass[]{fairmeta}
+\input{proposal_imports}
 
 \title{AI-Driven Design of Fridge-Free Insulin Delivery Patches: An Active Learning Framework Integrating LLMs and Generative Material Discovery}
 
-\author{BioMaterials AI Research Group}
-\affiliation{%
- Research Institution\\
- Department of Materials Science and Engineering
-}%
+\author[1]{BioMaterials AI Research Group}
+\affiliation[1]{Research Institution, Department of Materials Science and Engineering}
 
-\date{\today}
+\abstract{This work presents an active learning framework for discovering and optimizing materials for fridge-free insulin delivery patches. The system integrates large language models (LLMs) for scientific literature mining with PSMILES-based generative modeling for material design, creating an iterative discovery pipeline. The implementation employs Ollama~\cite{ollama2023} local LLM infrastructure for literature analysis, a specialized PSMILES generator with conversation memory using LangChain~\cite{chase2022langchain} for material candidate creation, and systematic copolymerization capabilities for structure exploration. The framework identifies diverse material classes through adaptive query generation and polymer structure generation, providing both literature-validated candidates and novel AI-designed materials. This approach aims to accelerate discovery of materials that can maintain insulin stability without refrigeration while enabling controlled transdermal delivery.}
 
-\begin{abstract}
-This work presents an active learning framework for discovering and optimizing materials for fridge-free insulin delivery patches. The system integrates large language models (LLMs) for scientific literature mining with PSMILES-based generative modeling for material design, creating an iterative discovery pipeline. The implementation employs Ollama~\cite{ollama2023} local LLM infrastructure for literature analysis, a specialized PSMILES generator with conversation memory using LangChain~\cite{chase2022langchain} for material candidate creation, and systematic copolymerization capabilities for structure exploration. The framework identifies diverse material classes through adaptive query generation and polymer structure generation, providing both literature-validated candidates and novel AI-designed materials. This approach aims to accelerate discovery of materials that can maintain insulin stability without refrigeration while enabling controlled transdermal delivery.
-\end{abstract}
+\begin{document}
 
 \maketitle
 
@@ -68,6 +22,10 @@ Insulin degradation involves thermal denaturation through protein unfolding and 
 The approach implemented here utilizes an active learning framework that systematically combines literature knowledge extraction with AI-driven polymer design. The system follows an iterative cycle where literature mining identifies promising material classes, PSMILES-based generative models create polymer candidates, property evaluation assesses material performance, and feedback loops refine subsequent iterations.
 
 The framework addresses key challenges in AI-driven materials discovery: vast literature requiring sophisticated natural language processing, diverse terminology across research domains necessitating robust semantic understanding, and the need for systematic exploration of chemical spaces through generative modeling. The implementation integrates these capabilities through local LLM infrastructure and specialized PSMILES generation systems.
+
+\subsection{Related work}
+
+LLM-based tooling for scientific and engineering tasks is surveyed in recent literature on large models for research~\cite{zhang2025llm} and agentic workflows~\cite{narayana2024agentic}. Our literature stage builds on open scholarly APIs and document representations such as the Semantic Scholar graph~\cite{semantic_scholar_api,cohan2020specter}. Polymer structure generation here uses PSMILES-style repeat units in the spirit of standardized macromolecular line notations~\cite{lin2019bigsmiles}. Planned atomistic evaluation aligns with established GPU-accelerated MD frameworks~\cite{eastman2017openmm}, complementary to the universal interatomic models discussed later~\cite{wood2025uma}.
 
 \section{Active Learning Framework Architecture}
 
@@ -390,7 +348,7 @@ def _generate_functional_group_variants() -> Dict[str, str]:
         'alkene': '[*]C=C[*]',           # Alkene for crosslinking potential
         'alkyne': '[*]C#C[*]',           # Alkyne for click chemistry
         'haloalkane': '[*]C(Cl)[*]',     # Halogen for specific interactions
-        'aromatic': '[*]c1ccc(cc1)[*]'   # Aromatic for π-π interactions
+        'aromatic': '[*]c1ccc(cc1)[*]'   # Aromatic for pi-pi interactions
     }
     return functional_group_fragments
 \end{lstlisting}
@@ -616,46 +574,11 @@ The modular architecture provides a foundation for integration with advanced com
 
 Future development will focus on implementing the planned MD simulation capabilities using Meta's UMA force field and machine learning property prediction models. The current implementation provides essential infrastructure for these advanced capabilities while delivering immediate value through systematic integration of literature mining and PSMILES-based material generation for insulin delivery applications.
 
-\begin{acknowledgments}
+\section{Acknowledgments}
+
 We acknowledge the open-source communities that developed the Ollama framework, Semantic Scholar API, LangChain, and Flask web framework, which enabled the implementation of this active learning system. We also thank the materials science research community for providing the foundational literature that makes AI-driven material discovery possible.
-\end{acknowledgments}
 
-\begin{thebibliography}{10}
-
-\bibitem{ollama2023}
-Ollama Development Team.
-\newblock Ollama: Run LLMs locally.
-\newblock Available at: \url{https://ollama.ai}, 2023.
-
-\bibitem{chase2022langchain}
-Harrison Chase.
-\newblock LangChain: Building applications with LLMs through composability.
-\newblock Available at: \url{https://github.com/hwchase17/langchain}, 2022.
-
-\bibitem{lo2020s2orc}
-Kyle Lo, Lucy Lu Wang, Mark Neumann, Rodney Kinney, and Daniel S. Weld.
-\newblock S2ORC: The semantic scholar open research corpus.
-\newblock \emph{Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics}, pages 4969--4983, 2020.
-\newblock doi:10.18653/v1/2020.acl-main.447.
-
-\bibitem{sokolova2021molecular}
-Maria Sokolova, Mark Hartman, and Andrea Pluhar.
-\newblock Molecular representation learning with polymer SMILES.
-\newblock \emph{Journal of Chemical Information and Modeling}, 61(8):3735--3746, 2021.
-\newblock doi:10.1021/acs.jcim.1c00595.
-
-\bibitem{wood2025uma}
-Brandon M. Wood, Misko Dzamba, Xiang Fu, Meng Gao, Muhammed Shuaibi, Luis Barroso-Luque, Kareem Abdelmaqsoud, Vahe Gharakhanyan, John R. Kitchin, Daniel S. Levine, Kyle Michel, Anuroop Sriram, Taco Cohen, Abhishek Das, Ammar Rizvi, Sushree Jagriti Sahoo, Zachary W. Ulissi, and C. Lawrence Zitnick.
-\newblock UMA: A family of universal models for atoms.
-\newblock \emph{arXiv preprint arXiv:2502.20809}, 2025.
-\newblock Available at: \url{https://ai.meta.com/research/publications/uma-a-family-of-universal-models-for-atoms/}.
-
-\bibitem{larsen2017atomic}
-Ask Hjorth Larsen, Jens J{\o}rgen Mortensen, Jakob Blomqvist, Ivano E. Castelli, Rune Christensen, Marcin Dułak, Jesper Friis, Michael N. Groves, Bj{\o}rk Hammer, Cory Hargus, Eric D. Hermes, Paul C. Jennings, Peter Bjerre Jensen, James Kermode, John R. Kitchin, Esben Leonhard Kolsbjerg, Joseph Kubal, Kristen Kaasbjerg, Steen Lysgaard, J{\'o}n Bergmann Maronsson, Tristan Maxson, Thomas Olsen, Lars Pastewka, Andrew Peterson, Carsten Rostgaard, Jakob Schi{\o}tz, Ole Sch{\"u}tt, Mikkel Strange, Kristian S. Thygesen, Tejs Vegge, Lasse Vilhelmsen, Michael Walter, Zhenhua Zeng, and Karsten W. Jacobsen.
-\newblock The atomic simulation environment---a Python library for working with atoms.
-\newblock \emph{Journal of Physics: Condensed Matter}, 29(27):273002, 2017.
-\newblock doi:10.1088/1361-648X/aa680e.
-
-\end{thebibliography}
+\bibliographystyle{plainnat}
+\bibliography{../paper/references}
 
 \end{document}

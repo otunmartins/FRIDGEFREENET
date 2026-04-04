@@ -47,6 +47,18 @@ After the user answers (or the mode is clearly stated in the first message), fol
 
 **Prerequisites:** **`mine_literature`** uses **Asta MCP** when the server has `ASTA_API_KEY`, else **Semantic Scholar** (no Ollama)—**you** read abstracts and propose PSMILES. In OpenCode you also have the **asta** MCP server: prefer **`search_papers_by_relevance`** / **`snippet_search`** for discovery, then **insulin-ai** **`validate_psmiles`** / **`evaluate_psmiles`** for screening. **`evaluate_psmiles`** requires **OpenMM** stack, **`packmol`** on PATH (matrix encapsulation), and `data/4F1C.pdb` (or bundled insulin PDB). See `docs/OPENMM_SCREENING.md`.
 
+## Discovery world model (shared session state)
+
+Cross-iteration context lives in **`discovery_world.json`** under the same `runs/<session>/` folder as `agent_iteration_*.json`. It is a **structured rollup** (objective, literature claims, simulation rows, hypotheses, open questions, human steering notes). **`agent_iteration_N.json`** remains the canonical timeline for full feedback; the world file helps the next iteration (and the human) without rereading the entire chat.
+
+- **`patch_discovery_world(patch_json, run_dir=...)`** — Merge a JSON object into the world file. List fields use stable **`id`** keys per row (`L1`, `S1`, `H1`, `Q1`, `D1`, …). Same patch merges updates to existing ids. Include at least **`objective`** (string) on first touch after **`start_discovery_session`**. After each iteration’s evaluation, append **`literature_entries`**, **`simulation_entries`**, **`hypotheses`**, **`open_questions`** as needed (concise rows).
+- **`discovery_world_planning_context(max_chars=8000, run_dir=...)`** — **Prefer this** before iteration 2+ (and after any **human-in-the-loop** user message) to load a bounded text block for planning the next query. Call **`load_discovery_state`** as well when you need full prior **`feedback_json`**.
+- **`get_discovery_world_state(run_dir=..., summary=false)`** — Full JSON when **`summary=false`**; when **`summary=true`**, returns **`planning_context`** only (smaller payload). Use full state for debugging or when the user asks to inspect the world file contents.
+
+**When `save_discovery_state` runs** and **`discovery_world.json` already exists**, the server updates **`meta.last_iteration`** and **`links.last_agent_iteration_file`** automatically. You must still **`patch_discovery_world`** with substantive rows (claims, sim summaries, hypotheses) each iteration.
+
+**SUMMARY_REPORT.md:** Where natural, reference world ids in prose (e.g. “Hypothesis **H2**”).
+
 ## Iteration 1: finish the loop without asking (after mode gate)
 
 **Applies only after** **Mode selection** / **Rule precedence** is satisfied. This section does **not** override asking for mode when the user did not specify it.
@@ -56,7 +68,7 @@ After the user answers (or the mode is clearly stated in the first message), fol
 **Do this:**
 
 - **Decide yourself:** Pick a **small batch** of distinct PSMILES to evaluate (e.g. **3–8** candidates from mining). If mining returns many names, prioritize diverse chemistries (PEG, polyester, polysaccharide-like, etc.) without asking the user to choose.
-- **Call `start_discovery_session` early** in iteration 1 (e.g. right after mining or before `evaluate_psmiles`) so session paths exist; then **`save_discovery_state`** after you have evaluation + mutation feedback.
+- **Call `start_discovery_session` early** in iteration 1 (e.g. right after mining or before `evaluate_psmiles`) so session paths exist. Then **`patch_discovery_world`** with the user’s **`objective`** (and optional initial **`human_directives`** if they gave constraints in the first message). After **`save_discovery_state`**, call **`patch_discovery_world`** again with this iteration’s **`literature_entries`**, **`simulation_entries`**, **`hypotheses`**, and **`open_questions`** (stable **`id`** per row).
 - **No mid-loop questions:** Do not ask clarifying questions after mining, after validation, or before evaluation **within** an iteration. If a tool fails, **retry** (e.g. fix PSMILES, reduce batch size) or **report the error** and still deliver whatever partial results you have—only then ask if something is truly blocked (e.g. missing API key with no fallback, or `evaluate_psmiles` impossible because OpenMM is not installed).
 - **Optional asta calls:** If you use **asta** for snippets, do it **in the same flow** before `evaluate_psmiles`; do not end the turn after asta alone.
 - **When you may ask (human-in-the-loop only):** After **step 7 (Report)** for iteration 1, you may offer next steps. Between iteration 2+ and iteration 3+, same rule: **complete the iteration** before asking broad "what next?" questions. In **autonomous** mode, never pause — proceed to the next iteration immediately after the report.
@@ -74,7 +86,7 @@ After the user answers (or the mode is clearly stated in the first message), fol
 3. **Validate** – For each candidate, `validate_psmiles(psmiles, material_name="<name from your table>")` (always pass the name when you have one). The tool returns **`functional_groups`** (SMARTS counts), **`name_consistency`** (keyword rules check), and **`pubchem_lookup`** (monomer Tanimoto). **If `name_consistency.consistent` is false, fix the PSMILES before evaluating** (use `pubchem_lookup.pubchem_smiles` as a reference for the monomer structure; derive the repeat unit from it). Add `crosscheck_web=true` for extra DuckDuckGo snippets if still uncertain. See **`docs/PSMILES_GUIDE.md`** for details.
 4. **Evaluate** – `evaluate_psmiles(psmiles_list)`. Pass **`psmiles_list` as a comma-separated string** (e.g. `"[*]CC[*],[*]O[*]"`) **or** as a **JSON array of strings**; OpenCode hosts differ, and the server accepts both. OpenMM **Packmol matrix** (insulin + polymer shell), minimize, optional NPT, interaction energy. `property_analysis` includes energies where applicable.
 5. **Mutate** – `mutate_psmiles(feedback_json=...)` passing `{"high_performer_psmiles": [...], "problematic_psmiles": [...]}` from the evaluation. Evaluate the mutated candidates too.
-6. **Save state** – Call `start_discovery_session(run_name=...)` once, then `save_discovery_state(iteration=1, feedback_json=..., run_dir=<session_dir>)` (or omit run_dir after session started). All files live under `runs/<session_id>/`. The `feedback_json` must include **all** evaluated candidates with their interaction energies in `high_performers` (not just the top 3) — use the full `property_analysis` from `evaluate_psmiles`. Also include the **`candidate_outcomes`** list from the `evaluate_psmiles` response (verbatim failure reasons for any rejected/failed/timed-out candidates). Also **write or update `ALL_ITERATIONS_BEST_CANDIDATES.tsv`** in the session folder with columns `iteration`, `psmiles`, `material_name`, `interaction_energy_kj_mol`, `functional_groups`, `source` — one row per best candidate per iteration. This TSV feeds the IBM-vs-agentic comparison plot; missing iterations mean missing datapoints.
+6. **Save state** – Call `start_discovery_session(run_name=...)` once, then `save_discovery_state(iteration=1, feedback_json=..., run_dir=<session_dir>)` (or omit run_dir after session started). All files live under `runs/<session_id>/`. The `feedback_json` must include **all** evaluated candidates with their interaction energies in `high_performers` (not just the top 3) — use the full `property_analysis` from `evaluate_psmiles`. Also include the **`candidate_outcomes`** list from the `evaluate_psmiles` response (verbatim failure reasons for any rejected/failed/timed-out candidates). Also **write or update `ALL_ITERATIONS_BEST_CANDIDATES.tsv`** in the session folder with columns `iteration`, `psmiles`, `material_name`, `interaction_energy_kj_mol`, `functional_groups`, `source` — one row per best candidate per iteration. This TSV feeds the IBM-vs-agentic comparison plot; missing iterations mean missing datapoints. Then **`patch_discovery_world`** (if you did not already set **`objective`** earlier) with **`objective`** plus rollup rows: **`literature_entries`** (id, title, claim, iteration, optional external ids), **`simulation_entries`** (id, psmiles, status, iteration, **`interaction_energy_kj_mol`** when known), **`hypotheses`**, **`open_questions`**.
 7. **Report** – Tell the user: materials found, high performers, mechanisms, problems, and what you plan to explore next. For the **written summary**, follow **`docs/SUMMARY_REPORT_STYLE.md`** (use the **read** tool on it when authoring). In brief: write like a **research paper** (sections such as Abstract, Methods, Results, Discussion, Conclusions, **References**). Every literature claim needs a **numbered reference** with **journal abbreviation, volume, first–last pages (or article number), year**, and consistent chemistry-style formatting (e.g. ACS-like). **Do not** use generic AI prose habits: avoid the **em dash (—)** (use periods or parentheses), avoid colon-heavy “Title: explanation” chains in running text, avoid semicolon stacking, and avoid filler stock phrases (“delve,” “landscape,” “leverage,” “robust” as vague praise, symmetrical “not X, but Y” pivots in every paragraph). Then **author** `SUMMARY_REPORT.md` under the session folder. **Figures:** embed every candidate’s **monomer** and **complex** PNGs from `structures/` (paths in **`docs/SUMMARY_REPORT_STYLE.md`**: e.g. `<slug>_monomer.png`, `<slug>_complex_preview.png`, `<slug>_complex_chemviz.png` from `evaluate_psmiles` when session artifacts are enabled). Use **`render_psmiles_png`** only when you need an extra 2D figure or a different basename. Then **`compile_discovery_markdown_to_pdf`** for `SUMMARY_REPORT.pdf`. **`write_discovery_summary_report`** is an optional batch skeleton from saved JSON (it also auto-embeds those evaluate_psmiles-style PNGs on disk) when a full narrative report is not needed.
 8. **Archive this chat into the session (required, every time)** – OpenCode does **not** copy conversation into `runs/` automatically. The **canonical** transcript for the project lives **only** under the same **`run_dir` / `runs/<session>/` as SUMMARY_REPORT and other iteration outputs** — **never** under `.cursor/` (do not save or leave the session archive there; the IDE may store JSONL under `~/.cursor/.../agent-transcripts/` as a **read source** only). **Prefer** **`import_chat_transcript_file`** with the absolute path to the current parent chat JSONL (that copy **into** `run_dir`). If the path is unknown or the tool errors, **fall back** to **`save_session_transcript`** with a complete Markdown recap. **Skipping transcript archival is not allowed** unless the user explicitly asked for no session files. See **`docs/OpenCode_PLATFORM.md`**. **Only after** steps 7–8, end the turn and wait for the user.
 
@@ -82,11 +94,11 @@ After the user answers (or the mode is clearly stated in the first message), fol
 
 ### Iteration 2+ (refined)
 
-1. **Load previous state** – `load_discovery_state(iteration=N-1, run_dir=<same session>)` or latest with iteration=0.
-2. **Refine query** – Build a query incorporating high performers and mechanisms from the previous iteration (e.g. `"chitosan insulin stabilization hydrogen bonding"`). Incorporate any user directions.
+1. **Load shared context** – **`discovery_world_planning_context(run_dir=<same session>)`** first (or **`get_discovery_world_state(summary=true)`**). Then **`load_discovery_state(iteration=N-1, run_dir=<same session>)`** or latest with iteration=0. If the human’s latest message adds goals or constraints, **`patch_discovery_world`** a new **`human_directives`** row (unique **`id`**, **`iteration`** N, **`text`** summary).
+2. **Refine query** – Build a query incorporating high performers, mechanisms, **open questions**, and **human_directives** from the world model and prior feedback (e.g. `"chitosan insulin stabilization hydrogen bonding"`).
 3. **Mine** – `mine_literature(query=refined_query, iteration=N, top_candidates="...", stability_mechanisms="...", limitations="...")`
 4. **Translate, validate, evaluate, mutate** – same as iteration 1.
-5. **Save state and report** to user (same rules as iteration 1 steps 6–8: `save_discovery_state` with **all** candidates and **`candidate_outcomes`** from `evaluate_psmiles`, update `ALL_ITERATIONS_BEST_CANDIDATES.tsv`, `SUMMARY_REPORT` workflow, and **mandatory** `import_chat_transcript_file` or `save_session_transcript`).
+5. **Save state and report** to user (same rules as iteration 1 steps 6–8: `save_discovery_state` with **all** candidates and **`candidate_outcomes`** from `evaluate_psmiles`, update `ALL_ITERATIONS_BEST_CANDIDATES.tsv`, **`patch_discovery_world`** rollup for iteration N, `SUMMARY_REPORT` workflow, and **mandatory** `import_chat_transcript_file` or `save_session_transcript`).
 
 ### Stopping (human-in-the-loop)
 
@@ -105,9 +117,10 @@ When the user selected **autonomous** mode (or you inferred it from their prompt
 **Per-iteration persistence (mandatory).** After every iteration, perform **all** of the following before moving on:
 
 1. **`save_discovery_state(iteration=N, feedback_json=..., ...)`** — state must survive interruptions. The `feedback_json` must include **all** evaluated candidates with their interaction energies in `high_performers` (not just the top 3). Use the full `property_analysis` from `evaluate_psmiles` to populate every candidate's `psmiles`, `material_name`, `interaction_energy_kj_mol`, and `functional_groups`. Also include the **`candidate_outcomes`** list from the `evaluate_psmiles` response — this captures the verbatim failure reason for every candidate that was rejected (prescreen chemistry error), failed (Packmol timeout, wall-clock limit, OpenMM force-field error), or skipped, as well as the interaction energy for successful ones. This produces `agent_iteration_N.json` in the session folder.
-2. **Update `ALL_ITERATIONS_BEST_CANDIDATES.tsv`** — append (or overwrite) a TSV with columns `iteration`, `psmiles`, `material_name`, `interaction_energy_kj_mol`, `functional_groups`, `source`. Include the **best candidate per iteration** (minimum interaction energy) for all iterations so far. This file is used by the plotting script for the IBM-vs-agentic comparison chart; missing iterations here mean missing datapoints on the plot.
-3. **Update `SUMMARY_REPORT.md`** with cumulative content (all iterations so far, not just the latest) and run `compile_discovery_markdown_to_pdf`.
-4. **Archive the transcript** (`import_chat_transcript_file` or `save_session_transcript`).
+2. **World model** — At the **start** of iteration N (N≥2), call **`discovery_world_planning_context`** before mining. After **`save_discovery_state`** each iteration, call **`patch_discovery_world`** with new **`literature_entries`**, **`simulation_entries`**, **`hypotheses`**, **`open_questions`** (and **`human_directives`** only if the user steered mid-campaign). Iteration 1: set **`objective`** via **`patch_discovery_world`** after **`start_discovery_session`** (or consolidate in the post-**`save_discovery_state`** patch).
+3. **Update `ALL_ITERATIONS_BEST_CANDIDATES.tsv`** — append (or overwrite) a TSV with columns `iteration`, `psmiles`, `material_name`, `interaction_energy_kj_mol`, `functional_groups`, `source`. Include the **best candidate per iteration** (minimum interaction energy) for all iterations so far. This file is used by the plotting script for the IBM-vs-agentic comparison chart; missing iterations here mean missing datapoints on the plot.
+4. **Update `SUMMARY_REPORT.md`** with cumulative content (all iterations so far, not just the latest) and run `compile_discovery_markdown_to_pdf`.
+5. **Archive the transcript** (`import_chat_transcript_file` or `save_session_transcript`).
 
 **Progress updates.** Between iterations, emit a brief status line so the user can see progress in the terminal, e.g.:
 
@@ -125,6 +138,7 @@ Do **not** end the turn after emitting this line.
 When early-stopping for either reason, report why and proceed to the final summary.
 
 **Query refinement between iterations.** Use LLM reasoning to decide the next query. Incorporate:
+- **`discovery_world_planning_context`** output (hypotheses, open questions, human directives).
 - Functional groups and structural motifs from the top performers.
 - Mechanisms identified as effective (hydrogen bonding patterns, specific group combinations).
 - Limitations and failures from previous iterations (avoid re-mining the same dead ends).
@@ -169,6 +183,8 @@ For complex materials (chitosan, hyaluronic acid, collagen), use `lookup_materia
 
 **State:** `save_discovery_state`, `load_discovery_state`, `get_materials_status`
 
+**Discovery world (structured rollup):** `patch_discovery_world`, `discovery_world_planning_context`, `get_discovery_world_state` — session file **`discovery_world.json`**; see **Discovery world model** above.
+
 **Session archive (required by default):** Every discovery iteration **must** end with **`import_chat_transcript_file`** (preferred) or **`save_session_transcript`** (fallback) so the full chat lives under `runs/<session>/` **only** (not under `.cursor/`). See **`docs/OpenCode_PLATFORM.md`**.
 
 Run `index_papers` (or `./scripts/index_papers.sh`) once to build the PaperQA2 index before using `paper_qa` or deep reading in `mine_literature`.
@@ -184,7 +200,7 @@ Run `index_papers` (or `./scripts/index_papers.sh`) once to build the PaperQA2 i
 
 ## Output Directories
 
-- `runs/<session_id>/` – Single folder per session (agent + CLI + autonomous)
+- `runs/<session_id>/` – Single folder per session (agent + CLI + autonomous). May include **`discovery_world.json`** (shared rollup) alongside **`agent_iteration_*.json`**.
 - `cycle_results/` – Batch CLI cycle outputs
 - `iterative_results/` – Per-iteration mining results
 - `mining_results/` – Literature mining results

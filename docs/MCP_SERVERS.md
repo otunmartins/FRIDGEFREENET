@@ -27,6 +27,18 @@ The launcher uses the `insulin-ai-sim` conda env. Session outputs go to `runs/<s
 | **`save_session_transcript`** | Writes text into `runs/<session>/` only. Call this each run if you don't use `import_chat_transcript_file`. |
 | **`import_chat_transcript_file`** | Reads JSONL (e.g. from `~/.cursor/.../agent-transcripts/`) and copies it into `runs/<session>/`. Do not use `.cursor/` as the archive destination. |
 
+### Discovery world model (`discovery_world.json`)
+
+Structured cross-iteration rollup (Kosmos-style shared state) in the same folder as `agent_iteration_*.json`. List fields use stable **`id`** keys; patches merge by id.
+
+| Tool | Purpose |
+|------|---------|
+| **`get_discovery_world_state`** | Read the world file. Pass **`summary=true`** for JSON containing only **`planning_context`** (smaller). Missing file behaves like an empty schema. |
+| **`patch_discovery_world`** | Merge a JSON object into `discovery_world.json` (creates file if needed). |
+| **`discovery_world_planning_context`** | Bounded text for prompts (objective, hypotheses, open questions, directives, recent lit/sim). Prefer over full JSON during discovery. |
+
+After **`save_discovery_state`**, if `discovery_world.json` already exists, the server updates **`meta.last_iteration`** and **`links.last_agent_iteration_file`** only.
+
 Chat is not mirrored into `runs/` automatically; agents must call `save_session_transcript` or `import_chat_transcript_file` to archive each run. See [DEPENDENCIES.md](DEPENDENCIES.md) for reporting libs and [OpenCode_PLATFORM.md](OpenCode_PLATFORM.md) for OpenCode specifics.
 
 ---

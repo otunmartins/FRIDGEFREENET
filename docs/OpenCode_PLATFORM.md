@@ -4,7 +4,7 @@
 
 ## Chat transcripts vs `runs/` session folders
 
-**OpenCode does not automatically copy** the assistant chat into `runs/<session_id>/`. Discovery artifacts (`agent_iteration_*.json`, `SUMMARY_REPORT.md`, etc.) are written by MCP tools because they know `INSULIN_AI_SESSION_DIR`; the IDE keeps conversation history in its **own** store.
+**OpenCode does not automatically copy** the assistant chat into `runs/<session_id>/`. Discovery artifacts (`agent_iteration_*.json`, `SUMMARY_REPORT.md`, optional **`discovery_world.json`** structured rollup, etc.) are written by MCP tools because they know `INSULIN_AI_SESSION_DIR`; the IDE keeps conversation history in its **own** store. The world file accumulates objectives, literature claims, simulation summaries, hypotheses, and human steering notes across iterations; see **`patch_discovery_world`** / **`discovery_world_planning_context`** in [MCP_SERVERS.md](MCP_SERVERS.md).
 
 ### Where the session archive must live (canonical)
 

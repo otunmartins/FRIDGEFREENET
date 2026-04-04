@@ -191,7 +191,8 @@ def test_max_workers_argument_overrides_env(monkeypatch):
     """
     Explicit max_workers=1 argument uses the sequential path even when
     INSULIN_AI_EVAL_MAX_WORKERS is set to a higher value in the environment.
-    Verified by confirming evaluation_progress is absent with verbose=False.
+    ``evaluate_candidates`` always includes ``evaluation_progress`` in the return dict;
+    we assert one completed row and a successful matrix result.
     """
     from insulin_ai.simulation import MDSimulator
     from insulin_ai.simulation.openmm_compat import openmm_available
@@ -226,6 +227,7 @@ def test_max_workers_argument_overrides_env(monkeypatch):
         for k in env_overrides:
             os.environ.pop(k, None)
 
-    # Sequential path with verbose=False: evaluation_progress absent
-    assert "evaluation_progress" not in result
+    prog = result.get("evaluation_progress") or []
+    assert len(prog) == 1
+    assert prog[0].get("status") == "completed"
     assert result.get("md_results_raw") is not None

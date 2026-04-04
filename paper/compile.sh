@@ -1,7 +1,11 @@
 #!/bin/bash
 
-# LaTeX Compilation Script for RevTeX4-2 Document with BibTeX Support
-# This script compiles the apssamp.tex document with proper handling of bibliography and intermediate files
+# RevTeX / APS sample build helper: compiles apssamp.tex in RevTeX mode only if you
+# restore a RevTeX preamble (the checked-in apssamp.tex uses fairmeta).
+#
+# Fairmeta builds:
+#   - Project insulin proposal: ../docs/compile_proposal.sh
+#   - This LangChain/OpenMM paper (fairmeta): ./compile_apssamp.sh
 
 set -e  # Exit on any error
 
