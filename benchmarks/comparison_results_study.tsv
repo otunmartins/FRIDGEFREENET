@@ -14,3 +14,8 @@ ibm_rl_ppo	100	39.5074	-1260.759	14	14	456.0	ppo	160	4.9	5.0	1.0	5.2	[*]OCC[*]	8
 ibm_rl_ppo	100	40.0707	-1525.0817	14	14	457.7	ppo	160	4.55	5.0	1.0	5.9	[*]OCC[*]	8	-5.0	live_openmm
 ibm_rl_ppo	100	39.3909	-1156.1371	14	14	475.8	ppo	160	4.975	5.0	1.0	5.05	[*]OCC[*]	8	-5.0	live_openmm
 optuna_tpe	143	20.3608	-1901.9832	5	26	6806.5	tpe						[*]OCC[*]	8		live_openmm,n_trials=20,random_seed=42
+optuna_tpe	145	20.161	-1812.78	5	26	6577.1	tpe						[*]COC[*]	8		live_openmm,n_trials=20,random_seed=123
+optuna_tpe	143	18.9646	-1730.3632	5	27	7097.1	tpe						[*]COC[*]	8		live_openmm,n_trials=20,random_seed=456
+ibm_rl_dqn	100	39.831	-1399.773	14	14	500.2	dqn	160	4.575	5.0	1.0	5.85	[*]OCC[*]	8	-5.0	live_openmm,ablation_target_energy_kj=-5.0
+ibm_rl_dqn	120	25.87	-1358.8227	7	14	485.6	dqn	160	1.8184999999999998	2.85	2.0	8.0	[*]OCC[*]	8	-500.0	live_openmm,ablation_target_energy_kj=-500.0
+ibm_rl_dqn	121	14.1708	-1412.3081	1	14	492.9	dqn	160	-0.5810000000000002	0.45	4.0	8.0	[*]OCC[*]	8	-1000.0	live_openmm,ablation_target_energy_kj=-1000.0
